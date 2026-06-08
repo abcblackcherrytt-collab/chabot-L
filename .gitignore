@@ -1,0 +1,142 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Environment variables (CRITICAL - never commit these)
+.env
+.env.local
+.env.*.local
+
+# Service account keys (CRITICAL - never commit these)
+service_account/*.json
+*.key
+*.pem
+*.crt
+
+# Logs
+*.log
+logs/
+
+# Docker
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Poetry
+poetry.lock
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Additional Python tools
+.ruff_cache/
+.tox/
+.hypothesis/
+.coverage.xml
+*.cover
+.cache/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Sphinx documentation
+docs/_build/
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.dmypy.json
+dmypy.json
+
+# Google Cloud SDK
+google-cloud-sdk/
+
+# Data directories
+data/
+uploads/
+assets/
+static/media/
+
+# Alembic migrations (keep __init__.py but exclude version files)
+!alembic/versions/__init__.py
+alembic/versions/*.py
+
+# Developer directory
+developer/
+setting/
+
+# Todo/Task lists
+todo*.txt
+tasklist.txt
+TODO.md
+TASKS.md
+
+# Local project notes
+project/
+database.md

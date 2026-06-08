@@ -1,0 +1,58 @@
+# Git
+.git
+.gitignore
+
+# Environment variables (CRITICAL - never include in build)
+.env
+.env.local
+.env.*.local
+
+# Service account keys (CRITICAL - never include in build)
+service_account/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Testing
+.pytest_cache/
+.coverage
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Documentation
+README.md
+docs/
+
+# Scripts
+scripts/
+
+# Tests
+tests/
+
+# OS
+.DS_Store
+
+# Poetry
+poetry.lock
+pyproject.toml
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

@@ -1,0 +1,221 @@
+# GitHub Actions workflow for Chabot deployment
+# Chabotデプロイ用GitHub Actionsワークフロー
+
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - production
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast1
+  REPOSITORY: chabot-repo
+  IMAGE_NAME: chabot
+  SERVICE_NAME: chabot-service
+  SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+  APP_ENV: production
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # Checkout repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      # Run tests
+      - name: Run tests
+        run: |
+          pytest tests/unit/ -v --tb=short
+          pytest tests/integration/ -v --tb=short
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          TEST_DATABASE_URL: sqlite+aiosqlite:///:memory:
+
+      # Authenticate with Google Cloud using Workload Identity Federation
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          workload_identity_service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Configure Docker for Cloud Build
+      - name: Configure Docker for Cloud Build
+        run: |
+          gcloud auth configure-docker --quiet
+
+      # Build and push Docker image
+      - name: Build and push Docker image
+        id: build
+        run: |
+          IMAGE_TAG=$GITHUB_SHA
+          IMAGE_URI=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$IMAGE_TAG
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
+      # Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        id: deploy
+        run: |
+          IMAGE_URI=${{ steps.build.outputs.image_uri }}
+          CURRENT_SHA=$GITHUB_SHA
+          CURRENT_SHA_SHORT=$(echo $CURRENT_SHA | cut -c1-7)
+
+          echo "Deploying image: $IMAGE_URI"
+          echo "Commit: $CURRENT_SHA"
+          echo "Short SHA: $CURRENT_SHA_SHORT"
+
+          gcloud run deploy $SERVICE_NAME \
+            --image=$IMAGE_URI \
+            --region=$REGION \
+            --platform=managed \
+            --allow-unauthenticated \
+            --memory=512Mi \
+            --cpu=1 \
+            --max-instances=100 \
+            --min-instances=0 \
+            --timeout=300s \
+            --concurrency=80 \
+            --service-account=$SERVICE_ACCOUNT \
+            --set-env-vars=APP_ENV=$APP_ENV,GIT_SHA=$CURRENT_SHA_SHORT \
+            --set-secrets=DISCODE_API_KEY=discode-api-key:latest,DISCODE_API_BASE_URL=discode-api-base-url:latest,DISCODE_WEBHOOK_SECRET=discode-webhook-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=jwt-secret-keys:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID=google-corpus-id:latest,DATABASE_URL=database-url:latest \
+            --labels=commit-sha=$CURRENT_SHA_SHORT,deployed-by=github-actions,workflow-run=$GITHUB_RUN_NUMBER
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+      # Get service URL
+      - name: Get service URL
+        id: url
+        run: |
+          SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format='value(status.url)')
+          echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Service URL: $SERVICE_URL"
+
+      # Wait for deployment to be ready
+      - name: Wait for deployment
+        run: |
+          SERVICE_URL=${{ steps.url.outputs.service_url }}
+          echo "Waiting for service to be ready..."
+          sleep 10
+
+          # Health check
+          for i in {1..30}; do
+            if curl -f -s $SERVICE_URL/health > /dev/null 2>&1; then
+              echo "Service is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i/30: Waiting..."
+            sleep 5
+          done
+
+          echo "Service health check failed after 150 seconds"
+          exit 1
+
+      # Output deployment summary
+      - name: Deployment summary
+        run: |
+          echo "========================================="
+          echo "Deployment completed successfully!"
+          echo "========================================="
+          echo ""
+          echo "Project: $PROJECT_ID"
+          echo "Service: $SERVICE_NAME"
+          echo "Region: $REGION"
+          echo "Service URL: ${{ steps.url.outputs.service_url }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Commit message: ${{ github.event.head_commit.message }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Workflow run: ${{ github.run_number }}"
+          echo ""
+
+      # Comment on PR (if deploying from PR)
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Deployment successful!\n\n' +
+                     '- **Service URL**: ${{ steps.url.outputs.service_url }}\n' +
+                     '- **Commit**: ${{ github.sha }}\n' +
+                     '- **Deployed by**: ${{ github.actor }}\n\n' +
+                     '📝 [View logs](${{ steps.url.outputs.service_url }}/docs)'
+            })
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Separate job for Cloud Scheduler setup (run only on manual trigger)
+  setup-scheduler:
+    name: Setup Cloud Scheduler
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          workload_identity_service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Setup Cloud Scheduler
+        run: |
+          SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format='value(status.url)')
+
+          # Create token cleanup job
+          gcloud scheduler jobs create token-cleanup-job \
+            --schedule="0 3 * * *" \
+            --time-zone="Asia/Tokyo" \
+            --location=$REGION \
+            --uri="${SERVICE_URL}/api/v1/admin/cleanup-tokens" \
+            --http-method=POST \
+            --headers="Content-Type=application/json" \
+            --oauth-service-account-email=$SERVICE_ACCOUNT \
+            --description="Daily token cleanup job at 3:00 AM JST" || \
+          echo "Cloud Scheduler job may already exist"
