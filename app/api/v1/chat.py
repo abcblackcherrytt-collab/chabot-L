@@ -1,19 +1,20 @@
 """
 チャットAPIエンドポイント
-Discodeチャットボットとの連携APIを定義します。
+LINEチャットボットとの連携APIを定義します。
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Annotated, Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as QueryField, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.deps import get_current_user
 from app.models.user import User
 
 if TYPE_CHECKING:
-    from app.services.discode_service import DiscodeService
+    from app.services.line_service import LineService
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/chat", tags=["チャットボット"])
 class ChatRequest(BaseModel):
     """チャットリクエストスキーマ"""
     message: str = Field(..., min_length=1, max_length=1000, description="チャットメッセージ")
-    channel_id: str | None = Field(None, description="チャンネルID")
+    channel_id: str | None = Field(None, description="チャンネルID（後方互換用）")
     user_id: str | None = Field(None, description="ユーザーID")
     include_context: bool | None = Field(False, description="コンテキストを含めるか")
 
@@ -58,27 +59,24 @@ class DeepHealthCheckResponse(BaseModel):
     services: Dict[str, Dict[str, Any]] = Field(..., description="サービスの詳細情報")
 
 
-async def send_discode_message(
-    channel_id: str,
+async def send_line_message(
+    line_user_id: str,
     text: str,
-    user_id: str | None,
-    discode_service: "DiscodeService",
+    line_service: "LineService",
 ):
     """
-    Discodeへのメッセージ送信をバックグラウンドで実行します
+    LINEへのプッシュメッセージ送信をバックグラウンドで実行します
 
     送信失敗時はログに記録し、ユーザー応答には影響しません。
     """
     try:
-        await discode_service.send_chat_message(
-            channel_id=channel_id,
-            text=text,
-            user_id=user_id,
+        await line_service.send_subscription_notification(
+            line_user_id=line_user_id,
+            message=text,
         )
-        logger.debug(f"Message sent to channel: {channel_id}")
+        logger.debug(f"Push message sent to LINE user: {line_user_id[:4]}...")
     except Exception as e:
-        logger.error(f"Failed to send message to Discode (channel: {channel_id}): {e}")
-        # 必要に応じて再試行ロジックや監査ログを追加
+        logger.error(f"Failed to send LINE message: {e}")
 
 
 @router.post(
@@ -101,37 +99,24 @@ async def send_message(
     """
     チャットメッセージを送信してAIの回答を取得します
 
-    Discodeチャットボットとして動作し、RAGサービスを使用して回答を生成します。
+    LINEチャットボットとして動作し、RAGサービスを使用して回答を生成します。
     認証されたユーザーのみアクセス可能です。
-    Discodeへの送信はバックグラウンドで実行され、ユーザー応答には影響しません。
     """
     # アプリケーション状態からサービスを取得（lifespanで初期化済み）
     rag_service = http_request.app.state.rag_service
-    discode_service = http_request.app.state.discode_service
 
     try:
-        # RAGで回答を生成（max_results=3で軽量化、include_contextはリクエスト次第）
+        # RAGで回答を生成
         rag_result = await rag_service.query(
             text=request.message,
             max_results=3,
             include_context=request.include_context,
             user_id=str(current_user.id),
-            metadata={"channel_id": request.channel_id},
         )
 
         # 回答が拒否された場合
         if rag_result.get("denied"):
             logger.debug(f"RAG query denied: {rag_result.get('reason')}")
-
-        # Discodeチャンネルへの送信をバックグラウンドタスクに追加
-        if request.channel_id:
-            background_tasks.add_task(
-                send_discode_message,
-                channel_id=request.channel_id,
-                text=rag_result.get("answer", ""),
-                user_id=str(current_user.id),
-                discode_service=discode_service,
-            )
 
         return ChatResponse(
             answer=rag_result.get("answer", ""),
@@ -182,32 +167,30 @@ async def deep_health_check(http_request: Request) -> DeepHealthCheckResponse:
     """
     チャットサービスの詳細ヘルスチェックを行います
 
-    外部API（RAG/Discode）の疎通確認を行います。
+    外部API（RAG/LINE）の疎通確認を行います。
     """
     rag_service = http_request.app.state.rag_service
-    discode_service = http_request.app.state.discode_service
+    line_service = http_request.app.state.line_service
 
     try:
         # 両サービスのヘルスチェックを並列実行
-        import asyncio
-
         rag_health: dict[str, Any]
-        discode_health: dict[str, Any]
-        rag_health, discode_health = await asyncio.gather(
+        line_health: dict[str, Any]
+        rag_health, line_health = await asyncio.gather(
             rag_service.health_check(),
-            discode_service.health_check(),
+            line_service.health_check(),
             return_exceptions=True,
         )
 
         # 例外が発生した場合はunhealthyを返す
         if isinstance(rag_health, Exception):
             rag_health = {"status": "unhealthy", "error": str(rag_health)}
-        if isinstance(discode_health, Exception):
-            discode_health = {"status": "unhealthy", "error": str(discode_health)}
+        if isinstance(line_health, Exception):
+            line_health = {"status": "unhealthy", "error": str(line_health)}
 
         overall_status = "healthy" if (
             rag_health.get("status") == "healthy" and
-            discode_health.get("status") == "healthy"
+            line_health.get("status") == "healthy"
         ) else "unhealthy"
 
         return DeepHealthCheckResponse(
@@ -215,7 +198,7 @@ async def deep_health_check(http_request: Request) -> DeepHealthCheckResponse:
             service="chat",
             services={
                 "rag": rag_health,
-                "discode": discode_health,
+                "line": line_health,
             },
         )
 

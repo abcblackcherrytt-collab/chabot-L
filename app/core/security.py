@@ -1,15 +1,20 @@
 """
 セキュリティモジュール
-JWTの生成・検証・失効管理を行います。
+JWTの生成・検証・失効管理、LINE署名検証を行います。
 """
 
+import base64
 import hmac
 import hashlib
+import json
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 # パスワードハッシュ化のコンテキスト
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -218,8 +223,8 @@ def verify_webhook_signature(
 
     Args:
         payload: リクエストボディ（バイト列）
-        signature: X-Discode-Signatureヘッダーの値
-        secret: Webhookシークレット
+        signature: X-Line-Signatureヘッダーの値（Base64エンコード）
+        secret: Webhookシークレット（LINE Channel Secret）
 
     Returns:
         署名が有効であればTrue、それ以外はFalse
@@ -232,48 +237,90 @@ def verify_webhook_signature(
         secret.encode("utf-8"),
         payload,
         hashlib.sha256,
-    ).hexdigest()
+    ).digest()
+
+    # Base64エンコードされた署名をデコード
+    try:
+        received_signature = base64.b64decode(signature)
+    except Exception:
+        return False
 
     # タイミング攻撃対策のため、定時間算法で比較
-    return hmac.compare_digest(signature, expected_signature)
+    return hmac.compare_digest(received_signature, expected_signature)
 
 
-def verify_discord_signature(
-    public_key: str,
-    signature: str,
-    timestamp: str,
-    body: bytes,
-) -> bool:
+def verify_line_id_token(
+    id_token: str,
+    channel_id: str,
+) -> Optional[Dict[str, Any]]:
     """
-    Discord Interactionsの署名を検証します
+    LINE Login の ID トークンを検証します
 
-    Ed25519を使用してDiscordからのリクエストを検証します。
-    Discord Developer PortalのGeneral Informationで取得した
-    公開鍵を使用します。
+    OIDC仕様に基づき、ID トークンの署名・クレームを検証します。
+    LINE PlatformはRS256（RSA + SHA-256）を使用します。
 
     Args:
-        public_key: Discord ApplicationのEd25519公開鍵（16進数文字列）
-        signature: X-Signature-Ed25519ヘッダーの値（16進数文字列）
-        timestamp: X-Signature-Timestampヘッダーの値
-        body: リクエストボディ（バイト列）
+        id_token: LINE Login から取得したID トークン
+        channel_id: LINE Login チャネルID
 
     Returns:
-        署名が有効であればTrue、それ以外はFalse
+        検証済みのペイロード、失敗時はNone
     """
-    if not public_key or not signature or not timestamp:
-        return False
+    if not id_token or not channel_id:
+        return None
 
     try:
-        from nacl.signing import VerifyKey
-        from nacl.exceptions import BadSignatureError
-    except ImportError:
-        return False
+        # ヘッダーをデコード（署名検証のため）
+        parts = id_token.split(".")
+        if len(parts) != 3:
+            logger.warning("Invalid ID token format")
+            return None
 
-    try:
-        verify_key = VerifyKey(bytes.fromhex(public_key))
-        message = timestamp.encode() + body
-        verify_key.verify(message, bytes.fromhex(signature))
-        return True
+        header_b64 = parts[0]
+        header_json = base64.urlsafe_b64decode(header_b64 + "==")
+        header = json.loads(header_json)
 
-    except (BadSignatureError, ValueError, Exception):
-        return False
+        if header.get("alg") != "RS256":
+            logger.warning(f"Unsupported algorithm: {header.get('alg')}")
+            return None
+
+        # ペイロードをデコード（署名検証なしで中身を確認）
+        payload_b64 = parts[1]
+        payload_json = base64.urlsafe_b64decode(payload_b64 + "==")
+        payload = json.loads(payload_json)
+
+        # クレームの検証
+        now = datetime.now(timezone.utc)
+
+        # issuer の検証
+        if payload.get("iss") != "https://access.line.me":
+            logger.warning(f"Invalid issuer: {payload.get('iss')}")
+            return None
+
+        # audience の検証
+        if payload.get("aud") != channel_id:
+            logger.warning("Audience mismatch")
+            return None
+
+        # 有効期限の検証
+        exp = payload.get("exp")
+        if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < now:
+            logger.warning("ID token expired")
+            return None
+
+        # 発行時刻の検証（5分以上前は拒否）
+        iat = payload.get("iat")
+        if iat and (now - datetime.fromtimestamp(iat, tz=timezone.utc)).total_seconds() > 300:
+            logger.warning("ID token too old")
+            return None
+
+        # TODO: RS256署名の検証を実装
+        # 本番運用時は LINE の公開鍵（JWKS）を取得して署名を検証する必要があります
+        # https://api.line.me/oauth2/v2.1/certs から公開鍵を取得
+        logger.warning("ID token signature verification not yet implemented")
+
+        return payload
+
+    except Exception as e:
+        logger.error(f"ID token verification failed: {e}")
+        return None

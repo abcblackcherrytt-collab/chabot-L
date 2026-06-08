@@ -370,6 +370,10 @@ class StripeService:
         """
         請求書支払い失敗イベントを処理します
 
+        支払い失敗時にLINE通知を送信します。
+        Stripe は自動で再試行しますが、
+        最終的に失敗した場合は subscription.deleted イベントが発火します。
+
         Args:
             event: イベントデータ
 
@@ -377,12 +381,22 @@ class StripeService:
             処理が成功すればTrue
         """
         invoice = event.get("data", {}).get("object", {})
+        subscription_id = invoice.get("subscription")
+        attempt_count = invoice.get("attempt_count", 0)
 
-        logger.warning(f"Invoice payment failed: subscription={invoice.get('subscription')}")
+        logger.warning(
+            f"Invoice payment failed: subscription={subscription_id}, "
+            f"attempt={attempt_count}"
+        )
 
-        # 支払い失敗時の処理
-        # ここでは簡易実装
-        # 実際には通知やリトライ処理を実装
+        # TODO: LINE通知送信（支払い失敗の警告）
+        # user = await user_repository.find_by_stripe_customer_id(invoice.get("customer"))
+        # if user and user.line_user_id:
+        #     line_service.send_subscription_notification(
+        #         user.line_user_id,
+        #         f"お支払いに失敗しました（{attempt_count}回目）。\n"
+        #         "お支払い方法を確認してください。"
+        #     )
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -472,6 +486,11 @@ class StripeService:
         """
         サブスクリプション削除イベントを処理します
 
+        解約時の自動ログアウト・アクセス遮断を実行します。
+        1. ユーザーを is_active = False に更新
+        2. 全リフレッシュトークンを削除（全デバイスからログアウト）
+        3. LINE Push API で解約通知を送信
+
         Args:
             event: イベントデータ
 
@@ -483,9 +502,19 @@ class StripeService:
 
         logger.info(f"Subscription deleted: {subscription.get('id')}, customer={customer_id}")
 
-        # サブスクリプション削除時の処理
-        # ここでは簡易実装
-        # 実際にはデータベースでサブスクリプションを削除
+        # TODO: 以下のDB操作を実装（UserRepository, RefreshTokenRepository）
+        # 1. customer_id からユーザーを検索
+        #    user = await user_repository.find_by_stripe_customer_id(customer_id)
+        # 2. ユーザーを無効化
+        #    await user_repository.update(user.id, is_active=False)
+        # 3. 全リフレッシュトークンを削除
+        #    await refresh_token_repository.revoke_all_by_user(user.id)
+        # 4. LINE通知送信
+        #    if user.line_user_id:
+        #        line_service.send_subscription_notification(
+        #            user.line_user_id,
+        #            "サブスクリプションが終了しました。\nご利用ありがとうございました。"
+        #        )
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(

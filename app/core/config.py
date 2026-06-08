@@ -39,30 +39,15 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
     jwt_key_rotation_days: int = 90
 
-    # Discord API設定
-    discord_api_base_url: str = "https://discord.com/api/v10"
+    # LINE Messaging API設定
+    line_channel_secret: str = ""
+    line_channel_access_token: str = ""
+    line_api_base_url: str = "https://api.line.me"
 
-    # Discord Bot設定
-    discord_bot_token: str = ""
-    discord_guild_id: str = ""
-
-    # Discord Interactions設定
-    discord_public_key: str = ""  # Ed25519公開鍵（PUBLIC_KEY からも読み込み可能）
-    discord_application_id: str = ""  # アプリケーションID（APPLICATION_ID からも読み込み可能）
-
-    # エイリアス（.envでDISCORD_プレフィックスなしの変数名に対応）
-    public_key: str = ""
-    application_id: str = ""
-
-    @property
-    def resolved_discord_public_key(self) -> str:
-        """Discord公開鍵を取得（discord_public_key または public_key）"""
-        return self.discord_public_key or self.public_key
-
-    @property
-    def resolved_discord_application_id(self) -> str:
-        """DiscordアプリケーションIDを取得（discord_application_id または application_id）"""
-        return self.discord_application_id or self.application_id
+    # LINE Login（OIDC）設定
+    line_login_channel_id: str = ""
+    line_login_channel_secret: str = ""
+    line_login_callback_url: str = ""
 
     # Stripe設定
     stripe_secret_key: str = "sk_test_your-stripe-secret-key"

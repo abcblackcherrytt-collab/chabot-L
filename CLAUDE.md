@@ -4,12 +4,13 @@
 
 ## プロジェクト概要
 
-Chabot は FastAPI + Vertex AI RAG + Discord Bot + Stripe を組み合わせた AI チャットボットサービスです。
+Chabot は FastAPI + Vertex AI RAG + LINE Bot + Stripe を組み合わせた AI チャットボットサービスです。
 
 - **FastAPI**: 高速な非同期APIサーバー
 - **Vertex AI RAG**: Google Cloud Vertex AI を使用したRAG（検索拡張生成）
-- **Discord Bot**: Discordサーバーとの統合
-- **Stripe**: 決済処理統合
+- **LINE Bot**: LINE Messaging API によるユーザーとの対話
+- **LINE Login**: LINEアカウントによるユーザー認証（OIDC準拠）
+- **Stripe**: サブスクリプション決済処理
 
 ## 技術スタック
 
@@ -19,6 +20,7 @@ Chabot は FastAPI + Vertex AI RAG + Discord Bot + Stripe を組み合わせた 
 - **Alembic**: データベースマイグレーション
 - **PostgreSQL**: 16+
 - **Google Cloud**: Vertex AI, Secret Manager, Cloud Run
+- **LINE**: Messaging API, LINE Login v2.1 (OIDC)
 
 ## プロジェクト構造
 
@@ -188,6 +190,10 @@ pytest --cov=app tests/
 - `DATABASE_URL`: データベース接続URL
 - `JWT_SECRET_KEYS`: JWTシークレットキー
 - `STRIPE_SECRET_KEY`: Stripeシークレットキー
+- `LINE_CHANNEL_SECRET`: LINE Messaging API チャネルシークレット
+- `LINE_CHANNEL_ACCESS_TOKEN`: LINE Messaging API チャネルアクセストークン
+- `LINE_LOGIN_CHANNEL_ID`: LINE Login チャネルID
+- `LINE_LOGIN_CHANNEL_SECRET`: LINE Login チャネルシークレット
 
 ### オプション設定
 

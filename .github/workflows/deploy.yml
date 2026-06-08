@@ -113,7 +113,7 @@ jobs:
             --concurrency=80 \
             --service-account=$SERVICE_ACCOUNT \
             --set-env-vars=APP_ENV=$APP_ENV,GIT_SHA=$CURRENT_SHA_SHORT \
-            --set-secrets=DISCODE_API_KEY=discode-api-key:latest,DISCODE_API_BASE_URL=discode-api-base-url:latest,DISCODE_WEBHOOK_SECRET=discode-webhook-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=jwt-secret-keys:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID=google-corpus-id:latest,DATABASE_URL=database-url:latest \
+            --set-secrets=LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,LINE_LOGIN_CHANNEL_ID=line-login-channel-id:latest,LINE_LOGIN_CHANNEL_SECRET=line-login-channel-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=jwt-secret-keys:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID=google-corpus-id:latest,DATABASE_URL=database-url:latest \
             --labels=commit-sha=$CURRENT_SHA_SHORT,deployed-by=github-actions,workflow-run=$GITHUB_RUN_NUMBER
         env:
           GITHUB_SHA: ${{ github.sha }}

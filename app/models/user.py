@@ -3,7 +3,7 @@
 ユーザー情報を管理するデータベースモデルを定義します。
 """
 
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -44,6 +44,15 @@ class User(Base, TimestampMixin):
         String(255),
         nullable=False,
         comment="ハッシュ化されたパスワード",
+    )
+
+    # LINE連携（PII扱い - 個人情報として適切に取り扱うこと）
+    line_user_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        unique=True,
+        index=True,
+        nullable=True,
+        comment="LINE ユーザーID（PII）",
     )
 
     # アカウント状態

@@ -8,12 +8,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.v1 import auth_router, chat_router, interactions_router, stripe_webhook_router
+from app.api.v1 import auth_router, chat_router, stripe_webhook_router
+from app.api.v1.auth_line import router as line_auth_router
+from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
-from app.services.discode_service import DiscodeService
+from app.services.line_service import LineService
 from app.services.rag_service import RAGService
 
 
@@ -38,6 +39,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         return response
 
+
 # ロギング設定
 logging.basicConfig(
     level=logging.INFO if not settings.debug else logging.DEBUG,
@@ -51,7 +53,7 @@ async def lifespan(app: FastAPI):
     """
     アプリケーションの寿命管理
 
-    起動時にRAG/Discodeサービスを初期化し、
+    起動時にRAG/LINEサービスを初期化し、
     シャットダウン時にリソースを解放します。
     """
     # 起動時の処理
@@ -62,22 +64,24 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = RAGService()
     logger.info("RAG service initialized")
 
-    # Discodeサービスを初期化（アプリケーション全体で再利用）
-    logger.info("Initializing Discode service...")
-    app.state.discode_service = DiscodeService()
-    logger.info("Discode service initialized")
+    # LINEサービスを初期化（アプリケーション全体で再利用）
+    logger.info("Initializing LINE service...")
+    app.state.line_service = LineService()
+    logger.info("LINE service initialized")
 
     yield
 
     # シャットダウン時の処理
     logger.info(f"Shutting down {settings.app_name}")
-    # サービスのクリーンアップが必要であればここで実行
+    # LINE クライアントのHTTP接続を閉じる
+    if hasattr(app.state, "line_service") and app.state.line_service:
+        await app.state.line_service.client.close()
 
 
 # FastAPIアプリケーション作成
 app = FastAPI(
     title=settings.app_name,
-    description="Chabot API",
+    description="Chabot LINE API",
     version=settings.api_version,
     debug=settings.debug,
     lifespan=lifespan,
@@ -97,8 +101,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # ルーター登録
 app.include_router(auth_router, prefix=f"/api/{settings.api_version}")
+app.include_router(line_auth_router, prefix=f"/api/{settings.api_version}")
 app.include_router(chat_router, prefix=f"/api/{settings.api_version}")
-app.include_router(interactions_router, prefix=f"/api/{settings.api_version}")
+app.include_router(line_webhook_router, prefix=f"/api/{settings.api_version}")
 app.include_router(stripe_webhook_router, prefix=f"/api/{settings.api_version}")
 
 

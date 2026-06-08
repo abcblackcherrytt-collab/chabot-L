@@ -199,28 +199,65 @@ def mock_stripe_subscription():
 
 
 @pytest.fixture
-def mock_discode_channel():
+def mock_line_webhook_event():
     """
-    Discodeチャンネルのモックフィクスチャ
+    LINE Webhook メッセージイベントのモックフィクスチャ
     """
     return {
-        "id": "ch_test123",
-        "name": "test-channel",
-        "description": "Test channel description",
-        "owner_id": "user123",
-        "created_at": 1234567890,
+        "type": "message",
+        "replyToken": "test_reply_token",
+        "source": {
+            "type": "user",
+            "userId": "U_test_line_user_id_123",
+        },
+        "message": {
+            "type": "text",
+            "id": "msg_test123",
+            "text": "テストメッセージ",
+        },
+        "timestamp": 1234567890000,
     }
 
 
 @pytest.fixture
-def mock_discode_message():
+def mock_line_follow_event():
     """
-    Discodeメッセージのモックフィクスチャ
+    LINE フォローイベントのモックフィクスチャ
     """
     return {
-        "id": "msg_test123",
-        "channel_id": "ch_test123",
-        "user_id": "user123",
-        "text": "This is a test message.",
-        "created_at": 1234567890,
+        "type": "follow",
+        "replyToken": "test_follow_reply_token",
+        "source": {
+            "type": "user",
+            "userId": "U_test_line_user_id_123",
+        },
+        "timestamp": 1234567890000,
+    }
+
+
+@pytest.fixture
+def mock_line_unfollow_event():
+    """
+    LINE アンフォローイベントのモックフィクスチャ
+    """
+    return {
+        "type": "unfollow",
+        "source": {
+            "type": "user",
+            "userId": "U_test_line_user_id_123",
+        },
+        "timestamp": 1234567890000,
+    }
+
+
+@pytest.fixture
+def mock_line_profile():
+    """
+    LINE ユーザープロフィールのモックフィクスチャ
+    """
+    return {
+        "displayName": "テストユーザー",
+        "userId": "U_test_line_user_id_123",
+        "pictureUrl": "https://example.com/pic.jpg",
+        "statusMessage": "テストステータス",
     }
