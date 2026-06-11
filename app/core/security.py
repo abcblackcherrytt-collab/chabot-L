@@ -10,8 +10,11 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
-from jose import JWTError, jwt
+
+import jwt as pyjwt
+from jwt import PyJWTError
 from passlib.context import CryptContext
+
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -79,7 +82,7 @@ def create_access_token(
     if additional_claims:
         to_encode.update(additional_claims)
 
-    encoded_jwt = jwt.encode(
+    encoded_jwt = pyjwt.encode(
         to_encode,
         settings.jwt_secret_keys_list[0],  # 最新のシークレットキーを使用
         algorithm=settings.jwt_algorithm,
@@ -120,7 +123,7 @@ def create_refresh_token(
     if additional_claims:
         to_encode.update(additional_claims)
 
-    encoded_jwt = jwt.encode(
+    encoded_jwt = pyjwt.encode(
         to_encode,
         settings.jwt_secret_keys_list[0],  # 最新のシークレットキーを使用
         algorithm=settings.jwt_algorithm,
@@ -145,13 +148,13 @@ def decode_token(token: str) -> Dict[str, Any] | None:
     # すべてのシークレットキーで検証を試行
     for secret_key in settings.jwt_secret_keys_list:
         try:
-            payload = jwt.decode(
+            payload = pyjwt.decode(
                 token,
                 secret_key,
                 algorithms=[settings.jwt_algorithm],
             )
             return payload
-        except JWTError:
+        except PyJWTError:
             continue
 
     return None

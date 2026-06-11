@@ -54,8 +54,8 @@ jobs:
           pytest tests/unit/ -v --tb=short
           pytest tests/integration/ -v --tb=short
         env:
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
-          TEST_DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          TEST_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
 
       # Authenticate with Google Cloud using Workload Identity Federation
       - name: Authenticate to Google Cloud
@@ -107,11 +107,12 @@ jobs:
             --allow-unauthenticated \
             --memory=512Mi \
             --cpu=1 \
-            --max-instances=100 \
+            --max-instances=3 \
             --min-instances=0 \
-            --timeout=300s \
+            --timeout=60s \
             --concurrency=80 \
             --service-account=$SERVICE_ACCOUNT \
+            --set-cloudsql-instances=$PROJECT_ID:$REGION:chabot-postgres \
             --set-env-vars=APP_ENV=$APP_ENV,GIT_SHA=$CURRENT_SHA_SHORT \
             --set-secrets=LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,LINE_LOGIN_CHANNEL_ID=line-login-channel-id:latest,LINE_LOGIN_CHANNEL_SECRET=line-login-channel-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=jwt-secret-keys:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID=google-corpus-id:latest,DATABASE_URL=database-url:latest \
             --labels=commit-sha=$CURRENT_SHA_SHORT,deployed-by=github-actions,workflow-run=$GITHUB_RUN_NUMBER

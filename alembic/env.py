@@ -12,6 +12,11 @@ from app.db.base import Base
 # 全モデルをインポート（Base.metadata に反映させるため）
 from app.models.user import User  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
+from app.models.subscription import Subscription  # noqa: F401
+from app.models.usage_daily import UsageDaily  # noqa: F401
+from app.models.rag_permission import RagPermission  # noqa: F401
+from app.models.conversation import Conversation  # noqa: F401
+from app.models.stripe_event import StripeEvent  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
