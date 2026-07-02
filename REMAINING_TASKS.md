@@ -56,34 +56,34 @@ Chabot LINE 残タスクリスト
 - [x] Workload Identity Federation 設定（GitHub Actions → GCP 認証）
   - [x] Workload Identity Pool 作成 — ✅ `github-actions-pool` 存在確認
   - [x] Workload Identity Provider 作成（GitHub OIDC）— ✅ `github-actions-provider` 存在確認
-  - [ ] サービスアカウントに GitHub リポジトリのバインディングを追加
+  - [x] サービスアカウントに GitHub リポジトリのバインディングを追加
+    - ✅ `github-actions-deploy@takahashi-451312.iam.gserviceaccount.com` に `abcblackcherrytt-collab/chabot-L` をバインディング
+      - `roles/iam.workloadIdentityUser` を `principalSet://.../attribute.repository/abcblackcherrytt-collab/chabot-L` に付与
+      - Provider の `attribute_condition` にも `chabot-L` を追加（既存 `ai-podcast` / `python_quiz` は保持）
 
 ### GitHub Actions Secrets
-- [ ] `GCP_PROJECT_ID` — GCP プロジェクト ID
-- [ ] `GCP_WORKLOAD_IDENTITY_PROVIDER` — Workload Identity Provider のフルパス
-- [ ] `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT` — GitHub Actions 用サービスアカウント
-- [ ] `GCP_SERVICE_ACCOUNT` — Cloud Run 用サービスアカウント
+- [x] `GCP_PROJECT_ID` — GCP プロジェクト ID
+- [x] `GCP_WORKLOAD_IDENTITY_PROVIDER` — Workload Identity Provider のフルパス
+- [x] `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT` — GitHub Actions 用サービスアカウント
+- [x] `GCP_SERVICE_ACCOUNT` — Cloud Run 用サービスアカウント
 
 ### Google Secret Manager 登録
 deploy.yml の `--set-secrets` で参照される全シークレットを登録：
 
-⚠️ 現在 Secret Manager には **Discord 関連シークレットのみ** 登録済み。LINE/Stripe/JWT/Google/DB はすべて未登録。
+✅ LINE 関連4シークレットは登録済み。⚠️ 残り Stripe/JWT/Google/DB は未登録（.env の値はテスト用/プレースホルダーなので本番値の用意が必要）。✅ 旧 Discord 用シークレット（`DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `discord_api_base_url`, `discord_webhook_secret`, `APPLICATION_ID`, `PUBLIC_KEY`）は削除済み。
 
 **LINE Messaging API:**
-- [ ] `line-channel-secret` — LINE Messaging API チャネルシークレット
-- [ ] `line-channel-access-token` — LINE Messaging API チャネルアクセストークン（長期）
+- [x] `line-channel-secret` — LINE Messaging API チャネルシークレット（✅ 登録済み）
+- [x] `line-channel-access-token` — LINE Messaging API チャネルアクセストークン（長期）（✅ 登録済み）
 
 **LINE Login (OIDC):**
-- [ ] `line-login-channel-id` — LINE Login チャネル ID
-- [ ] `line-login-channel-secret` — LINE Login チャネルシークレット
+- [x] `line-login-channel-id` — LINE Login チャネル ID（✅ 登録済み）
+- [x] `line-login-channel-secret` — LINE Login チャネルシークレット（✅ 登録済み）
 
 **Stripe:**
-- [ ] `stripe-secret-key` — Stripe シークレットキー（本番: `sk_live_...`）
-  - ℹ️ .env にテストキー `sk_test_...` あり（Secret Manager への登録は未）
-- [ ] `stripe-webhook-secret` — Stripe Webhook 署名シークレット（本番: `whsec_...`）
-  - ℹ️ .env にテスト用 `whsec_...` あり
-- [ ] `stripe-publishable-key` — Stripe パブリッシャブルキー（本番: `pk_live_...`）
-  - ℹ️ .env にテストキー `pk_test_...` あり
+- [x] `stripe-secret-key` — Stripe シークレットキー（✅ テストキー `sk_test_...` で登録済み・本番切替時に `sk_live_...` に更新）
+- [x] `stripe-webhook-secret` — Stripe Webhook 署名シークレット（✅ テスト値 `whsec_...` で登録済み・本番切替時に更新）
+- [x] `stripe-publishable-key` — Stripe パブリッシャブルキー（✅ テストキー `pk_test_...` で登録済み・本番切替時に `pk_live_...` に更新）
 
 **認証:**
 - [ ] `jwt-secret-keys` — JWT 署名キー（カンマ区切りで複数対応）
@@ -190,7 +190,7 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
 
 ## 🟡 推奨（安定性・UX向上）
 
-> ✅ .env をクリーンアップ済み: Discord 設定を削除、LINE Messaging API / LINE Login 設定を追加、`GOOGLE_PROJECT_ID` を `takahashi-451312` に修正。
+> ✅ .env をクリーンアップ済み: LINE Messaging API / LINE Login 設定を追加、`GOOGLE_PROJECT_ID` を `takahashi-451312` に修正。
 
 ### セッション管理
 - [ ] auth_line.py: state/nonce の保存をインメモリから Redis 等に移行
@@ -275,3 +275,22 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
 - [ ] Cloud Run min instances を 1 に設定（コールドスタート回避）
 - [ ] Cloud Armor による WAF 保護
 - [ ] 複数リージョン展開（ディザスタリカバリ）
+
+## 🆕 2026-07-02 追加対応（code_issues.md の調査で新規発見・対応完了）
+
+> code_issues.md で実施した包括的コードレビューにより発見された問題のうち、
+> 2026-07-02 に対応完了した項目。詳細・残タスクは code_issues.md 参照。
+
+- [x] Stripe クライアントの非同期化（同期SDKの await による即停止バグ）→ [H2]
+- [x] DBスキーマ整合: User.id を String(36) UUID に統一、_generate_user_id(37文字) を廃止 → [H5]
+- [x] line_user_id を nullable=True に統一（Email/Password・LINE 両ユーザー型を許容）→ [H6]
+- [x] refresh_tokens.id/user_id を String(36) に統一、FK参照整合を解消 → [M7]
+      ※ 副次: auth_service.py の JTI 生成（refresh_jti/access_jti）を36文字UUIDに短縮
+- [x] aiosqlite を requirements-dev.txt に追加、CI で requirements-dev.txt をインストール → [H10]
+- [x] seed_test_data.py のDBパスワード平文ハードコードを settings.database_url に変更 → [H11]
+      ⚠️ git履歴に残存する旧DBパスワードのローテーションが別途必要（文字列は伏せ字）
+- [x] deps.py の payload["sub"] 直接アクセスを .get + 401処理に変更 → [M24]
+- [x] test_stripe*.py の pre-existing バグ9件を修正（H2 検証完了）
+- [x] 検証: pytest 75 passed / alembic upgrade head が PostgreSQL 16 で成功 / autogenerate でスキーマ差分ゼロ確認
+
+※ ローカル開発DBはスキーマ変更（初期マイグレ直接修正）により再構築が必要 → todo.txt [D0] 参照

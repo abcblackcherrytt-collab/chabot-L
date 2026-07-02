@@ -60,7 +60,6 @@ class UserRepository(BaseRepository[User]):
         """
         return await self.create(
             {
-                "id": self._generate_user_id(),
                 "email": email,
                 "hashed_password": hashed_password,
                 "role": role,
@@ -95,17 +94,6 @@ class UserRepository(BaseRepository[User]):
             return None
 
         return user
-
-    def _generate_user_id(self) -> str:
-        """
-        一意のユーザーIDを生成します
-
-        Returns:
-            一意のユーザーID
-        """
-        import uuid
-
-        return f"user_{uuid.uuid4().hex}"
 
     async def is_email_exists(self, email: str) -> bool:
         """

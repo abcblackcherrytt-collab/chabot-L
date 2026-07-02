@@ -3,6 +3,7 @@ Stripeクライアント
 Stripeとの通信を管理するクライアントを定義します。
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -166,7 +167,7 @@ class StripeClient(BaseClient):
 
         return cleared_count
 
-    def create_customer(
+    async def create_customer(
         self,
         email: str,
         name: str | None = None,
@@ -195,7 +196,9 @@ class StripeClient(BaseClient):
             if metadata:
                 customer_data["metadata"] = metadata
 
-            customer = stripe.Customer.create(**customer_data)
+            customer = await asyncio.to_thread(
+                stripe.Customer.create, **customer_data
+            )
             logger.info(f"Customer created: {customer.id}")
             return customer
 
@@ -203,7 +206,7 @@ class StripeClient(BaseClient):
             logger.error(f"Customer creation error: {e}")
             raise StripeError(f"顧客作成エラー: {e}")
 
-    def create_subscription(
+    async def create_subscription(
         self,
         customer_id: str,
         price_id: str,
@@ -237,7 +240,9 @@ class StripeClient(BaseClient):
             if metadata:
                 subscription_data["metadata"] = metadata
 
-            subscription = stripe.Subscription.create(**subscription_data)
+            subscription = await asyncio.to_thread(
+                stripe.Subscription.create, **subscription_data
+            )
             logger.info(f"Subscription created: {subscription.id}")
             return subscription
 
@@ -245,7 +250,7 @@ class StripeClient(BaseClient):
             logger.error(f"Subscription creation error: {e}")
             raise StripeError(f"サブスクリプション作成エラー: {e}")
 
-    def cancel_subscription(
+    async def cancel_subscription(
         self,
         subscription_id: str,
     ) -> stripe.Subscription:
@@ -262,7 +267,8 @@ class StripeClient(BaseClient):
             StripeError: サブスクリプションキャンセルエラーが発生した場合
         """
         try:
-            subscription = stripe.Subscription.modify(
+            subscription = await asyncio.to_thread(
+                stripe.Subscription.modify,
                 subscription_id,
                 cancel_at_period_end=True,
             )
@@ -273,7 +279,7 @@ class StripeClient(BaseClient):
             logger.error(f"Subscription cancellation error: {e}")
             raise StripeError(f"サブスクリプションキャンセルエラー: {e}")
 
-    def retrieve_customer(
+    async def retrieve_customer(
         self,
         customer_id: str,
     ) -> stripe.Customer:
@@ -290,14 +296,16 @@ class StripeClient(BaseClient):
             StripeError: 顧客取得エラーが発生した場合
         """
         try:
-            customer = stripe.Customer.retrieve(customer_id)
+            customer = await asyncio.to_thread(
+                stripe.Customer.retrieve, customer_id
+            )
             return customer
 
         except stripe.error.StripeError as e:
             logger.error(f"Customer retrieval error: {e}")
             raise StripeError(f"顧客取得エラー: {e}")
 
-    def retrieve_subscription(
+    async def retrieve_subscription(
         self,
         subscription_id: str,
     ) -> stripe.Subscription:
@@ -314,14 +322,16 @@ class StripeClient(BaseClient):
             StripeError: サブスクリプション取得エラーが発生した場合
         """
         try:
-            subscription = stripe.Subscription.retrieve(subscription_id)
+            subscription = await asyncio.to_thread(
+                stripe.Subscription.retrieve, subscription_id
+            )
             return subscription
 
         except stripe.error.StripeError as e:
             logger.error(f"Subscription retrieval error: {e}")
             raise StripeError(f"サブスクリプション取得エラー: {e}")
 
-    def list_subscriptions(
+    async def list_subscriptions(
         self,
         customer: str,
     ) -> stripe.ListObject:
@@ -338,14 +348,16 @@ class StripeClient(BaseClient):
             StripeError: サブスクリプション取得エラーが発生した場合
         """
         try:
-            subscriptions = stripe.Subscription.list(customer=customer)
+            subscriptions = await asyncio.to_thread(
+                stripe.Subscription.list, customer=customer
+            )
             return subscriptions
 
         except stripe.error.StripeError as e:
             logger.error(f"Subscriptions list error: {e}")
             raise StripeError(f"サブスクリプション一覧取得エラー: {e}")
 
-    def list_prices(
+    async def list_prices(
         self,
         lookup_keys: list[str] | None = None,
     ) -> list[stripe.Price]:
@@ -367,7 +379,7 @@ class StripeClient(BaseClient):
             if lookup_keys:
                 params["lookup_keys"] = lookup_keys
 
-            prices = stripe.Price.list(**params)
+            prices = await asyncio.to_thread(stripe.Price.list, **params)
             return prices.data
 
         except stripe.error.StripeError as e:

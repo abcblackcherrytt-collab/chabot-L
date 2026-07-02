@@ -13,7 +13,7 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-chabot-sa@PROJECT_ID.iam.gserviceaccount.com
 # Google Cloud services
 VERTEX_AI_SERVICE_ACCOUNT="${VERTEX_AI_SERVICE_ACCOUNT:-service-PROJECT_NUMBER@gcp-sa-aiplatform.iam.gserviceaccount.com}"
 STRIPE_SECRET_ID="${STRIPE_SECRET_ID:-stripe-secret-key}"
-DISCODE_SECRET_ID="${DISCODE_SECRET_ID:-discode-api-key}"
+LINE_SECRET_ID="${LINE_SECRET_ID:-line-channel-secret}"
 
 # Colors
 RED='\033[0;31m'
@@ -98,7 +98,7 @@ gcloud secrets add-iam-policy-binding ${STRIPE_SECRET_ID} \
     --role="roles/secretmanager.secretAccessor" \
     --member="serviceAccount:${SERVICE_ACCOUNT}"
 
-gcloud secrets add-iam-policy-binding ${DISCODE_SECRET_ID} \
+gcloud secrets add-iam-policy-binding ${LINE_SECRET_ID} \
     --role="roles/secretmanager.secretAccessor" \
     --member="serviceAccount:${SERVICE_ACCOUNT}"
 

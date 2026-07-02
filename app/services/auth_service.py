@@ -95,9 +95,9 @@ class AuthService:
                 keep_count=MAX_ACTIVE_SESSIONS - 1,
             )
 
-        # JTI（JWT ID）を生成
-        access_jti = f"access_{uuid.uuid4().hex}"
-        refresh_jti = f"refresh_{uuid.uuid4().hex}"
+        # JTI（JWT ID）を生成（36文字のUUID形式。RefreshToken.id=String(36) に収めるため）
+        access_jti = str(uuid.uuid4())
+        refresh_jti = str(uuid.uuid4())
 
         # アクセストークンを作成
         access_token, access_expires_at = create_access_token(

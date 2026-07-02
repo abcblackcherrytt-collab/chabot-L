@@ -51,11 +51,20 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    user_id = payload.get("sub")
+    if not user_id:
+        logger.warning("Access token payload missing 'sub' claim")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_repo = UserRepository(db)
-    user = await user_repo.get(payload["sub"])
+    user = await user_repo.get(user_id)
 
     if not user:
-        logger.warning(f"User not found: {payload['sub']}")
+        logger.warning(f"User not found: {user_id}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",

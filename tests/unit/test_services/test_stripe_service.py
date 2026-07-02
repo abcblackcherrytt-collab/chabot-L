@@ -103,15 +103,29 @@ class TestStripeService:
         """
         顧客のサブスクリプション一覧取得が成功することをテスト
         """
-        mock_customer = MagicMock()
-        mock_customer.subscriptions = MagicMock()
-        mock_customer.subscriptions.data = [
-            MagicMock(id="sub_test123", status="active"),
-            MagicMock(id="sub_test456", status="canceled"),
+        def make_subscription(sub_id, status, has_price):
+            sub = MagicMock()
+            sub.id = sub_id
+            sub.status = status
+            sub.current_period_start = 1234567890
+            sub.current_period_end = 1234567890 + 2592000
+            sub.cancel_at_period_end = False
+            if has_price:
+                item = MagicMock()
+                item.price.id = "price_test123"
+                sub.items.data = [item]
+            else:
+                sub.items.data = []
+            return sub
+
+        mock_subscriptions = MagicMock()
+        mock_subscriptions.data = [
+            make_subscription("sub_test123", "active", has_price=True),
+            make_subscription("sub_test456", "canceled", has_price=False),
         ]
 
         mock_client = AsyncMock()
-        mock_client.retrieve_customer = AsyncMock(return_value=mock_customer)
+        mock_client.list_subscriptions = AsyncMock(return_value=mock_subscriptions)
 
         service = StripeService(stripe_client=mock_client)
 
@@ -119,8 +133,10 @@ class TestStripeService:
 
         assert len(result) == 2
         assert result[0]["id"] == "sub_test123"
+        assert result[0]["price_id"] == "price_test123"
         assert result[1]["id"] == "sub_test456"
-        mock_client.retrieve_customer.assert_called_once_with("cus_test123")
+        assert result[1]["price_id"] is None
+        mock_client.list_subscriptions.assert_called_once_with(customer="cus_test123")
 
     @pytest.mark.asyncio
     async def test_list_prices_success(self):
@@ -157,13 +173,14 @@ class TestStripeService:
         assert result[0]["interval"] == "month"
         mock_client.list_prices.assert_called_once()
 
-    def test_process_webhook_event_invoice_paid(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_invoice_paid(self):
         """
         invoice.paid イベントが正しく処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -180,18 +197,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
 
-    def test_process_webhook_event_invoice_payment_failed(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_invoice_payment_failed(self):
         """
         invoice.payment_failed イベントが正しく処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -207,18 +225,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
 
-    def test_process_webhook_event_subscription_created(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_subscription_created(self):
         """
         customer.subscription.created イベントが正しく処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -234,18 +253,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
 
-    def test_process_webhook_event_subscription_updated(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_subscription_updated(self):
         """
         customer.subscription.updated イベントが正しく処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -264,18 +284,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
 
-    def test_process_webhook_event_subscription_deleted(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_subscription_deleted(self):
         """
         customer.subscription.deleted イベントが正しく処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -291,18 +312,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
 
-    def test_process_webhook_event_already_processed(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_already_processed(self):
         """
         既に処理済みのイベントがスキップされることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=True)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=True)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -318,18 +340,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_not_called()
 
-    def test_process_webhook_event_missing_id(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_missing_id(self):
         """
         IDがないイベントが適切に処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -342,18 +365,19 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is False
         mock_client.is_event_processed.assert_not_called()
 
-    def test_process_webhook_event_unhandled_type(self):
+    @pytest.mark.asyncio
+    async def test_process_webhook_event_unhandled_type(self):
         """
         不明なイベントタイプが適切に処理されることをテスト
         """
-        mock_client = AsyncMock()
-        mock_client.is_event_processed = AsyncMock(return_value=False)
-        mock_client.mark_event_processed = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.is_event_processed = MagicMock(return_value=False)
+        mock_client.mark_event_processed = MagicMock()
 
         service = StripeService(stripe_client=mock_client)
 
@@ -366,7 +390,7 @@ class TestStripeService:
             },
         }
 
-        result = service.process_webhook_event(event)
+        result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_not_called()

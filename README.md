@@ -1,12 +1,12 @@
 # Chabot
 
-FastAPI + Vertex AI RAG + Discord Bot + Stripe を組み合わせた AI チャットボットサービス。
+FastAPI + Vertex AI RAG + LINE Bot + Stripe を組み合わせた AI チャットボットサービス。
 
 ## 機能
 
 - **FastAPI**: 高速な非同期APIサーバー
 - **Vertex AI RAG**: Google Cloud Vertex AI を使用したRAG（検索拡張生成）
-- **Discord Bot**: Discordサーバーとの統合
+- **LINE Bot**: LINE Messaging API との統合
 - **Stripe**: 決済処理統合
 - **JWT認証**: セキュアな認証システム
 - **PostgreSQL**: データベース管理
@@ -97,7 +97,10 @@ uvicorn app.server:app --reload --host 0.0.0.0 --port 8000
 | `DEBUG` | デバッグモード | `True` |
 | `DATABASE_URL` | データベース接続URL | `postgresql+asyncpg://user:password@localhost:5432/chabot` |
 | `JWT_SECRET_KEYS` | JWTシークレットキー（カンマ区切り） | - |
-| `DISCORD_BOT_TOKEN` | Discordボットトークン | - |
+| `LINE_CHANNEL_SECRET` | LINE Messaging API チャネルシークレット | - |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API チャネルアクセストークン | - |
+| `LINE_LOGIN_CHANNEL_ID` | LINE Login チャネルID | - |
+| `LINE_LOGIN_CHANNEL_SECRET` | LINE Login チャネルシークレット | - |
 | `STRIPE_SECRET_KEY` | Stripeシークレットキー | - |
 | `GOOGLE_PROJECT_ID` | Google CloudプロジェクトID | - |
 | `GOOGLE_CORPUS_ID` | Vertex AIコーパスID | - |
@@ -111,7 +114,8 @@ uvicorn app.server:app --reload --host 0.0.0.0 --port 8000
 1. Google Secret Manager にシークレットを登録
 
 ```bash
-gcloud secrets create discode-api-key --data-file="discode-api-key.txt"
+gcloud secrets create line-channel-secret --data-file="line-channel-secret.txt"
+gcloud secrets create line-channel-access-token --data-file="line-channel-access-token.txt"
 gcloud secrets create stripe-secret-key --data-file="stripe-secret-key.txt"
 # ... 他のシークレットも同様に登録
 ```

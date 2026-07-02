@@ -123,10 +123,6 @@ uploads/
 assets/
 static/media/
 
-# Alembic migrations (keep __init__.py but exclude version files)
-!alembic/versions/__init__.py
-alembic/versions/*.py
-
 # Developer directory
 developer/
 setting/
@@ -140,6 +136,7 @@ TASKS.md
 # Local project notes
 project/
 database.md
+code_issues.md
 
 review.txt
 プロジェクト概要.yml

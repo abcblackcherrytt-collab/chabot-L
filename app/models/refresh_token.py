@@ -28,7 +28,7 @@ class RefreshToken(Base, TimestampMixin):
 
     # 主キー
     id: Mapped[str] = mapped_column(
-        String(255),
+        String(36),
         primary_key=True,
         index=True,
         comment="トークンID（JTI）",
@@ -36,7 +36,7 @@ class RefreshToken(Base, TimestampMixin):
 
     # 外部キー
     user_id: Mapped[str] = mapped_column(
-        String(255),
+        String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

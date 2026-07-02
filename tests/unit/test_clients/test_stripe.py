@@ -125,14 +125,15 @@ class TestStripeClient:
         assert "evt_new123" in client._processed_events
 
     @patch("app.clients.stripe.stripe.Customer.create")
-    def test_create_customer_success(self, mock_customer_create, mock_stripe_customer):
+    @pytest.mark.asyncio
+    async def test_create_customer_success(self, mock_customer_create, mock_stripe_customer):
         """
         顧客作成が成功することをテスト
         """
         mock_customer_create.return_value = mock_stripe_customer
 
         client = StripeClient()
-        customer = client.create_customer(
+        customer = await client.create_customer(
             email="test@example.com",
             name="Test User",
             metadata={"user_id": "123"},
@@ -144,7 +145,8 @@ class TestStripeClient:
         mock_customer_create.assert_called_once()
 
     @patch("app.clients.stripe.stripe.Customer.create")
-    def test_create_customer_error(self, mock_customer_create):
+    @pytest.mark.asyncio
+    async def test_create_customer_error(self, mock_customer_create):
         """
         顧客作成エラーが適切に処理されることをテスト
         """
@@ -153,12 +155,13 @@ class TestStripeClient:
         client = StripeClient()
 
         with pytest.raises(StripeError) as exc_info:
-            client.create_customer(email="test@example.com")
+            await client.create_customer(email="test@example.com")
 
         assert "顧客作成エラー" in str(exc_info.value)
 
     @patch("app.clients.stripe.stripe.Subscription.create")
-    def test_create_subscription_success(
+    @pytest.mark.asyncio
+    async def test_create_subscription_success(
         self,
         mock_subscription_create,
         mock_stripe_subscription
@@ -169,7 +172,7 @@ class TestStripeClient:
         mock_subscription_create.return_value = mock_stripe_subscription
 
         client = StripeClient()
-        subscription = client.create_subscription(
+        subscription = await client.create_subscription(
             customer_id="cus_test123",
             price_id="price_test123",
             payment_method_id="pm_test123",
@@ -182,7 +185,8 @@ class TestStripeClient:
         mock_subscription_create.assert_called_once()
 
     @patch("app.clients.stripe.stripe.Subscription.modify")
-    def test_cancel_subscription_success(
+    @pytest.mark.asyncio
+    async def test_cancel_subscription_success(
         self,
         mock_subscription_modify,
         mock_stripe_subscription
@@ -194,7 +198,7 @@ class TestStripeClient:
         mock_subscription_modify.return_value = mock_stripe_subscription
 
         client = StripeClient()
-        subscription = client.cancel_subscription("sub_test123")
+        subscription = await client.cancel_subscription("sub_test123")
 
         assert subscription.cancel_at_period_end is True
         mock_subscription_modify.assert_called_once_with(
@@ -203,21 +207,23 @@ class TestStripeClient:
         )
 
     @patch("app.clients.stripe.stripe.Customer.retrieve")
-    def test_retrieve_customer_success(self, mock_customer_retrieve, mock_stripe_customer):
+    @pytest.mark.asyncio
+    async def test_retrieve_customer_success(self, mock_customer_retrieve, mock_stripe_customer):
         """
         顧客取得が成功することをテスト
         """
         mock_customer_retrieve.return_value = mock_stripe_customer
 
         client = StripeClient()
-        customer = client.retrieve_customer("cus_test123")
+        customer = await client.retrieve_customer("cus_test123")
 
         assert customer.id == "cus_test123"
         assert customer.email == "test@example.com"
         mock_customer_retrieve.assert_called_once_with("cus_test123")
 
     @patch("app.clients.stripe.stripe.Subscription.retrieve")
-    def test_retrieve_subscription_success(
+    @pytest.mark.asyncio
+    async def test_retrieve_subscription_success(
         self,
         mock_subscription_retrieve,
         mock_stripe_subscription
@@ -228,14 +234,15 @@ class TestStripeClient:
         mock_subscription_retrieve.return_value = mock_stripe_subscription
 
         client = StripeClient()
-        subscription = client.retrieve_subscription("sub_test123")
+        subscription = await client.retrieve_subscription("sub_test123")
 
         assert subscription.id == "sub_test123"
         assert subscription.status == "active"
         mock_subscription_retrieve.assert_called_once_with("sub_test123")
 
     @patch("app.clients.stripe.stripe.Price.list")
-    def test_list_prices_success(self, mock_price_list):
+    @pytest.mark.asyncio
+    async def test_list_prices_success(self, mock_price_list):
         """
         価格一覧取得が成功することをテスト
         """
@@ -257,7 +264,7 @@ class TestStripeClient:
         ]
 
         client = StripeClient()
-        prices = client.list_prices()
+        prices = await client.list_prices()
 
         assert len(prices) == 2
         assert prices[0].id == "price_test123"

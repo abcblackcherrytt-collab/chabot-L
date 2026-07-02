@@ -37,11 +37,11 @@ class User(Base, TimestampMixin):
     )
 
     # LINE連携（PII扱い - 個人情報として適切に取り扱うこと）
-    line_user_id: Mapped[str] = mapped_column(
+    line_user_id: Mapped[Optional[str]] = mapped_column(
         String(255),
         unique=True,
         index=True,
-        nullable=False,
+        nullable=True,
         comment="LINE ユーザーID（PII）",
     )
 

@@ -4,14 +4,21 @@
 """
 
 import asyncio
+import sys
 import uuid
 from datetime import date, datetime, timezone, timedelta
+from pathlib import Path
+
+# プロジェクトルートを sys.path に追加（app パッケージを解決するため）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-# データベース接続URL（.envに合わせる）
-DATABASE_URL = "postgresql+asyncpg://root:11taKahashi26@localhost:5432/chabot"
+from app.core.config import settings
+
+# データベース接続URL（.env から読み込み）
+DATABASE_URL = settings.database_url
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
