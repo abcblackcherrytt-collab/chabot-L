@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     line_login_callback_url: str = ""
 
     # Stripe設定
+    # [Phase 2] Phase 1（現在）ではプレースホルダー値のまま起動（Stripe/DB 未接続で動作）。
+    #   Phase 2 で本番値を Secret Manager から注入（todo.txt [C5][E5]）。
     stripe_secret_key: str = "sk_test_your-stripe-secret-key"
     stripe_webhook_secret: str = "whsec_your-webhook-secret"
     stripe_publishable_key: str = "pk_test_your-stripe-publishable-key"

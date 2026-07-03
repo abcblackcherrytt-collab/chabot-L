@@ -1,7 +1,12 @@
 """
 LINE メッセージングサービス
 LINE Messaging API を使用したビジネスロジックを定義します。
-ユーザー管理、メッセージ処理、サブスクリプション連携を行います。
+
+Phase 1（現在）: follow=ウェルカム送信、message=RAG応答生成のみ。
+  ユーザー永続化・サブスクリプション検証は行わない（DB/Stripe 未接続で動作。
+  友だち追加だけでボット利用可能）。
+Phase 2: ユーザー管理・サブスクリプション連携を追加。詳細はコード内
+  [Phase 2] マーカー、および todo.txt / REMAINING_TASKS.md の「Phase 2」セクション参照。
 """
 
 import logging
@@ -19,7 +24,9 @@ class LineService:
     LINE メッセージングサービス
 
     LINEとの連携におけるビジネスロジックを管理します。
-    メッセージ処理、ユーザー管理、サブスクリプション検証を行います。
+
+    Phase 1（現在）: メッセージ処理（RAG応答）のみ。ユーザー管理・サブスクリプション
+      検証は行わない（後で有効化）。
     """
 
     def __init__(
@@ -114,8 +121,15 @@ class LineService:
             f"Processing message from LINE user: {self._mask_user_id(line_user_id)}"
         )
 
-        # TODO: ユーザー認識・サブスクリプション検証を追加
-        # 現在はメッセージをそのままRAGサービスに渡す
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: ユーザー認識・サブスクリプション検証なし。
+        #   メッセージをそのままRAGサービスに渡す（友だち追加だけで利用可能）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
+        #   - Subscription.is_active_paid() でサブスク検証（未契約/期限切れは制限）
+        #   - 検証結果を result に持たせ、webhooks/line.py 側で分岐
+        # 関連: deps.py require_active_subscription [Phase 2 マーカー D2]
+        # ===================================================================
         return {
             "status": "processed",
             "reply_token": reply_token,
@@ -130,7 +144,8 @@ class LineService:
         """
         フォローイベント（友だち追加）を処理します
 
-        新規ユーザーをDBに登録するか、既存ユーザーを再有効化します。
+        Phase 1（現在）: ウェルカムメッセージ送信のみ（DB 登録・Stripe 連携なし）。
+        Phase 2: ユーザー作成/再有効化と Stripe 顧客作成を追加（下記 [Phase 2] マーカー）。
 
         Args:
             event: フォローイベントオブジェクト
@@ -155,10 +170,18 @@ class LineService:
         except LINEError as e:
             logger.warning(f"Failed to get profile: {e}")
 
-        # TODO: DB でユーザー作成または再有効化
-        # UserRepository.find_by_line_user_id(line_user_id)
-        # → 存在しない場合は新規作成
-        # → 存在する場合は is_active = True に更新
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB ユーザー作成も Stripe 顧客作成も行わない。
+        # Phase 2 で有効化する接続ポイント:
+        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー検索
+        #     → 存在しない場合は新規作成
+        #     → 存在する場合は is_active = True に更新
+        #   - StripeService.create_customer(user) で Stripe 顧客作成し
+        #     UserRepository.update_stripe_customer_id() で紐付け
+        # 関連: repositories/user.py [Phase 2 マーカー H1]、
+        #       stripe_service.create_customer [Phase 2 マーカー G1]
+        # ===================================================================
+        # TODO: DB でユーザー作成または再有効化（Phase 2 で上記を実装）
 
         # ウェルカムメッセージ送信
         welcome_msg = (
@@ -181,7 +204,8 @@ class LineService:
         """
         アンフォローイベント（ブロック・友だち削除）を処理します
 
-        ユーザーを無効化し、セッションをクリアします。
+        Phase 1（現在）: ログ記録のみ（DB 無効化なし）。
+        Phase 2: ユーザー無効化・リフレッシュトークン削除を追加（下記 [Phase 2] マーカー）。
 
         Args:
             event: アンフォローイベントオブジェクト
@@ -197,10 +221,14 @@ class LineService:
 
         logger.info(f"Unfollow from: {self._mask_user_id(line_user_id)}")
 
-        # TODO: DB でユーザー無効化
-        # UserRepository.find_by_line_user_id(line_user_id)
-        # → is_active = False
-        # → refresh_tokens を全削除
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB ユーザー無効化は行わない。
+        # Phase 2 で有効化する接続ポイント:
+        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
+        #     → is_active = False
+        #     → refresh_tokens を全削除（RefreshTokenRepository.revoke_all_by_user）
+        # 関連: repositories/user.py [Phase 2 マーカー H1]
+        # ===================================================================
 
         return {
             "status": "processed",
@@ -231,6 +259,9 @@ class LineService:
 
         # ポストバックデータに応じた処理
         if postback_data == "action=subscribe":
+            # [Phase 2] Stripe Checkout / Customer Portal へ誘導する接続ポイント。
+            # Phase 2 で StripeService.create_subscription(price_id) を呼ぶか、
+            # LIFF 決済ページへ誘導する。現状はプレースホルダー応答。
             await self._send_reply(
                 reply_token,
                 "サブスクリプションページへ移動します。\n（※決済ページURLは後ほど設定されます）",
@@ -261,6 +292,10 @@ class LineService:
 
         解約通知、支払い失敗通知などで使用します。
         Push API を使用するため、ユーザーがBotをフォローしている必要があります。
+
+        [Phase 2] stripe_service の各 Webhook ハンドラ
+        （invoice.payment_failed / subscription.deleted 等）から呼ばれる。
+        Phase 1（現在）では未使用（呼び出し元なし）。
 
         Args:
             line_user_id: 送信先 LINE ユーザーID

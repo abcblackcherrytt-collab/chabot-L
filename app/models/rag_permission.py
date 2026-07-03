@@ -1,6 +1,9 @@
 """
 RAG権限モデル
 プラン別のRAG corpus・モデル設定を管理するデータベースモデルを定義します。
+
+[Phase 2] Phase 1（現在）では未使用（このモデルを読むサービス/リポジトリなし）。
+  Phase 2 でプラン別 RAG 制限に使用。シード投入は todo.txt [D2]（Phase 2）。
 """
 
 import uuid

@@ -55,6 +55,9 @@ async def lifespan(app: FastAPI):
 
     起動時にRAG/LINEサービスを初期化し、
     シャットダウン時にリソースを解放します。
+
+    Phase 1（現在）: Stripe/DB を起動時に初期化しない（LINE ボットは DB なしで動作）。
+    Phase 2: StripeService と DB 接続（init_db）の初期化をここに追加する接続ポイント。
     """
     # 起動時の処理
     logger.info(f"Starting {settings.app_name} ({settings.app_env})")

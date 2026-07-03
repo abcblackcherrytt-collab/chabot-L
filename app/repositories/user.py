@@ -106,3 +106,26 @@ class UserRepository(BaseRepository[User]):
             メールアドレスが存在すればTrue
         """
         return (await self.get_by_email(email)) is not None
+
+
+    # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+    # Phase 2 で以下のメソッドをこのクラスに追加（実装は置かない）:
+    #
+    #   async def find_by_line_user_id(self, line_user_id: str) -> User | None:
+    #       """LINE ユーザーID でユーザーを検索"""
+    #
+    #   async def find_by_stripe_customer_id(self, customer_id: str) -> User | None:
+    #       """Stripe カスタマーID でユーザーを検索"""
+    #
+    #   async def update_stripe_customer_id(
+    #       self, user_id: str, customer_id: str
+    #   ) -> None:
+    #       """ユーザーに Stripe カスタマーID を紐付け"""
+    #
+    # 呼び出し元:
+    #   - line_service._handle_follow_event [Phase 2 マーカー A4]
+    #   - line_service._handle_message_event [Phase 2 マーカー A2]
+    #   - line_service._handle_unfollow_event [Phase 2 マーカー A6]
+    #   - auth_line callback [Phase 2 マーカー C1]
+    #   - stripe_service 各 Webhook ハンドラ [Phase 2 マーカー G2-G6]
+    # ===================================================================

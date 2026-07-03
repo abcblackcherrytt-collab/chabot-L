@@ -29,6 +29,11 @@ async def _process_line_events(
     Webhook は即座に 200 OK を返す必要があるため、
     メッセージ処理はバックグラウンドタスクで実行します。
 
+    Phase 1（現在）のメインフロー（Stripe/DB 不要）:
+      message イベント → RAG 応答生成 → リプライ送信。
+    Phase 2: line_service.process_webhook_event 内でサブスク検証が入り、
+      result に制限/拒否フラグが設定される（下記 [Phase 2] マーカー参照）。
+
     Args:
         events: LINE イベントのリスト
         line_service: LineService インスタンス
@@ -42,6 +47,9 @@ async def _process_line_events(
                 continue
 
             # メッセージイベントの場合、RAGで応答生成
+            # [Phase 2] ここでサブスク検証結果を分岐する接続ポイント。
+            #   Phase 2 では result に制限/拒否フラグを持たせ、
+            #   未契約/期限切れの場合は RAG クエリせず制限メッセージを返す。
             if (
                 result.get("status") == "processed"
                 and result.get("message")

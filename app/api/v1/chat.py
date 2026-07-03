@@ -94,6 +94,8 @@ async def send_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
     http_request: Request,
+    # [Phase 2] Depends(require_active_subscription) に差し替えてサブスク必須化する接続ポイント。
+    #   現状（Phase 1）は JWT 認証のみでサブスクゲートなし。
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatResponse:
     """

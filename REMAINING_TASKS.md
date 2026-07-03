@@ -1,10 +1,27 @@
 Chabot LINE 残タスクリスト
 ============================
-最終更新: 2026-06-11
+最終更新: 2026-07-03（Phase 1 / Phase 2 再分類）
+
+================================================================================
+■ Phase 1（現在）: Stripe/DB なしで「友だち追加だけでボットが使える」状態
+================================================================================
+- 友だち追加（follow）だけでボット利用可能。Stripe 登録・DB ユーザー登録は不要。
+- follow=ウェルカム送信 / message=RAG応答 / unfollow=ログのみ。
+  LINE Login=都度JWT（非永続）/ Chat API=JWT認証のみ（サブスクゲートなし）。
+- 現状のコードは Stripe/DB 未接続で動作。下記【Phase 1】項目のみでボット稼働可能。
+
+■ Phase 2（後続フェーズ）: Stripe + SQL 顧客/サブスクリプション管理（後で有効化）
+================================================================================
+- コード中の `# [Phase 2 ...]` マーカー（grep -rn "\[Phase 2" app/）が接続ポイント。
+- Stripe 関連コード・モデル・マイグレーションは削除せず保持済み。
+- 本ファイルの【Phase 2】マーク項目、および末尾「Phase 2 コード実装マーカー対応表」参照。
+================================================================================
 
 ## 🔴 必須（本番稼働前に完了させること）
+※ 【Phase 1】= 今回（Stripe/DB なしで動かす）/ 【Phase 2】= Stripe + SQL 管理の有効化時
 
 ### GCP インフラ構築
+※ Cloud SQL / VPC は★【Phase 2】（Phase 1 は DB なしで起動）。API有効化・Artifact Registry・IAM は前提（完了）。
 - [x] GCP プロジェクト作成（または既存プロジェクトの選定）
   - ✅ プロジェクト `takahashi-451312` 存在確認（gcloud 確認済み）
 - [x] 課金設定を有効化
@@ -137,7 +154,7 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
   alembic upgrade head
   ```
 - [x] マイグレーション内容確認（line_user_id カラムが users テーブルに追加されること）
-- [ ] 初回デプロイ前に Cloud SQL でマイグレーションを実行
+- [ ] 初回デプロイ前に Cloud SQL でマイグレーションを実行　★【Phase 2】（DB 必須）
   ```bash
   # Cloud SQL Proxy 経由で実行
   cloud_sql_proxy -instances=<PROJECT>:asia-northeast1:<INSTANCE>=tcp:5432 &
@@ -145,15 +162,15 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
   ```
 
 ### セキュリティ（重要）
-- [ ] security.py: RS256 署名検証の本番実装
+- [ ] security.py: RS256 署名検証の本番実装　【Phase 1 推奨（LINE Login 用）・後回し可】
   - https://api.line.me/oauth2/v2.1/certs から JWKS 公開鍵を取得
   - ID トークンの署名を公開鍵で検証するロジックを実装
   - 現在はクレーム検証のみで署名検証がスキップされている（TODOコメント箇所）
-- [ ] Stripe Webhook Secret を本番用に更新
-- [ ] CORS_ALLOWED_ORIGINS を本番URLに設定
+- [ ] Stripe Webhook Secret を本番用に更新　★【Phase 2】
+- [ ] CORS_ALLOWED_ORIGINS を本番URLに設定　【Phase 1】
   - Cloud Run の環境変数または Secret Manager に追加検討
 
-### Stripe 連携
+### Stripe 連携　★【Phase 2】（Stripe + SQL 管理の有効化時）
 - [ ] Stripe Dashboard で Webhook エンドポイント登録（本番URL）
   - URL: `https://<Cloud Run URL>/api/v1/webhooks/stripe`
   - イベント: customer.subscription.created, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_failed
@@ -169,23 +186,23 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
 - [ ] stripe_service.py: invoice_payment_failed ハンドラにDB操作を実装
   - LINE 通知送信（支払い失敗の警告）
 
-### line_service.py の DB 連携
-- [ ] _handle_follow_event: UserRepository でユーザー作成/再有効化を実装
-- [ ] _handle_unfollow_event: UserRepository でユーザー無効化 + トークン削除を実装
-- [ ] _handle_message_event: ユーザー検索 + サブスクリプション状態チェックを実装
+### line_service.py の DB 連携　★【Phase 2】（コード内 [Phase 2] マーカー A2/A4/A6 が接続ポイント）
+- [ ] _handle_follow_event: UserRepository でユーザー作成/再有効化を実装 [マーカー A4]
+- [ ] _handle_unfollow_event: UserRepository でユーザー無効化 + トークン削除を実装 [マーカー A6]
+- [ ] _handle_message_event: ユーザー検索 + サブスクリプション状態チェックを実装 [マーカー A2]
   - is_active=False の場合は「契約が終了しています」メッセージを返す
 
-### auth_line.py の DB 連携
-- [ ] コールバックハンドラで UserRepository を使用してユーザー作成/取得
+### auth_line.py の DB 連携　★【Phase 2】（コード内 [Phase 2] マーカー C1 が接続ポイント）
+- [ ] コールバックハンドラで UserRepository を使用してユーザー作成/取得 [マーカー C1]
 - [ ] RefreshTokenRepository でリフレッシュトークンをDB保存
 
 ### デプロイパイプライン
-- [ ] deploy.yml に DB マイグレーションステップを追加
+- [ ] deploy.yml に DB マイグレーションステップを追加　★【Phase 2】（DB 必須）
   - Cloud SQL Proxy を使用したマイグレーション実行
   - デプロイ前（pre-deploy）で実行するようジョブを分離
-- [x] ヘルスチェックエンドポイント（`/health`）の実装確認
+- [x] ヘルスチェックエンドポイント（`/health`）の実装確認　【Phase 1 で使用】
   - deploy.yml が `/health` を叩いてデプロイ成功を判定
-- [ ] Cloud Scheduler トークンクリーンアップジョブの認証設定
+- [ ] Cloud Scheduler トークンクリーンアップジョブの認証設定　★【Phase 2】（DB 必須）
   - OIDC トークンによる認証を Cloud Run 側で検証
 
 ## 🟡 推奨（安定性・UX向上）
@@ -294,3 +311,53 @@ echo -n "YOUR_SECRET_VALUE" | gcloud secrets create SECRET_NAME --data-file=-
 - [x] 検証: pytest 75 passed / alembic upgrade head が PostgreSQL 16 で成功 / autogenerate でスキーマ差分ゼロ確認
 
 ※ ローカル開発DBはスキーマ変更（初期マイグレ直接修正）により再構築が必要 → todo.txt [D0] 参照
+
+
+## 🟦 Phase 2 コード実装マーカー対応表（Stripe + SQL 管理の有効化時）
+
+> コード中の `# [Phase 2 ...]` マーカー（`grep -rn "\[Phase 2" app/`）と実装タスクの対応。
+> Stripe 関連コード・モデル・マイグレーションは Phase 1 では未使用だが削除せず保持済み。
+
+### LINE アクティブフロー（app/services/line_service.py）
+- [Phase 2 マーカー A2] `_handle_message_event`: サブスク検証ゲート（Subscription.is_active_paid）
+- [Phase 2 マーカー A4] `_handle_follow_event`: ユーザー作成/再有効化 ＋ Stripe 顧客作成
+- [Phase 2 マーカー A6] `_handle_unfollow_event`: is_active=False ＋ リフレッシュトークン全削除
+- [Phase 2 マーカー A7] postback `action=subscribe`: Stripe Checkout / Customer Portal 誘導
+
+### LINE Webhook バックグラウンド（app/api/v1/webhooks/line.py）
+- [Phase 2 マーカー B2] `_process_line_events`: サブスク検証結果で RAG クエリを分岐
+
+### LINE Login（app/api/v1/auth_line.py）
+- [Phase 2 マーカー C1] callback: UserRepository でユーザー永続化 ＋ RefreshTokenRepository 保存
+- [Phase 2 マーカー C2] 仮 UUID を DB 検索した既存 ID に置換
+
+### 認証依存関係（app/core/deps.py）
+- [Phase 2 マーカー D2] `require_active_subscription` 依存関数を定義（is_active_paid でゲート）
+
+### Chat API（app/api/v1/chat.py）
+- [Phase 2 マーカー E1] `send_message` の Depends を require_active_subscription に差し替え
+
+### Stripe Webhook ハンドラ（app/services/stripe_service.py）
+- [Phase 2 マーカー G1] `create_customer`: follow / 初回ログイン時に呼び出し
+- [Phase 2 マーカー G2] `_handle_invoice_paid`: Subscription の請求期間更新
+- [Phase 2 マーカー G3] `_handle_invoice_payment_failed`: 支払い失敗の LINE 通知
+- [Phase 2 マーカー G4] `_handle_subscription_created`: Subscription レコード作成
+- [Phase 2 マーカー G5] `_handle_subscription_updated`: Subscription.status 更新
+- [Phase 2 マーカー G6] `_handle_subscription_deleted`: is_active=False ＋ トークン全削除 ＋ LINE 通知
+
+### データモデル・リポジトリ（接続ポイントの受口）
+- [Phase 2 マーカー H1] `repositories/user.py`: find_by_line_user_id / find_by_stripe_customer_id / update_stripe_customer_id を追加
+- [Phase 2 マーカー H2] `models/subscription.py`: is_active_paid / is_restricted を require_active_subscription から使用
+- [Phase 2 マーカー H3] `models/user.py`: stripe_customer_id カラムに顧客IDを書き込み
+- [Phase 2 マーカー H4] `models/stripe_event.py`: stripe_service の冪等性を DB 永続化
+- [Phase 2 マーカー H5] `models/rag_permission.py`: プラン別 RAG 制限（シードは todo.txt [D2]）
+
+### 設定・起動
+- [Phase 2 マーカー I1] `config.py`: Stripe 設定を本番値に（Secret Manager から注入）
+- [Phase 2 マーカー I2] `server.py` lifespan: StripeService ＋ DB 接続（init_db）の初期化を追加
+
+### Phase 2 再開手順
+1. `grep -rn "\[Phase 2" app/` で全マーカーを抽出
+2. 上記対応表と突き合わせ、ブロックマーカー内の疑似コードを実装に置換
+3. サブスクゲートは require_active_subscription（D2）→ chat.py（E1）→ message（A2）の順で構築
+4. Stripe Webhook ハンドラ（G2-G6）の DB 連携を実装

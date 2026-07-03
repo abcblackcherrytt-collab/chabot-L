@@ -42,6 +42,11 @@ class StripeService:
         """
         顧客を作成します
 
+        [Phase 2] Phase 1（現在）では未使用（呼び出し元なし）。
+        Phase 2 の接続ポイント:
+          - line_service._handle_follow_event でユーザー作成時に呼ぶ [Phase 2 マーカー A4]
+          - auth_line callback で初回ログイン時に呼ぶ [Phase 2 マーカー C1]
+
         Args:
             email: 顧客メールアドレス
             name: 顧客名（オプション）
@@ -348,9 +353,14 @@ class StripeService:
 
         logger.info(f"Invoice paid: subscription={subscription_id}, amount={invoice.get('amount')}")
 
-        # サブスクリプション状態を更新
-        # ここでは簡易実装
-        # 実際にはデータベースでサブスクリプション状態を更新
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB 更新なし（ログのみ）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - subscription_id から該当 Subscription レコードを特定し、
+        #     status / current_period_start / current_period_end を更新
+        # 関連: models/subscription.py [Phase 2 マーカー H2]
+        # ===================================================================
+        # （簡易実装：実際にはデータベースでサブスクリプション状態を更新）
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -389,7 +399,14 @@ class StripeService:
             f"attempt={attempt_count}"
         )
 
-        # TODO: LINE通知送信（支払い失敗の警告）
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: LINE 通知なし（ログのみ）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - user_repository.find_by_stripe_customer_id(invoice.get("customer"))
+        #   - line_service.send_subscription_notification(...) で支払い失敗を通知
+        # 関連: repositories/user.py [Phase 2 マーカー H1]
+        # ===================================================================
+        # TODO: LINE通知送信（支払い失敗の警告）（Phase 2 で実装）
         # user = await user_repository.find_by_stripe_customer_id(invoice.get("customer"))
         # if user and user.line_user_id:
         #     line_service.send_subscription_notification(
@@ -427,9 +444,14 @@ class StripeService:
 
         logger.info(f"Subscription created: {subscription.get('id')}, customer={customer_id}")
 
-        # サブスクリプション作成時の処理
-        # ここでは簡易実装
-        # 実際にはデータベースでサブスクリプション情報を登録
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB 登録なし（ログのみ）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - customer_id から user を特定し、Subscription レコードを作成
+        #     （stripe_subscription_id / plan / status / 請求期間を保存）
+        # 関連: repositories/user.py [Phase 2 マーカー H1]
+        # ===================================================================
+        # （簡易実装：実際にはデータベースでサブスクリプション情報を登録）
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -463,9 +485,15 @@ class StripeService:
             f"status={subscription.get('status')}"
         )
 
-        # サブスクリプション更新時の処理
-        # ステータスの変化に応じた処理を実装
-        # ここでは簡易実装
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB 更新なし（ログのみ）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - previous_attributes.status と新 status の差分から
+        #     Subscription.status / plan / 請求期間を更新
+        #   - 期限切れ（past_due/unpaid/canceled）への遷移でアクセス制限を強化
+        # 関連: models/subscription.py is_restricted() [Phase 2 マーカー H2]
+        # ===================================================================
+        # （簡易実装：ステータスの変化に応じた処理を実装）
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -502,6 +530,16 @@ class StripeService:
 
         logger.info(f"Subscription deleted: {subscription.get('id')}, customer={customer_id}")
 
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB 操作・LINE 通知なし（ログのみ）。
+        # Phase 2 で有効化する接続ポイント（下記 TODO ブロックを実装）:
+        #   1. customer_id からユーザーを検索
+        #   2. ユーザーを無効化（is_active=False）
+        #   3. 全リフレッシュトークンを削除（全デバイスからログアウト）
+        #   4. LINE Push API で解約通知を送信
+        # 関連: repositories/user.py [Phase 2 マーカー H1]、
+        #       line_service._handle_unfollow_event [Phase 2 マーカー A6]
+        # ===================================================================
         # TODO: 以下のDB操作を実装（UserRepository, RefreshTokenRepository）
         # 1. customer_id からユーザーを検索
         #    user = await user_repository.find_by_stripe_customer_id(customer_id)

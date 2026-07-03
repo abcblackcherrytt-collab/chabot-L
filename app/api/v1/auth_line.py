@@ -210,7 +210,17 @@ async def line_login_callback(
 
     logger.info(f"LINE Login successful: user={display_name}")
 
-    # TODO: DB でユーザー検索・作成
+    # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+    # 現状（Phase 1）: ユーザー永続化を行わない。下記仮 UUID で都度 JWT 発行。
+    # Phase 2 で有効化する接続ポイント:
+    #   - user_repository.find_by_line_user_id(line_user_id) で検索
+    #     → 存在しない場合は user_repository.create(...) で新規作成
+    #   - RefreshTokenRepository でリフレッシュトークンを DB 保存
+    #   - StripeService.create_customer で顧客作成し user.stripe_customer_id に紐付け
+    # 関連: repositories/user.py [Phase 2 マーカー H1]、
+    #       line_service._handle_follow_event [Phase 2 マーカー A4]
+    # ===================================================================
+    # TODO: DB でユーザー検索・作成（Phase 2 で実装）
     # user = await user_repository.find_by_line_user_id(line_user_id)
     # if not user:
     #     user = await user_repository.create(
@@ -220,6 +230,7 @@ async def line_login_callback(
     #         line_user_id=line_user_id,
     #     )
 
+    # [Phase 2] 現状は発行ごとに異なる非永続 UUID。Phase 2 で DB 検索し既存 ID を再利用。
     # 仮のユーザー情報（DB実装後に置き換え）
     user_id = str(uuid.uuid4())
 

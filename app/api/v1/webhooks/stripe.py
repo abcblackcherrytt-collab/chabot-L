@@ -48,6 +48,11 @@ async def handle_stripe_webhook(
     Stripe Webhookイベントを処理します
 
     署名検証とイベント処理を行います。
+
+    Phase 1（現在）: Stripe 側で Webhook エンドポイント未設定のため実イベントは来ない。
+      ルータ自体は server.py で登録済み（削除しない）。
+    Phase 2: Stripe 側でエンドポイント登録後に有効化。各イベントハンドラでの
+      DB 連携は stripe_service 内の [Phase 2] マーカーを参照。
     """
     from app.clients.stripe import StripeClient
     from app.services.stripe_service import StripeService

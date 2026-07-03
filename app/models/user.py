@@ -61,6 +61,9 @@ class User(Base, TimestampMixin):
     )
 
     # Stripe連携
+    # [Phase 2] Phase 1（現在）では常に NULL（誰も書き込まない）。
+    #   Phase 2 で StripeService.create_customer の結果を
+    #   UserRepository.update_stripe_customer_id で書き込む（マーカー H1 / A4 参照）。
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(
         String(255),
         unique=True,

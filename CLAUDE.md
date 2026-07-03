@@ -10,7 +10,7 @@ Chabot は FastAPI + Vertex AI RAG + LINE Bot + Stripe を組み合わせた AI 
 - **Vertex AI RAG**: Google Cloud Vertex AI を使用したRAG（検索拡張生成）
 - **LINE Bot**: LINE Messaging API によるユーザーとの対話
 - **LINE Login**: LINEアカウントによるユーザー認証（OIDC準拠）
-- **Stripe**: サブスクリプション決済処理
+- **Stripe**: サブスクリプション決済処理（※ Phase 2 で有効化。Phase 1 は Stripe/DB なしで友だち追加だけで動作 → 詳細は `todo.txt` / `REMAINING_TASKS.md` の Phase 分け、およびコード内 `# [Phase 2]` マーカー参照）
 
 ## 技術スタック
 
@@ -187,13 +187,21 @@ pytest --cov=app tests/
 
 ### 必須設定
 
-- `DATABASE_URL`: データベース接続URL
+> Phase 1（友だち追加だけでボットを動かす）と Phase 2（Stripe + SQL 管理）で必要な変数が異なります。
+
+**Phase 1 必須**（Stripe/DB なしで動作）:
+
 - `JWT_SECRET_KEYS`: JWTシークレットキー
-- `STRIPE_SECRET_KEY`: Stripeシークレットキー
 - `LINE_CHANNEL_SECRET`: LINE Messaging API チャネルシークレット
 - `LINE_CHANNEL_ACCESS_TOKEN`: LINE Messaging API チャネルアクセストークン
 - `LINE_LOGIN_CHANNEL_ID`: LINE Login チャネルID
 - `LINE_LOGIN_CHANNEL_SECRET`: LINE Login チャネルシークレット
+
+**Phase 2 必須**（Stripe + SQL 管理の有効化時・後で設定）:
+
+- `DATABASE_URL`: データベース接続URL
+- `STRIPE_SECRET_KEY`: Stripeシークレットキー
+- `STRIPE_WEBHOOK_SECRET`: Stripe Webhook 署名シークレット
 
 ### オプション設定
 

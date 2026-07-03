@@ -94,9 +94,18 @@ class Subscription(Base, TimestampMixin):
     )
 
     def is_active_paid(self) -> bool:
-        """有料プランが有効かどうかを判定します"""
+        """
+        有料プランが有効かどうかを判定します
+
+        [Phase 2] deps.py の require_active_subscription から使用される接続ポイント。
+          Phase 1（現在）では未使用（呼び出し元なし）。
+        """
         return self.status in ("active", "trialing")
 
     def is_restricted(self) -> bool:
-        """制限状態（past_due/unpaid/canceled）かどうかを判定します"""
+        """
+        制限状態（past_due/unpaid/canceled）かどうかを判定します
+
+        [Phase 2] サブスク検証で使用。Phase 1（現在）では未使用。
+        """
         return self.status in ("past_due", "unpaid", "canceled", "incomplete")

@@ -30,6 +30,10 @@ async def get_current_user(
 
     AuthorizationヘッダーからJWTを取得し、署名・期限・失効状態を検証します。
 
+    Phase 1（現在）: JWT 有効性 ＋ user.is_active のみ検証。
+      サブスクリプション検証は行わない（後で有効化）。
+    Phase 2: require_active_subscription を追加しサブスク必須化（下記マーカー参照）。
+
     Args:
         credentials: HTTP Bearer認証情報
         db: データベースセッション
@@ -80,6 +84,25 @@ async def get_current_user(
         )
 
     return user
+
+
+# ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+# Phase 2 で以下の依存関数をこの位置に定義し、サブスク必須のゲートとする:
+#
+#   async def require_active_subscription(
+#       current_user: Annotated[User, Depends(get_current_user)],
+#   ) -> User:
+#       """有効なサブスク必須。未契約/期限切れは 403 を返す。"""
+#       if not any(s.is_active_paid() for s in current_user.subscriptions):
+#           raise HTTPException(
+#               status_code=status.HTTP_403_FORBIDDEN,
+#               detail="Active subscription required",
+#           )
+#       return current_user
+#
+# 使用先: app/api/v1/chat.py send_message の Depends を差し替え [Phase 2 マーカー E1]
+# 関連: app/models/subscription.py is_active_paid() [Phase 2 マーカー H2]
+# ===================================================================
 
 
 async def get_current_admin(
