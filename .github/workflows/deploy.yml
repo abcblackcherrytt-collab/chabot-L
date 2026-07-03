@@ -87,9 +87,11 @@ jobs:
           IMAGE_URI=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$IMAGE_TAG
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-          # Workload Identity の gcloud 認証で Artifact Registry に直接 push
-          # （docker push の認証ヘルパー問題を回避するため gcloud builds submit を使用）
-          gcloud builds submit --tag $IMAGE_URI --quiet --no-stream
+          # Workload Identity の access_token で Docker を認証し Artifact Registry へ push
+          # （gcloud auth configure-docker のヘルパーが短命 token を扱えないため明示 login）
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://$REGION-docker.pkg.dev
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
         env:
           GITHUB_SHA: ${{ github.sha }}
 
