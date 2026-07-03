@@ -11,15 +11,24 @@ from sqlalchemy import text
 from app.core.config import settings
 
 # 非同期エンジンを作成
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.debug,  # 開発環境ではSQLをログに出力
-    pool_pre_ping=True,  # 接続プールの健全性チェック
-    pool_size=20,  # 最大接続数
-    max_overflow=10,  # 追加接続数（ピーク時）
-    pool_timeout=30,  # 接続タイムアウト（秒）
-    pool_recycle=3600,  # 接続リサイクル（秒）
-)
+# SQLite（テスト用インメモリ等）では pool_size 系の引数が使えないため分岐
+_is_sqlite = settings.database_url.startswith("sqlite")
+
+_engine_kwargs = {
+    "echo": settings.debug,  # 開発環境ではSQLをログに出力
+    "pool_pre_ping": True,  # 接続プールの健全性チェック
+}
+if not _is_sqlite:
+    _engine_kwargs.update(
+        {
+            "pool_size": 20,  # 最大接続数
+            "max_overflow": 10,  # 追加接続数（ピーク時）
+            "pool_timeout": 30,  # 接続タイムアウト（秒）
+            "pool_recycle": 3600,  # 接続リサイクル（秒）
+        }
+    )
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 # 非同期セッションファクトリーを作成
 async_session_maker = async_sessionmaker(
