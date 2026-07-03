@@ -89,7 +89,7 @@ jobs:
 
           # Workload Identity の gcloud 認証で Artifact Registry に直接 push
           # （docker push の認証ヘルパー問題を回避するため gcloud builds submit を使用）
-          gcloud builds submit --tag $IMAGE_URI --quiet
+          gcloud builds submit --tag $IMAGE_URI --quiet --no-stream
         env:
           GITHUB_SHA: ${{ github.sha }}
 
