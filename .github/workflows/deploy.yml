@@ -25,6 +25,7 @@ jobs:
   deploy:
     name: Deploy to Cloud Run
     runs-on: ubuntu-latest
+    environment: google cloud  # Environment secrets（google cloud 環境）を読み込む
 
     permissions:
       contents: read
