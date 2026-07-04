@@ -63,7 +63,8 @@ class Settings(BaseSettings):
     google_location: str = "us-central1"
     google_corpus_id: str = "your-corpus-id"
     # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
-    google_model_name: str = "gemini-2.0-flash-001"
+    # gemini-2.0-flash-001 は 2026年時点で廃止済み（404）。2.5 Flash は 2026-10-16 廃止予定。
+    google_model_name: str = "gemini-2.5-flash"
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
