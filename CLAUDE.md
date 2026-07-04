@@ -10,7 +10,7 @@ Chabot は FastAPI + Vertex AI RAG + LINE Bot + Stripe を組み合わせた AI 
 - **Vertex AI RAG**: Google Cloud Vertex AI を使用したRAG（検索拡張生成）
 - **LINE Bot**: LINE Messaging API によるユーザーとの対話
 - **LINE Login**: LINEアカウントによるユーザー認証（OIDC準拠）
-- **Stripe**: サブスクリプション決済処理（※ Phase 2 で有効化。Phase 1 は Stripe/DB なしで友だち追加だけで動作 → 詳細は `todo.txt` / `REMAINING_TASKS.md` の Phase 分け、およびコード内 `# [Phase 2]` マーカー参照）
+- **Stripe**: サブスクリプション決済処理（※ Phase 3 で有効化。Phase 1 は Stripe/DB なしで友だち追加だけで動作、Phase 2 は DB + モックプランで回数制限・コーパス切替を動かす（Stripe 不使用） → 詳細は `PROJECT_PLAN.md` の Phase 分け、コード内 `# [Phase 2]` マーカー参照）
 
 ## 技術スタック
 
@@ -187,7 +187,7 @@ pytest --cov=app tests/
 
 ### 必須設定
 
-> Phase 1（友だち追加だけでボットを動かす）と Phase 2（Stripe + SQL 管理）で必要な変数が異なります。
+> Phase 1（友だち追加だけでボットを動かす）、Phase 2（DB + モックプラン）、Phase 3（実 Stripe 決済）で必要な変数が異なります。全体予定は `PROJECT_PLAN.md` 参照。
 
 **Phase 1 必須**（Stripe/DB なしで動作）:
 
@@ -197,9 +197,12 @@ pytest --cov=app tests/
 - `LINE_LOGIN_CHANNEL_ID`: LINE Login チャネルID
 - `LINE_LOGIN_CHANNEL_SECRET`: LINE Login チャネルシークレット
 
-**Phase 2 必須**（Stripe + SQL 管理の有効化時・後で設定）:
+**Phase 2 必須**（DB 整備 + モックプランでの回数制限・コーパス切替の有効化時・後で設定）:
 
-- `DATABASE_URL`: データベース接続URL
+- `DATABASE_URL`: データベース接続URL（Cloud SQL）
+
+**Phase 3 必須**（実 Stripe 決済フレームワークの有効化時・後で設定）:
+
 - `STRIPE_SECRET_KEY`: Stripeシークレットキー
 - `STRIPE_WEBHOOK_SECRET`: Stripe Webhook 署名シークレット
 

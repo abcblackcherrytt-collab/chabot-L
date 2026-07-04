@@ -57,9 +57,13 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = "pk_test_your-stripe-publishable-key"
 
     # Google Cloud Vertex AI設定
+    # RAG Engine の GA リージョンは us-central1 / europe-west3 のみ（asia-northeast1 非対応）。
+    # Cloud Run（asia-northeast1）からクロスリージョン呼び出しを行う。
     google_project_id: str = "your-project-id"
-    google_location: str = "asia-northeast1"
+    google_location: str = "us-central1"
     google_corpus_id: str = "your-corpus-id"
+    # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
+    google_model_name: str = "gemini-2.0-flash-001"
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
