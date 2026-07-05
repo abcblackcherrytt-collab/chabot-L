@@ -111,7 +111,7 @@ async def send_message(
         # RAGで回答を生成
         rag_result = await rag_service.query(
             text=request.message,
-            max_results=3,
+            max_results=10,
             include_context=request.include_context,
             user_id=str(current_user.id),
         )

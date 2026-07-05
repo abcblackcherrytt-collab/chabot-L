@@ -16,6 +16,26 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 理学療法（肩）ガイドのシステムプロンプト（PT向け・gemini-2.5-flash 用・簡潔）
+# RAG のグラウンディングと組み合わせ、コーパス外質問のハルシネーションを防ぐ。
+DEFAULT_SYSTEM_INSTRUCTION = [
+    "役割: 肩関節疾患の理学療法を支援するガイド。利用者は理学療法士(PT)。",
+    "",
+    "知識ソース（コーパス）:",
+    "- 学術文献: 系統的レビュー・メタアナリシス・生体力学研究などのエビデンス",
+    "- 実践手順: 評価フロー・スペシャルテスト・可動域評価・介入手順",
+    "",
+    "回答ルール:",
+    "1. コーパスの記述に基づいてのみ回答する。",
+    "2. コーパスに該当情報がなければ「提供資料に情報がありません」とだけ答え、推測・一般知識での補完はしない。",
+    "3. エビデンスを参照する際は研究デザイン・効果量(RR等)を簡潔に併記する。",
+    "4. 評価・介入の質問では、手順を段階的な箇条書きで示す。",
+    "5. PT向けとして専門用語をそのまま用いる。",
+    "6. 簡潔に。前置き・反復・装飾を避ける。",
+    "",
+    "免責: 回答は情報提供であり、最終的な臨床判断は実施者が行うこと。",
+]
+
 
 class VertexAIError(BaseClientError):
     """
@@ -50,6 +70,7 @@ class VertexAIClient(BaseClient):
         location: Optional[str] = None,
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
+        system_instruction: Optional[List[str]] = None,
     ):
         """
         Vertex AIクライアントを初期化します
@@ -59,12 +80,17 @@ class VertexAIClient(BaseClient):
             location: リージョン（RAG Engine の GA リージョン: us-central1）
             corpus_id: RAG コーパスID
             model_name: グラウンディング応答生成モデル名
+            system_instruction: 応答生成のシステムプロンプト（未指定時は
+                理学療法ガイド用の DEFAULT_SYSTEM_INSTRUCTION）
         """
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
         self.project_id = project_id or settings.google_project_id
         self.location = location or settings.google_location
         self.corpus_id = corpus_id or settings.google_corpus_id
         self.model_name = model_name or settings.google_model_name
+        self.system_instruction = (
+            system_instruction if system_instruction is not None else DEFAULT_SYSTEM_INSTRUCTION
+        )
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
         self.corpus_name = (
@@ -339,6 +365,7 @@ class VertexAIClient(BaseClient):
             model = GenerativeModel(
                 model_name=self.model_name,
                 tools=[retrieval_tool],
+                system_instruction=self.system_instruction,
             )
 
             logger.info(

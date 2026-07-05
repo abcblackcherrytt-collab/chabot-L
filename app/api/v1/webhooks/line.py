@@ -58,7 +58,7 @@ async def _process_line_events(
                 try:
                     rag_result = await rag_service.query(
                         text=result["message"],
-                        max_results=3,
+                        max_results=10,
                     )
                     answer = rag_result.get(
                         "answer",
