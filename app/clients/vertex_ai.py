@@ -5,6 +5,7 @@ Google Cloud Vertex AI RAG Engine との通信を管理するクライアント�
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import vertexai
@@ -32,6 +33,8 @@ DEFAULT_SYSTEM_INSTRUCTION = [
     "4. 評価・介入の質問では、手順を段階的な箇条書きで示す。",
     "5. PT向けとして専門用語をそのまま用いる。",
     "6. 簡潔に。前置き・反復・装飾を避ける。",
+    "7. 出力形式（LINE トーク向け）: マークダウン記法（** ## - * ` > 等）は一切使わない。"
+    "箇条書きは行頭「・」でプレーンテキスト。1行は全角15文字程度（スマホ1行表示）で改行する。",
     "",
     "免責: 回答は情報提供であり、最終的な臨床判断は実施者が行うこと。",
 ]
@@ -377,6 +380,7 @@ class VertexAIClient(BaseClient):
             response = await asyncio.to_thread(model.generate_content, sanitized)
 
             answer, contexts, confidence = self._extract_response(response)
+            answer = self._strip_markdown(answer)
 
             if contexts:
                 contexts = self._filter_context_by_confidence(contexts)
@@ -440,6 +444,39 @@ class VertexAIClient(BaseClient):
 
         confidence = 0.85 if contexts else 0.0
         return answer, contexts, confidence
+
+    def _strip_markdown(self, text: str) -> str:
+        """
+        マークダウン記法を除去しプレーンテキスト化します（LINE トーク向け）。
+
+        Args:
+            text: マークダウン混入テキスト
+
+        Returns:
+            プレーンテキスト
+        """
+        if not text:
+            return text
+        # 見出し記号（#〜######）
+        text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+        # 太字・斜体（**text** / __text__ / *text* / _text_）
+        text = re.sub(r'\*{1,3}([^*\n]+?)\*{1,3}', r'\1', text)
+        text = re.sub(r'_{1,3}([^_\n]+?)_{1,3}', r'\1', text)
+        # コードブロック・インラインコード
+        text = re.sub(r'```[a-zA-Z]*\n?', '', text)
+        text = re.sub(r'`([^`\n]+?)`', r'\1', text)
+        # 箇条書き記号（- * +）を行頭で「・」に
+        text = re.sub(r'^[\-\*\+]\s+', '・', text, flags=re.MULTILINE)
+        # 数字リスト（1. 2.）行頭を「・」に
+        text = re.sub(r'^\d+\.\s+', '・', text, flags=re.MULTILINE)
+        # 引用（>）
+        text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)
+        # 水平線（--- ___ ***）
+        text = re.sub(r'^[-_*]{3,}$', '', text, flags=re.MULTILINE)
+        # リンク [text](url) → text / 画像 ![alt](url) → 削除
+        text = re.sub(r'!\[([^\]]*?)\]\([^)]+?\)', '', text)
+        text = re.sub(r'\[([^\]]+?)\]\([^)]+?\)', r'\1', text)
+        return text
 
     async def close(self) -> None:
         """
