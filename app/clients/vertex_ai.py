@@ -187,7 +187,7 @@ class VertexAIClient(BaseClient):
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
         self.project_id = project_id or settings.google_project_id
         self.location = location or settings.google_location
-        self.corpus_id = corpus_id or settings.google_corpus_id
+        self.corpus_id = corpus_id or settings.google_corpus_id_plan1
         self.model_name = model_name or settings.google_model_name
         self.system_instruction = (
             system_instruction if system_instruction is not None else DEFAULT_SYSTEM_INSTRUCTION
@@ -384,7 +384,7 @@ class VertexAIClient(BaseClient):
         effective_corpus_id = corpus_id or self.corpus_id
         if not effective_corpus_id or effective_corpus_id in ("your-corpus-id", ""):
             raise VertexAIError(
-                "GOOGLE_CORPUS_ID が未設定です。scripts/setup_rag_corpus.py でコーパスを作成し、"
+                "GOOGLE_CORPUS_ID_PLAN1 が未設定です。scripts/setup_rag_corpus.py でコーパスを作成し、"
                 "リソース名末尾のIDを設定してください。"
             )
 

@@ -3,7 +3,7 @@
 shoulder 知識ファイル（journal×3 + self×1）を既存RAGコーパスへ登録する。
 
 ローカル1回限りの実行を想定（shoulder ソースはローカルパス）。
-.env / Secret Manager の GOOGLE_CORPUS_ID が指すコーパスへ追記する。
+.env / Secret Manager の GOOGLE_CORPUS_ID_PLAN1 が指すコーパスへ追記する。
 
 実行前: gcloud auth application-default login（ADC）
 実行: GRPC_DNS_RESOLVER=native ./venv/bin/python scripts/upload_shoulder_corpus.py

@@ -73,7 +73,7 @@ def main() -> int:
     print("\n=== Secret Manager / .env に設定してください ===")
     print(f"GOOGLE_PROJECT_ID={PROJECT_ID}")
     print(f"GOOGLE_LOCATION={LOCATION}")
-    print(f"GOOGLE_CORPUS_ID={corpus_id}")
+    print(f"GOOGLE_CORPUS_ID_PLAN1={corpus_id}")
     return 0
 
 

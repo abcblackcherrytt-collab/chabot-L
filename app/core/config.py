@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # Cloud Run（asia-northeast1）からクロスリージョン呼び出しを行う。
     google_project_id: str = "your-project-id"
     google_location: str = "us-central1"
-    google_corpus_id: str = "your-corpus-id"
+    google_corpus_id_plan1: str = "your-corpus-id"
     # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
     # gemini-2.0-flash-001 は 2026年時点で廃止済み（404）。2.5 Flash は 2026-10-16 廃止予定。
     google_model_name: str = "gemini-2.5-flash"
