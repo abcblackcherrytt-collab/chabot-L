@@ -160,6 +160,10 @@ jobs:
 
       # Output deployment summary
       - name: Deployment summary
+        env:
+          # 環境変数経由で展開（コミットメッセージに含まれるバッククォート等の
+          # 特殊文字がシェルのコマンド置換として解釈されるのを防ぐ）
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           echo "========================================="
           echo "Deployment completed successfully!"
@@ -170,7 +174,7 @@ jobs:
           echo "Region: $REGION"
           echo "Service URL: ${{ steps.url.outputs.service_url }}"
           echo "Commit: ${{ github.sha }}"
-          echo "Commit message: ${{ github.event.head_commit.message }}"
+          echo "Commit message: $COMMIT_MSG"
           echo "Deployed by: ${{ github.actor }}"
           echo "Workflow run: ${{ github.run_number }}"
           echo ""
