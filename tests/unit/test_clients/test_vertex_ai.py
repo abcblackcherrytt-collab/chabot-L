@@ -91,6 +91,17 @@ class TestVertexAIClient:
             long_query = "a" * 1500
             assert len(client._sanitize_input(long_query)) == 1000
 
+    def test_default_model_names(self):
+        """
+        回答生成モデルと分類モデルの既定値が分離されていることをテスト
+        """
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            assert client.model_name == "gemini-2.5-flash"
+            assert client.classification_model_name == "gemini-3.1-flash-lite"
+            assert client.classification_location == "global"
+
     @pytest.mark.asyncio
     async def test_check_denial_conditions(self):
         """
@@ -153,3 +164,83 @@ class TestVertexAIClient:
             assert len(filtered) == 2
             assert filtered[0]["confidence"] == 0.85
             assert filtered[1]["confidence"] == 0.75
+
+    def test_parse_classification_response(self):
+        """
+        分類LLMのJSON応答が正規化されることをテスト
+        """
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            result = client._parse_classification_response(
+                """
+                {
+                  "primary_category": "rom",
+                  "secondary_categories": ["pain", "strength"],
+                  "confidence": 1.2,
+                  "rationale": "ROM制限についての質問",
+                  "answer_focus": "肩関節ROMの制限因子を中心に回答する"
+                }
+                """
+            )
+
+            assert result["primary_category"] == "rom"
+            assert result["primary_label"] == "可動域"
+            assert result["secondary_categories"] == ["pain"]
+            assert result["confidence"] == 1.0
+            assert result["answer_focus"] == "肩関節ROMの制限因子を中心に回答する"
+
+    def test_parse_classification_response_fallback(self):
+        """
+        分類LLMの応答が不正な場合 precautions にフォールバックすることをテスト
+        """
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            result = client._parse_classification_response("not json")
+
+            assert result["primary_category"] == "precautions"
+            assert result["secondary_categories"] == []
+            assert result["confidence"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_query_passes_classification_to_generation_prompt(self):
+        """
+        前段分類結果が後段の回答生成プロンプトに渡されることをテスト
+        """
+
+        class MockResponse:
+            text = "ROM制限の回答です。"
+            candidates = []
+
+        classification = {
+            "primary_category": "rom",
+            "primary_label": "可動域",
+            "secondary_categories": ["pain"],
+            "secondary_labels": ["疼痛"],
+            "confidence": 0.86,
+            "rationale": "ROM制限と疼痛の質問",
+            "answer_focus": "肩関節ROMと疼痛の関係を中心に回答する",
+        }
+
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+            client._classify_query = AsyncMock(return_value=classification)
+
+            with patch.object(client, "_build_retrieval_tool", return_value=MagicMock()):
+                with patch("app.clients.vertex_ai.GenerativeModel") as mock_model_class:
+                    mock_model = MagicMock()
+                    mock_model.generate_content.return_value = MockResponse()
+                    mock_model_class.return_value = mock_model
+
+                    result = await client.query(
+                        text="肩関節外転のROM制限は何を見る？",
+                        include_context=False,
+                    )
+
+        generation_prompt = mock_model.generate_content.call_args.args[0]
+        assert "[query_classification]" in generation_prompt
+        assert "primary_category: rom" in generation_prompt
+        assert "answer_focus: 肩関節ROMと疼痛の関係を中心に回答する" in generation_prompt
+        assert "肩関節外転のROM制限は何を見る？" in generation_prompt
+        assert result["classification"] == classification
