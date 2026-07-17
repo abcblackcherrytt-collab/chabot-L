@@ -158,7 +158,7 @@ class VertexAIClient(BaseClient):
             classification_model_name: 前段分類モデル名
             classification_location: 前段分類モデルのロケーション
             system_instruction: 応答生成のシステムプロンプト（未指定時は
-                DEFAULT_SYSTEM_INSTRUCTION = リハビリ専門ガイド・忍野忍）
+                DEFAULT_SYSTEM_INSTRUCTION = 肩専門職向け辛口回答）
             classification_system_instruction: 前段分類用システムプロンプト
         """
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
