@@ -167,7 +167,7 @@ class TestVertexAIClient:
 
     def test_parse_classification_response(self):
         """
-        分類LLMのJSON応答が正規化されることをテスト
+        質問意図と複数の臨床観点が正規化されることをテスト
         """
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
             client = VertexAIClient()
@@ -175,33 +175,62 @@ class TestVertexAIClient:
             result = client._parse_classification_response(
                 """
                 {
-                  "primary_category": "rom",
-                  "secondary_categories": ["pain", "strength"],
-                  "confidence": 1.2,
-                  "rationale": "ROM制限についての質問",
+                  "question_type": "interpretation",
+                  "answer_aspects": ["rom", "pain", "biomechanics", "strength"],
                   "answer_focus": "肩関節ROMの制限因子を中心に回答する"
                 }
                 """
             )
 
-            assert result["primary_category"] == "rom"
-            assert result["primary_label"] == "可動域"
-            assert result["secondary_categories"] == ["pain"]
-            assert result["confidence"] == 1.0
+            assert result["question_type"] == "interpretation"
+            assert result["answer_aspects"] == ["rom", "pain", "biomechanics"]
             assert result["answer_focus"] == "肩関節ROMの制限因子を中心に回答する"
+            assert result["available"] is True
 
     def test_parse_classification_response_fallback(self):
         """
-        分類LLMの応答が不正な場合 precautions にフォールバックすることをテスト
+        分類LLMの応答が不正な場合、分類情報を使用しないことをテスト
         """
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
             client = VertexAIClient()
 
             result = client._parse_classification_response("not json")
 
-            assert result["primary_category"] == "precautions"
-            assert result["secondary_categories"] == []
-            assert result["confidence"] == 0.0
+            assert result["question_type"] is None
+            assert result["answer_aspects"] == []
+            assert result["answer_focus"] == ""
+            assert result["available"] is False
+
+    def test_generation_prompt_omits_unavailable_classification(self):
+        """未分類時は内部制御情報を回答LLMへ渡さないことをテスト"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+            prompt = client._build_generation_prompt(
+                "肩の痛みは何を評価しますか？",
+                {
+                    "question_type": None,
+                    "answer_aspects": [],
+                    "answer_focus": "",
+                    "available": False,
+                },
+            )
+
+        assert "[query_classification]" not in prompt
+        assert "question_type:" not in prompt
+        assert prompt == "ユーザーの質問:\n肩の痛みは何を評価しますか？"
+
+    def test_system_instruction_requires_concise_polite_sarcasm(self):
+        """回答プロンプトが丁寧で辛口な「回答＋要約」形式を指定することをテスト"""
+        from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
+
+        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "儂" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "お前様" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
 
     @pytest.mark.asyncio
     async def test_query_passes_classification_to_generation_prompt(self):
@@ -214,13 +243,10 @@ class TestVertexAIClient:
             candidates = []
 
         classification = {
-            "primary_category": "rom",
-            "primary_label": "可動域",
-            "secondary_categories": ["pain"],
-            "secondary_labels": ["疼痛"],
-            "confidence": 0.86,
-            "rationale": "ROM制限と疼痛の質問",
+            "question_type": "interpretation",
+            "answer_aspects": ["rom", "pain"],
             "answer_focus": "肩関節ROMと疼痛の関係を中心に回答する",
+            "available": True,
         }
 
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -240,7 +266,10 @@ class TestVertexAIClient:
 
         generation_prompt = mock_model.generate_content.call_args.args[0]
         assert "[query_classification]" in generation_prompt
-        assert "primary_category: rom" in generation_prompt
+        assert "question_type: interpretation" in generation_prompt
+        assert "answer_aspects: rom, pain" in generation_prompt
         assert "answer_focus: 肩関節ROMと疼痛の関係を中心に回答する" in generation_prompt
+        assert "confidence:" not in generation_prompt
+        assert "rationale:" not in generation_prompt
         assert "肩関節外転のROM制限は何を見る？" in generation_prompt
         assert result["classification"] == classification

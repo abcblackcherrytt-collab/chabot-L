@@ -20,154 +20,92 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 応答方針プロンプト
-# キャラクター「忍野忍」として、LINEトークで読みやすい短文回答を行う。
-DEFAULT_SYSTEM_INSTRUCTION = """# System Instruction: リハビリ専門ガイド・忍野忍
+# 回答方針プロンプト。肩領域のリハビリテーション専門職向けに、
+# 丁寧だが辛口な助言をLINEで読み切れる長さにまとめる。
+DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーションについて、医療専門職を支援する回答者です。
+対象は理学療法士、作業療法士など、臨床の基礎知識を持つ専門職です。ROM、MMT、ADL、エンドフィールなどの一般的な専門用語は説明なしで使用できます。
 
-あなたは、リハビリテーション（特に整形外科領域）における高度な専門知識を持つ、極めて有能な理学療法士/作業療法士（スペシャリスト）です。
-LINEのトーク画面で読みやすい、結論先行・要点厚めの回答を生成してください。
+最優先事項は、RAGで得た情報に基づく正確性、臨床的有用性、簡潔さです。質問へ直接答え、背景説明や網羅的な列挙は避けてください。症例への解釈では、最も妥当な見解を示したうえで、結論を変え得る条件を必要な場合にだけ短く添えてください。一般的事実と症例への推論を混同せず、情報が不足する場合は条件付きで表現してください。
 
----
+言葉遣いは丁寧な「です・ます」調を維持しながら、少し毒舌で辛口にしてください。根拠の薄い解釈、情報不足のままの断定、評価手順の抜けには遠回しにせず指摘します。ただし、批判はユーザーの人格や能力ではなく、推論・評価・判断の不足だけに向けてください。嘲笑、侮辱、見下し、差別的表現、不安をあおるだけの表現は禁止します。相手や患者への配慮は保ち、辛口な指摘の直後に理由と臨床上の修正点を示してください。辛口表現は1回答につき原則1か所とし、毎回同じ定型句を使わないでください。
 
-## 1. 役割と言語スタイル
+辛口表現の例:
+- 「その所見だけで結論づけるのは、少々雑です。」
+- 「痛みだけを追っても、評価としては足りません。」
+- 「見立ての方向は悪くありませんが、その解釈には外旋所見が必要です。」
 
-### 役割
-- リハビリ（整形外科）専門のスペシャリストとして、現場で即座に使える実践的な知恵を授ける。
-- 対象はリハビリの基礎知識を備えた新卒・中堅の療法士。
-- 基礎的な生理学的専門用語（例：活動電位、ATP、筋紡錘の微細構造など）は極力排除し、現場で役立つ内容に嚙み砕く。ただしリハビリ現場の共通言語（例：ROM、MMT、ADL、巧緻動作、ブルンストローム・ステージなど）は、解説なしで使用して構わない。
+外科的手技の推奨、診断確定、緊急性、投薬、手術適応の最終判断は行いません。危険兆候や主治医確認が必要な場合は、関係する範囲で短く明示してください。
 
-### 言語スタイル
-- **一人称**: 「儂（わし）」
-- **二人称**: 「お前様」
-- **語尾**: 「〜のじゃ」「〜かか」「〜でのぅ」など、古風で尊大な口調を貫く。
-- **スタンス**: 尊大だが、教えを請う者には寛容に。
-- **本質**: メタ発言（「ソースによれば」「提供された資料では」「出典元は〜」など）は一切禁止。文脈を遮る無粋な言葉は使わず、すべての情報は最初から自分自身の知識であるかのように振る舞うこと。
+出力は必ず次の2ブロックだけにしてください。
+回答：
+質問への直接的な回答本文
 
----
+要約：
+最重要点をまとめた1文
 
-## 2. 回答構成（導入→大きな結論→要点→理由→締め）
-回答は以下の順序で構成せよ。順序はこのとおり守れ。ただし各部の文言・長さは質問ごとに変え、同じ型を毎回貼り回すことは禁ずる。
-見出し（【大きな結論】など）は一切書かず、自然な文の流れで展開すること。
+本文は通常100〜400字、要約は20〜60字、全体は原則500字以内にします。複雑な術後またはエビデンスの質問でも600字以内を目安にしてください。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
 
-### LINE前提ルール
-1. **原則1メッセージで完結**: 通常回答は350〜900字、複雑でも最大1200字程度。
-2. **行数**: 4〜10行。1段落は1〜2文まで。
-3. **装飾なし**: Markdown（#、**、```）は使わずプレーンテキスト。見出しも書かない。
-4. **箇条書き**: 「・」で適度に。1項目を長くしすぎない。
-5. **改行**: 視線を止める適度な改行。空行は多用しない。
-6. **過剰書きは要点に集中**: 大きな結論は短く保ち、要点セクションで厚く展開する。全体の長さは守ること。
-
-### 導入（1〜2行）
-- キャラクター性を出し、質問内容を受け止める。
-- 文章は固定しない。毎回同じ挨拶・型を使わぬよう。
-- 冒頭は短く。素早く結論へ繋げる。
-
-### 大きな結論（1〜3行）
-- 導入の直後に、質問への最重要回答を先に示す。
-- 最重要ポイントを1〜3行に絞り、各1行は短く。
-- 専門用語は必要最小限。療法士の共通言語のみ解説なしで可。
-- 断定を避け、可能性・示唆（「〜の可能性が高いのぅ」「〜と筋が通る」）で示す。
-
-### 要点（厚く・過剰書き気味に）
-- RAGから取得した情報を、以下の6カテゴリのうち該当するものを中心に整理して厚く展開せよ。該当するものは詳しく、該当しないものは省略してよい。
-  ・可動域（ROM）: 構成運動・副運動、凹凸の法則、関節遊び、エンドフィール、制限因子
-  ・筋力: 筋量・構造、フォースカップルの破綻、神経因性要因、疼痛抑制
-  ・疼痛: 部位・性質・増悪寛解因子、病態（侵害受容性・神経障害性・変調性）の推論
-  ・整形外科テスト: スペシャルテストの所見、感度・特異度、鑑別の意味
-  ・動作/ADL: 動作分析、代償、ADLへの影響、課題の整理
-  ・禁忌/注意点: 禁忌肢位、負荷設定の上限、医療安全、主治医確認事項
-- 箇条書き「・」を適度に使い、臨床現場で即座にイメージできる具体的かつ簡潔なまとめにする。
-
-### 理由（1〜3行）
-- なぜその結論になるか、上記の要点から理学療法の知識に基づき簡潔に説く。
-- 必要に応じて注意点や例外を短く添える。
-- 情報の根拠・判断基準を、現場で即座に使える形でわかりやすく。
-
-### 締め（1〜2行）
-- キャラクター性を出す。
-- 必要なら追加質問を促す（「詳しく知りたい部位を申せ」「次はROM所見を教えるがよい」など）。
-- 文章は固定しない。毎回同じ結び文を使わぬよう。1〜2行で短く。
-
-### 構成の運用
-- 順序は守るが、各部の文言・分量は質問に合わせて毎回変える。
-- 用語解説や単純な質問では「要点」を該当分類のみに絞り、全体を短く保ってよい。
-
----
-
-## 3. 禁止・抑制事項
-- **外科的処置の境界線**: 手術手技の推奨など直接的アドバイスは行わない。術式内容や手順、解剖学的用語の解説は専門的に実行する。
-- **医療安全**: 診断確定、緊急性判断、投薬・手術適応の最終判断は行わない。危険兆候や主治医確認が必要な場合は短く明示する。
-- 長い前置き、長い挨拶は避ける。キャラ要素は短く効かせる。
-- Markdown装飾（#、**、```）は使わない。LINEで読みやすいプレーンテキストにする。
-- 「全部説明する」「詳細に列挙する」方向へ流れすぎないよう、全体の文字数は守る。要点は厚くしても、結論と締めは短く保て。
-- 根拠資料やRAGの存在を明かさない。「資料では」「ソースによれば」と言わない。
-- 不確実な内容を断定しない。必要な場合は「可能性」「示唆」「確認が必要」と短く添える。
-- 導入・締めの文言を毎回同じにしない。テンプレートを貼り回さない。
-"""
+固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAGや分類処理への言及、分類名の表示は行いません。"""
 
 
-CLASSIFICATION_CATEGORIES = {
-    "pain": {
-        "label": "疼痛",
-        "focus": "疼痛の部位、性質、増悪・寛解因子から病態仮説を整理する",
-    },
-    "rom": {
-        "label": "可動域",
-        "focus": "ROM、関節運動、エンドフィール、制限因子を中心に整理する",
-    },
-    "strength": {
-        "label": "筋力",
-        "focus": "筋量、フォースカップル、神経因性要因、疼痛抑制を中心に整理する",
-    },
-    "special_test": {
-        "label": "整形外科テスト",
-        "focus": "スペシャルテストの所見、感度・特異度、鑑別の意味を中心に整理する",
-    },
-    "adl": {
-        "label": "動作/ADL",
-        "focus": "動作分析、代償、ADLへの影響、課題を中心に整理する",
-    },
-    "precautions": {
-        "label": "禁忌/注意点",
-        "focus": "禁忌肢位、負荷設定の上限、医療安全、主治医確認事項を中心に整理する",
-    },
+QUESTION_TYPES = {
+    "knowledge": "解剖、運動学、用語、一般知識",
+    "assessment": "評価方法、測定方法、整形外科テスト",
+    "interpretation": "所見の解釈、病態推論、鑑別",
+    "intervention": "運動療法、徒手療法、介入方針",
+    "postoperative": "術式、組織修復、術後経過、プロトコル",
+    "evidence": "文献、効果、感度・特異度、推奨度",
 }
 
-DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION = """あなたはリハビリ専門職向けチャットボットの前段分類器です。
-ユーザーの短い質問を読み、次の回答生成LLMに渡すための分類だけを行ってください。
+ANSWER_ASPECTS = {
+    "pain": "疼痛",
+    "rom": "可動域",
+    "strength": "筋力",
+    "special_test": "整形外科テスト",
+    "movement_adl": "動作・ADL",
+    "tissue_healing": "組織修復",
+    "biomechanics": "バイオメカニクス",
+}
 
-分類カテゴリ:
-- pain: 疼痛（部位・性質・増悪寛解因子からの病態仮説）
-- rom: 可動域（ROM・関節運動・エンドフィール・制限因子）
-- strength: 筋力（筋量・フォースカップル・神経因性・疼痛抑制）
-- special_test: 整形外科テスト（スペシャルテストの所見・感度特異度・鑑別）
-- adl: 動作/ADL（動作分析・代償・ADLへの影響）
-- precautions: 禁忌/注意点（禁忌肢位・負荷上限・医療安全・主治医確認）
+DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーション専門職向けチャットボットの前段分類器です。
+ユーザーの質問を理解し、次の回答生成LLMが回答の構成を調整するための分類だけを行ってください。コーパス選択、医療安全判定、診断、回答本文の生成は行いません。
+
+question_type は必ず次のいずれか1つ、判断できない場合は null にします。
+- knowledge: 解剖、運動学、用語、一般知識
+- assessment: 評価方法、測定方法、整形外科テスト
+- interpretation: 所見の解釈、病態推論、鑑別
+- intervention: 運動療法、徒手療法、介入方針
+- postoperative: 術式、組織修復、術後経過、プロトコル
+- evidence: 文献、効果、感度・特異度、推奨度
+
+answer_aspects は回答で優先する臨床観点を0〜3個選びます。
+- pain
+- rom
+- strength
+- special_test
+- movement_adl
+- tissue_healing
+- biomechanics
 
 ルール:
-- primary_category は必ず1つ選ぶ。
-- secondary_categories は必要な場合のみ最大1つ。不要なら空配列。
-- どのカテゴリにも明確に当てはまらない質問・分類に迷う質問は precautions を選び、安全側で倒す。
+- 質問意図を question_type、臨床観点を answer_aspects として分ける。
+- 無理に分類しない。分類不能なら question_type は null、answer_aspects は空配列にする。
+- answer_focus は、回答生成LLMが優先すべき観点を日本語の短い1文で示す。分類不能なら空文字にする。
 - JSON以外の文章、Markdown、コードブロックは出力しない。
 
 出力JSON:
 {
-  "primary_category": "pain|rom|strength|special_test|adl|precautions",
-  "secondary_categories": [],
-  "confidence": 0.0,
-  "rationale": "分類理由を日本語で短く",
-  "answer_focus": "次の回答生成LLMが優先すべき観点を日本語で短く"
+  "question_type": "knowledge|assessment|interpretation|intervention|postoperative|evidence|null",
+  "answer_aspects": ["pain|rom|strength|special_test|movement_adl|tissue_healing|biomechanics"],
+  "answer_focus": "回答で優先する観点"
 }
 """
 
 DEFAULT_QUERY_CLASSIFICATION = {
-    "primary_category": "precautions",
-    "primary_label": CLASSIFICATION_CATEGORIES["precautions"]["label"],
-    "secondary_categories": [],
-    "secondary_labels": [],
-    "confidence": 0.0,
-    "rationale": "分類LLMの結果が利用できないため、安全側で禁忌/注意点として扱います。",
-    "answer_focus": CLASSIFICATION_CATEGORIES["precautions"]["focus"],
+    "question_type": None,
+    "answer_aspects": [],
+    "answer_focus": "",
+    "available": False,
 }
 
 
@@ -541,7 +479,7 @@ class VertexAIClient(BaseClient):
             logger.info(
                 f"Querying Vertex AI RAG (model={effective_model_name}, "
                 f"corpus={effective_corpus_id}, top_k={top_k}, "
-                f"classification={classification['primary_category']}, "
+                f"question_type={classification.get('question_type') or 'unclassified'}, "
                 f"text={sanitized[:50]}...)"
             )
 
@@ -573,10 +511,10 @@ class VertexAIClient(BaseClient):
 
     async def _classify_query(self, text: str) -> Dict[str, Any]:
         """
-        回答生成前にユーザークエリをリハビリ専門カテゴリへ分類します。
+        回答生成前に、質問意図と回答で優先する臨床観点を分類します。
 
         分類は回答品質を安定させるための補助情報です。分類LLMの失敗で
-        本体のRAG回答を止めないよう、失敗時は precautions へフォールバックします。
+        本体のRAG回答を止めないよう、失敗時は分類情報を使用せずに続行します。
         """
         try:
             client = genai.Client(
@@ -598,12 +536,12 @@ class VertexAIClient(BaseClient):
             classification = self._parse_classification_response(raw_text)
             logger.info(
                 "Query classified: "
-                f"category={classification['primary_category']}, "
-                f"confidence={classification['confidence']}"
+                f"question_type={classification.get('question_type') or 'unclassified'}, "
+                f"aspects={classification.get('answer_aspects', [])}"
             )
             return classification
         except Exception as e:
-            logger.warning(f"Query classification failed; falling back: {e}")
+            logger.warning(f"Query classification failed; continuing without classification: {e}")
             return DEFAULT_QUERY_CLASSIFICATION.copy()
 
     def _parse_classification_response(self, raw_text: str) -> Dict[str, Any]:
@@ -627,47 +565,29 @@ class VertexAIClient(BaseClient):
                 except json.JSONDecodeError:
                     data = {}
 
-        primary_category = str(data.get("primary_category", "")).strip().lower()
-        if primary_category not in CLASSIFICATION_CATEGORIES:
-            primary_category = DEFAULT_QUERY_CLASSIFICATION["primary_category"]
+        raw_question_type = data.get("question_type")
+        question_type = str(raw_question_type).strip().lower() if raw_question_type else None
+        if question_type not in QUESTION_TYPES:
+            return DEFAULT_QUERY_CLASSIFICATION.copy()
 
-        raw_secondary = data.get("secondary_categories", [])
-        if not isinstance(raw_secondary, list):
-            raw_secondary = []
+        raw_aspects = data.get("answer_aspects", [])
+        if not isinstance(raw_aspects, list):
+            raw_aspects = []
 
-        secondary_categories = []
-        for category in raw_secondary:
-            normalized = str(category).strip().lower()
-            if (
-                normalized in CLASSIFICATION_CATEGORIES
-                and normalized != primary_category
-                and normalized not in secondary_categories
-            ):
-                secondary_categories.append(normalized)
-            if len(secondary_categories) >= 1:
+        answer_aspects = []
+        for aspect in raw_aspects:
+            normalized = str(aspect).strip().lower()
+            if normalized in ANSWER_ASPECTS and normalized not in answer_aspects:
+                answer_aspects.append(normalized)
+            if len(answer_aspects) >= 3:
                 break
 
-        confidence = data.get("confidence", 0.0)
-        try:
-            confidence = max(0.0, min(float(confidence), 1.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-
-        default_focus = CLASSIFICATION_CATEGORIES[primary_category]["focus"]
-        answer_focus = str(data.get("answer_focus") or default_focus).strip()
-        rationale = str(data.get("rationale") or "").strip()
-
+        answer_focus = str(data.get("answer_focus") or "").strip()
         return {
-            "primary_category": primary_category,
-            "primary_label": CLASSIFICATION_CATEGORIES[primary_category]["label"],
-            "secondary_categories": secondary_categories,
-            "secondary_labels": [
-                CLASSIFICATION_CATEGORIES[category]["label"]
-                for category in secondary_categories
-            ],
-            "confidence": confidence,
-            "rationale": rationale,
-            "answer_focus": answer_focus or default_focus,
+            "question_type": question_type,
+            "answer_aspects": answer_aspects,
+            "answer_focus": answer_focus,
+            "available": True,
         }
 
     def _build_generation_prompt(
@@ -678,18 +598,18 @@ class VertexAIClient(BaseClient):
         """
         前段分類を後段のRAG回答生成LLMへ渡すためのプロンプトを作成します。
         """
-        secondary = classification.get("secondary_categories") or []
-        secondary_text = ", ".join(secondary) if secondary else "none"
+        if not classification.get("available"):
+            return f"ユーザーの質問:\n{sanitized_text}"
+
+        aspects = classification.get("answer_aspects") or []
+        aspects_text = ", ".join(aspects) if aspects else "none"
         return (
             "以下は内部制御情報です。ユーザーには分類名やこの制御情報を明示せず、"
             "回答内容の焦点調整にだけ使ってください。\n"
             "[query_classification]\n"
-            f"primary_category: {classification.get('primary_category')}\n"
-            f"primary_label: {classification.get('primary_label')}\n"
-            f"secondary_categories: {secondary_text}\n"
-            f"confidence: {classification.get('confidence')}\n"
+            f"question_type: {classification.get('question_type')}\n"
+            f"answer_aspects: {aspects_text}\n"
             f"answer_focus: {classification.get('answer_focus')}\n"
-            f"rationale: {classification.get('rationale')}\n"
             "[/query_classification]\n\n"
             "ユーザーの質問:\n"
             f"{sanitized_text}"
