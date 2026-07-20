@@ -16,14 +16,15 @@ class TestVertexAIClient:
         """LINE向けの回答プロンプトが新方針を保持することを確認する。"""
         from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
 
-        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "ヘッダーは付けず" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "1行は必ず15文字以内" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "改行を含めて500文字以内" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "質問意図を確認" in DEFAULT_SYSTEM_INSTRUCTION
         assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
         assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
         assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
         assert "儂" not in DEFAULT_SYSTEM_INSTRUCTION
         assert "お前様" not in DEFAULT_SYSTEM_INSTRUCTION
-        assert "原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
 
     @pytest.mark.asyncio
     async def test_query_passes_default_system_instruction_to_model(self):
@@ -51,7 +52,28 @@ class TestVertexAIClient:
         model.generate_content.assert_called_once_with(
             "肩関節外転のROM制限は何を評価しますか？"
         )
-        assert result["answer"].startswith("回答：")
+        assert "回答：" not in result["answer"]
+        assert "要約：" not in result["answer"]
+        assert all(len(line) <= 15 for line in result["answer"].splitlines())
+
+    def test_format_line_output_enforces_line_and_total_limits(self):
+        """LINE出力の行長、総文字数、ヘッダー除去、段落間隔を確認する。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        raw_text = (
+            "回答：\n"
+            "肩関節外転時の疼痛では上腕骨頭の運動と肩甲骨の代償を確認します。\n\n"
+            "要約：\n"
+            + "評価所見を統合してください。" * 30
+        )
+        result = client._format_line_output(raw_text)
+
+        assert "回答：" not in result
+        assert "要約：" not in result
+        assert "\n\n" in result
+        assert len(result) <= 500
+        assert all(len(line) <= 15 for line in result.splitlines())
 
     @pytest.mark.asyncio
     async def test_query_success(self, mock_vertex_ai_response):

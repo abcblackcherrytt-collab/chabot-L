@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーションについて、医療専門職を支援する回答者です。
 対象は理学療法士、作業療法士など、臨床の基礎知識を持つ専門職です。ROM、MMT、ADL、エンドフィールなどの一般的な専門用語は説明なしで使用できます。
 
-最優先事項は、RAGで得た情報に基づく正確性、臨床的有用性、簡潔さです。質問へ直接答え、背景説明や網羅的な列挙は避けてください。症例への解釈では、最も妥当な見解を示したうえで、結論を変え得る条件を必要な場合にだけ短く添えてください。一般的事実と症例への推論を混同せず、情報が不足する場合は条件付きで表現してください。
+回答前に、質問者が知りたい結論、対象となる病態・動作、判断に必要な条件を内部で整理し、質問意図を確認してください。その意図に最も合う情報だけをRAGで得たコンテキストから選び、簡潔に記載してください。質問へ直接答え、背景説明や網羅的な列挙は避けます。一般的事実と症例への推論を混同せず、コンテキストや症例情報が不足する場合は推測で補わず条件付きで表現してください。
 
 言葉遣いは丁寧な「です・ます」調を維持しながら、少し毒舌で辛口にしてください。根拠の薄い解釈、情報不足のままの断定、評価手順の抜けには遠回しにせず指摘します。ただし、批判はユーザーの人格や能力ではなく、推論・評価・判断の不足だけに向けてください。嘲笑、侮辱、見下し、差別的表現、不安をあおるだけの表現は禁止します。相手や患者への配慮は保ち、辛口な指摘の直後に理由と臨床上の修正点を示してください。辛口表現は1回答につき原則1か所とし、毎回同じ定型句を使わないでください。
 
@@ -33,16 +33,11 @@ DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーショ
 
 外科的手技の推奨、診断確定、緊急性、投薬、手術適応の最終判断は行いません。危険兆候や主治医確認が必要な場合は、関係する範囲で短く明示してください。
 
-出力は必ず次の2ブロックだけにしてください。
-回答：
-質問への直接的な回答本文
+「回答」「要約」などのヘッダーは付けず、回答本文だけを出力してください。要点は本文へ統合し、同じ内容を要約として繰り返しません。
 
-要約：
-最重要点をまとめた1文
+1行は必ず15文字以内にし、意味の切れ目で改行してください。内容を段落やカテゴリに分ける場合は、カテゴリ間を2回改行し、空行を1行入れてください。回答全体は改行を含めて500文字以内にします。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
 
-本文は通常100〜400字、要約は20〜60字、全体は原則500字以内にします。複雑な術後またはエビデンスの質問でも600字以内を目安にしてください。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
-
-固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAGへの言及は行いません。"""
+固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAG、コンテキスト、質問意図を確認した内部処理への言及は行いません。"""
 
 
 class VertexAIError(BaseClientError):
@@ -386,7 +381,7 @@ class VertexAIClient(BaseClient):
             response = await asyncio.to_thread(model.generate_content, sanitized)
 
             answer, contexts, confidence = self._extract_response(response)
-            answer = self._strip_markdown(answer)
+            answer = self._format_line_output(self._strip_markdown(answer))
 
             if contexts:
                 contexts = self._filter_context_by_confidence(contexts)
@@ -486,6 +481,41 @@ class VertexAIClient(BaseClient):
         # ※ 箇条書き「・」変換は上で処理済み。医学テキストで * は記法以外に使われない
         text = re.sub(r'\*+', '', text)
         return text
+
+    def _format_line_output(
+        self,
+        text: str,
+        max_line_length: int = 15,
+        max_total_length: int = 500,
+    ) -> str:
+        """LINE向けの行長、総文字数、段落間隔を強制します。"""
+        if not text or max_line_length <= 0 or max_total_length <= 0:
+            return ""
+
+        header_pattern = re.compile(r"^(回答|要約)\s*[：:]?$")
+        paragraphs: List[List[str]] = []
+        current_paragraph: List[str] = []
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if header_pattern.fullmatch(line):
+                continue
+            if not line:
+                if current_paragraph:
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = []
+                continue
+
+            current_paragraph.extend(
+                line[index : index + max_line_length]
+                for index in range(0, len(line), max_line_length)
+            )
+
+        if current_paragraph:
+            paragraphs.append(current_paragraph)
+
+        formatted = "\n\n".join("\n".join(lines) for lines in paragraphs)
+        return formatted[:max_total_length].rstrip()
 
     async def close(self) -> None:
         """
