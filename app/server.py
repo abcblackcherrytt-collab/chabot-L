@@ -14,7 +14,6 @@ from app.api.v1 import auth_router, chat_router, stripe_webhook_router
 from app.api.v1.auth_line import router as line_auth_router
 from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
-from app.db.session import close_db, init_db
 from app.services.line_service import LineService
 from app.services.rag_service import RAGService
 
@@ -63,11 +62,6 @@ async def lifespan(app: FastAPI):
     # 起動時の処理
     logger.info(f"Starting {settings.app_name} ({settings.app_env})")
 
-    # DB 接続を初期化（Phase 2: ローカル PostgreSQL でモックプラン検証）
-    logger.info("Initializing database...")
-    await init_db()
-    logger.info("Database initialized")
-
     # RAGサービスを初期化（アプリケーション全体で再利用）
     logger.info("Initializing RAG service...")
     app.state.rag_service = RAGService()
@@ -85,7 +79,6 @@ async def lifespan(app: FastAPI):
     # LINE クライアントのHTTP接続を閉じる
     if hasattr(app.state, "line_service") and app.state.line_service:
         await app.state.line_service.client.close()
-    await close_db()
 
 
 # FastAPIアプリケーション作成

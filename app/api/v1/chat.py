@@ -9,12 +9,9 @@ from typing import TYPE_CHECKING, Annotated, Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
-from app.db.session import get_db
 from app.models.user import User
-from app.repositories.rag_permission import RagPermissionRepository
 
 if TYPE_CHECKING:
     from app.services.line_service import LineService
@@ -97,7 +94,6 @@ async def send_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
     http_request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
     # [Phase 2] Depends(require_active_subscription) に差し替えてサブスク必須化する接続ポイント。
     #   現状（Phase 1）は JWT 認証のみでサブスクゲートなし。
     current_user: Annotated[User, Depends(get_current_user)],
@@ -111,14 +107,6 @@ async def send_message(
     # アプリケーション状態からサービスを取得（lifespanで初期化済み）
     rag_service = http_request.app.state.rag_service
 
-    # Phase 2: ユーザーのプラン → RAG 権限（corpus_id/model_name）解決
-    plan = "free"
-    if current_user.subscriptions:
-        plan = current_user.subscriptions[0].plan or "free"
-    rag_perm = await RagPermissionRepository(db).get_by_plan(plan)
-    corpus_id = rag_perm.rag_corpus_id if rag_perm else None
-    model_name = rag_perm.model_name if rag_perm else None
-
     try:
         # RAGで回答を生成
         rag_result = await rag_service.query(
@@ -126,8 +114,6 @@ async def send_message(
             max_results=10,
             include_context=request.include_context,
             user_id=str(current_user.id),
-            corpus_id=corpus_id,
-            model_name=model_name,
         )
 
         # 回答が拒否された場合

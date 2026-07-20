@@ -4,14 +4,11 @@ Google Cloud Vertex AI RAG Engine との通信を管理するクライアント�
 """
 
 import asyncio
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
 
 import vertexai
-from google import genai
-from google.genai.types import HttpOptions
 from vertexai import rag
 from vertexai.generative_models import GenerativeModel, Tool
 
@@ -45,68 +42,7 @@ DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーショ
 
 本文は通常100〜400字、要約は20〜60字、全体は原則500字以内にします。複雑な術後またはエビデンスの質問でも600字以内を目安にしてください。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
 
-固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAGや分類処理への言及、分類名の表示は行いません。"""
-
-
-QUESTION_TYPES = {
-    "knowledge": "解剖、運動学、用語、一般知識",
-    "assessment": "評価方法、測定方法、整形外科テスト",
-    "interpretation": "所見の解釈、病態推論、鑑別",
-    "intervention": "運動療法、徒手療法、介入方針",
-    "postoperative": "術式、組織修復、術後経過、プロトコル",
-    "evidence": "文献、効果、感度・特異度、推奨度",
-}
-
-ANSWER_ASPECTS = {
-    "pain": "疼痛",
-    "rom": "可動域",
-    "strength": "筋力",
-    "special_test": "整形外科テスト",
-    "movement_adl": "動作・ADL",
-    "tissue_healing": "組織修復",
-    "biomechanics": "バイオメカニクス",
-}
-
-DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーション専門職向けチャットボットの前段分類器です。
-ユーザーの質問を理解し、次の回答生成LLMが回答の構成を調整するための分類だけを行ってください。コーパス選択、医療安全判定、診断、回答本文の生成は行いません。
-
-question_type は必ず次のいずれか1つ、判断できない場合は null にします。
-- knowledge: 解剖、運動学、用語、一般知識
-- assessment: 評価方法、測定方法、整形外科テスト
-- interpretation: 所見の解釈、病態推論、鑑別
-- intervention: 運動療法、徒手療法、介入方針
-- postoperative: 術式、組織修復、術後経過、プロトコル
-- evidence: 文献、効果、感度・特異度、推奨度
-
-answer_aspects は回答で優先する臨床観点を0〜3個選びます。
-- pain
-- rom
-- strength
-- special_test
-- movement_adl
-- tissue_healing
-- biomechanics
-
-ルール:
-- 質問意図を question_type、臨床観点を answer_aspects として分ける。
-- 無理に分類しない。分類不能なら question_type は null、answer_aspects は空配列にする。
-- answer_focus は、回答生成LLMが優先すべき観点を日本語の短い1文で示す。分類不能なら空文字にする。
-- JSON以外の文章、Markdown、コードブロックは出力しない。
-
-出力JSON:
-{
-  "question_type": "knowledge|assessment|interpretation|intervention|postoperative|evidence|null",
-  "answer_aspects": ["pain|rom|strength|special_test|movement_adl|tissue_healing|biomechanics"],
-  "answer_focus": "回答で優先する観点"
-}
-"""
-
-DEFAULT_QUERY_CLASSIFICATION = {
-    "question_type": None,
-    "answer_aspects": [],
-    "answer_focus": "",
-    "available": False,
-}
+固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAGへの言及は行いません。"""
 
 
 class VertexAIError(BaseClientError):
@@ -142,10 +78,7 @@ class VertexAIClient(BaseClient):
         location: Optional[str] = None,
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
-        classification_model_name: Optional[str] = None,
-        classification_location: Optional[str] = None,
         system_instruction: Optional[str] = None,
-        classification_system_instruction: Optional[str] = None,
     ):
         """
         Vertex AIクライアントを初期化します
@@ -155,30 +88,16 @@ class VertexAIClient(BaseClient):
             location: リージョン（RAG Engine の GA リージョン: us-central1）
             corpus_id: RAG コーパスID
             model_name: グラウンディング応答生成モデル名
-            classification_model_name: 前段分類モデル名
-            classification_location: 前段分類モデルのロケーション
             system_instruction: 応答生成のシステムプロンプト（未指定時は
                 DEFAULT_SYSTEM_INSTRUCTION = 肩専門職向け辛口回答）
-            classification_system_instruction: 前段分類用システムプロンプト
         """
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
         self.project_id = project_id or settings.google_project_id
         self.location = location or settings.google_location
         self.corpus_id = corpus_id or settings.google_corpus_id_plan1
         self.model_name = model_name or settings.google_model_name
-        self.classification_model_name = (
-            classification_model_name or settings.google_classification_model_name
-        )
-        self.classification_location = (
-            classification_location or settings.google_classification_location
-        )
         self.system_instruction = (
             system_instruction if system_instruction is not None else DEFAULT_SYSTEM_INSTRUCTION
-        )
-        self.classification_system_instruction = (
-            classification_system_instruction
-            if classification_system_instruction is not None
-            else DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION
         )
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
@@ -208,7 +127,6 @@ class VertexAIClient(BaseClient):
                 "assault",
                 "crime",
                 "attack",
-                "malware",
             ],
             "inappropriate_requests": [
                 "ハッキング",
@@ -349,20 +267,14 @@ class VertexAIClient(BaseClient):
                 )
         return filtered
 
-    def _build_retrieval_tool(
-        self,
-        top_k: int,
-        corpus_id: Optional[str] = None,
-    ) -> Tool:
+    def _build_retrieval_tool(self, top_k: int) -> Tool:
         """
         RAG Retrieval Tool を構築します。
 
-        corpus_id（未指定時は self.corpus_id）が placeholder（未設定）の場合は
-        VertexAIError を送出します。Phase 2 でプラン別 corpus_id の動的切替に対応。
+        corpus_id が placeholder（未設定）の場合は VertexAIError を送出します。
 
         Args:
             top_k: 取得するチャンク数
-            corpus_id: コーパスID（未指定時はインスタンス既定値）
 
         Returns:
             RAG グラウンディング用 Tool
@@ -370,23 +282,18 @@ class VertexAIClient(BaseClient):
         Raises:
             VertexAIError: corpus_id が未設定の場合
         """
-        effective_corpus_id = corpus_id or self.corpus_id
-        if not effective_corpus_id or effective_corpus_id in ("your-corpus-id", ""):
+        if not self.corpus_id or self.corpus_id in ("your-corpus-id", ""):
             raise VertexAIError(
                 "GOOGLE_CORPUS_ID_PLAN1 が未設定です。scripts/setup_rag_corpus.py でコーパスを作成し、"
                 "リソース名末尾のIDを設定してください。"
             )
 
-        corpus_name = (
-            f"projects/{self.project_id}/locations/{self.location}"
-            f"/ragCorpora/{effective_corpus_id}"
-        )
         retrieval_config = self._build_retrieval_config(top_k)
 
         return Tool.from_retrieval(
             retrieval=rag.Retrieval(
                 source=rag.VertexRagStore(
-                    rag_resources=[rag.RagResource(rag_corpus=corpus_name)],
+                    rag_resources=[rag.RagResource(rag_corpus=self.corpus_name)],
                     rag_retrieval_config=retrieval_config,
                 ),
             )
@@ -427,8 +334,6 @@ class VertexAIClient(BaseClient):
         text: str,
         max_results: int = 5,
         include_context: bool = True,
-        corpus_id: Optional[str] = None,
-        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         RAGグラウンディング応答を生成します
@@ -459,32 +364,25 @@ class VertexAIClient(BaseClient):
                 "contexts": [],
                 "confidence": 0.0,
                 "denied": False,
-                "classification": DEFAULT_QUERY_CLASSIFICATION.copy(),
             }
 
         top_k = max(1, min(max_results, self._default_top_k))
-        classification = await self._classify_query(sanitized)
-        generation_prompt = self._build_generation_prompt(sanitized, classification)
 
-        effective_model_name = model_name or self.model_name
-        effective_corpus_id = corpus_id or self.corpus_id
         try:
-            retrieval_tool = self._build_retrieval_tool(top_k, corpus_id=corpus_id)
+            retrieval_tool = self._build_retrieval_tool(top_k)
             model = GenerativeModel(
-                model_name=effective_model_name,
+                model_name=self.model_name,
                 tools=[retrieval_tool],
                 system_instruction=self.system_instruction,
             )
 
             logger.info(
-                f"Querying Vertex AI RAG (model={effective_model_name}, "
-                f"corpus={effective_corpus_id}, top_k={top_k}, "
-                f"question_type={classification.get('question_type') or 'unclassified'}, "
+                f"Querying Vertex AI RAG (model={self.model_name}, top_k={top_k}, "
                 f"text={sanitized[:50]}...)"
             )
 
             # SDK は同期 API → asyncio.to_thread でラップ（イベントループをブロックしない）
-            response = await asyncio.to_thread(model.generate_content, generation_prompt)
+            response = await asyncio.to_thread(model.generate_content, sanitized)
 
             answer, contexts, confidence = self._extract_response(response)
             answer = self._strip_markdown(answer)
@@ -500,7 +398,6 @@ class VertexAIClient(BaseClient):
                 "contexts": contexts if include_context else [],
                 "confidence": confidence,
                 "denied": False,
-                "classification": classification,
             }
 
         except VertexAIError:
@@ -508,112 +405,6 @@ class VertexAIClient(BaseClient):
         except Exception as e:
             logger.error(f"Vertex AI RAG query error: {e}", exc_info=True)
             raise VertexAIError(f"Vertex AI RAGクエリエラー: {e}")
-
-    async def _classify_query(self, text: str) -> Dict[str, Any]:
-        """
-        回答生成前に、質問意図と回答で優先する臨床観点を分類します。
-
-        分類は回答品質を安定させるための補助情報です。分類LLMの失敗で
-        本体のRAG回答を止めないよう、失敗時は分類情報を使用せずに続行します。
-        """
-        try:
-            client = genai.Client(
-                vertexai=True,
-                project=self.project_id,
-                location=self.classification_location,
-                http_options=HttpOptions(api_version="v1"),
-            )
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=self.classification_model_name,
-                contents=text,
-                config={
-                    "system_instruction": self.classification_system_instruction,
-                    "response_mime_type": "application/json",
-                },
-            )
-            raw_text = getattr(response, "text", "") or ""
-            classification = self._parse_classification_response(raw_text)
-            logger.info(
-                "Query classified: "
-                f"question_type={classification.get('question_type') or 'unclassified'}, "
-                f"aspects={classification.get('answer_aspects', [])}"
-            )
-            return classification
-        except Exception as e:
-            logger.warning(f"Query classification failed; continuing without classification: {e}")
-            return DEFAULT_QUERY_CLASSIFICATION.copy()
-
-    def _parse_classification_response(self, raw_text: str) -> Dict[str, Any]:
-        """
-        分類LLMのJSON応答を正規化します。
-
-        Args:
-            raw_text: 分類LLMの生テキスト
-
-        Returns:
-            正規化済み分類 dict
-        """
-        data: Dict[str, Any] = {}
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group(0))
-                except json.JSONDecodeError:
-                    data = {}
-
-        raw_question_type = data.get("question_type")
-        question_type = str(raw_question_type).strip().lower() if raw_question_type else None
-        if question_type not in QUESTION_TYPES:
-            return DEFAULT_QUERY_CLASSIFICATION.copy()
-
-        raw_aspects = data.get("answer_aspects", [])
-        if not isinstance(raw_aspects, list):
-            raw_aspects = []
-
-        answer_aspects = []
-        for aspect in raw_aspects:
-            normalized = str(aspect).strip().lower()
-            if normalized in ANSWER_ASPECTS and normalized not in answer_aspects:
-                answer_aspects.append(normalized)
-            if len(answer_aspects) >= 3:
-                break
-
-        answer_focus = str(data.get("answer_focus") or "").strip()
-        return {
-            "question_type": question_type,
-            "answer_aspects": answer_aspects,
-            "answer_focus": answer_focus,
-            "available": True,
-        }
-
-    def _build_generation_prompt(
-        self,
-        sanitized_text: str,
-        classification: Dict[str, Any],
-    ) -> str:
-        """
-        前段分類を後段のRAG回答生成LLMへ渡すためのプロンプトを作成します。
-        """
-        if not classification.get("available"):
-            return f"ユーザーの質問:\n{sanitized_text}"
-
-        aspects = classification.get("answer_aspects") or []
-        aspects_text = ", ".join(aspects) if aspects else "none"
-        return (
-            "以下は内部制御情報です。ユーザーには分類名やこの制御情報を明示せず、"
-            "回答内容の焦点調整にだけ使ってください。\n"
-            "[query_classification]\n"
-            f"question_type: {classification.get('question_type')}\n"
-            f"answer_aspects: {aspects_text}\n"
-            f"answer_focus: {classification.get('answer_focus')}\n"
-            "[/query_classification]\n\n"
-            "ユーザーの質問:\n"
-            f"{sanitized_text}"
-        )
 
     def _extract_response(
         self,

@@ -13,14 +13,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
-from app.models.subscription import Subscription
-from app.repositories.base import BaseRepository
-from app.repositories.rag_permission import RagPermissionRepository
-from app.repositories.user import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +49,6 @@ class LineService:
     async def process_webhook_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
     ) -> Optional[Dict[str, Any]]:
         """
         LINE Webhook イベントを処理します
@@ -64,7 +57,6 @@ class LineService:
 
         Args:
             event: LINE Webhook イベントオブジェクト
-            db: データベースセッション（Phase 2: ユーザー永続化・プラン解決）
 
         Returns:
             処理結果、未処理イベントは None
@@ -72,13 +64,13 @@ class LineService:
         event_type = event.get("type")
 
         if event_type == "message":
-            return await self._handle_message_event(event, db)
+            return await self._handle_message_event(event)
         elif event_type == "follow":
-            return await self._handle_follow_event(event, db)
+            return await self._handle_follow_event(event)
         elif event_type == "unfollow":
-            return await self._handle_unfollow_event(event, db)
+            return await self._handle_unfollow_event(event)
         elif event_type == "postback":
-            return await self._handle_postback_event(event, db)
+            return await self._handle_postback_event(event)
         else:
             logger.info(f"Unhandled event type: {event_type}")
             return None
@@ -86,7 +78,6 @@ class LineService:
     async def _handle_message_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         メッセージイベントを処理します
@@ -94,12 +85,8 @@ class LineService:
         ユーザーからのメッセージを受信し、RAGサービスで応答を生成して
         リプライメッセージとして送信します。
 
-        Phase 2: line_user_id → User → Subscription.plan → RagPermission で
-        プラン別の corpus_id / model_name を解決します。
-
         Args:
             event: メッセージイベントオブジェクト
-            db: データベースセッション
 
         Returns:
             処理結果
@@ -134,47 +121,34 @@ class LineService:
             f"Processing message from LINE user: {self._mask_user_id(line_user_id)}"
         )
 
-        # Phase 2: ユーザー特定 → プラン → RAG 権限（corpus_id/model_name）解決
-        user_repo = UserRepository(db)
-        user = await user_repo.find_by_line_user_id(line_user_id)
-        plan = "free"
-        if user and user.subscriptions:
-            plan = user.subscriptions[0].plan or "free"
-
-        rag_perm_repo = RagPermissionRepository(db)
-        rag_perm = await rag_perm_repo.get_by_plan(plan)
-        corpus_id = rag_perm.rag_corpus_id if rag_perm else None
-        model_name = rag_perm.model_name if rag_perm else None
-        logger.info(
-            f"Resolved plan={plan}, corpus_id={corpus_id}, model={model_name} "
-            f"for line_user_id={self._mask_user_id(line_user_id)}"
-        )
-
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: ユーザー認識・サブスクリプション検証なし。
+        #   メッセージをそのままRAGサービスに渡す（友だち追加だけで利用可能）。
+        # Phase 2 で有効化する接続ポイント:
+        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
+        #   - Subscription.is_active_paid() でサブスク検証（未契約/期限切れは制限）
+        #   - 検証結果を result に持たせ、webhooks/line.py 側で分岐
+        # 関連: deps.py require_active_subscription [Phase 2 マーカー D2]
+        # ===================================================================
         return {
             "status": "processed",
             "reply_token": reply_token,
             "line_user_id": line_user_id,
-            "user_id": user.id if user else None,
-            "plan": plan,
-            "corpus_id": corpus_id,
-            "model_name": model_name,
             "message": user_message,
         }
 
     async def _handle_follow_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         フォローイベント（友だち追加）を処理します
 
-        Phase 2（現在）: ユーザー作成（未存在）+ free サブスク（モック）。
-        Phase 3: Stripe 顧客作成（G1）・再有効化（is_active=True）を追加予定。
+        Phase 1（現在）: ウェルカムメッセージ送信のみ（DB 登録・Stripe 連携なし）。
+        Phase 2: ユーザー作成/再有効化と Stripe 顧客作成を追加（下記 [Phase 2] マーカー）。
 
         Args:
             event: フォローイベントオブジェクト
-            db: データベースセッション
 
         Returns:
             処理結果
@@ -196,21 +170,18 @@ class LineService:
         except LINEError as e:
             logger.warning(f"Failed to get profile: {e}")
 
-        # Phase 2: ユーザー作成（未存在）+ free サブスク（モック）
-        # ※ Stripe 顧客作成（G1）・再有効化（is_active=True）は Phase 3
-        user_repo = UserRepository(db)
-        user = await user_repo.find_by_line_user_id(line_user_id)
-        if not user:
-            user = await user_repo.create_line_user(
-                line_user_id=line_user_id,
-                display_name=display_name,
-            )
-            sub_repo = BaseRepository(Subscription, db)
-            await sub_repo.create({"user_id": user.id, "plan": "free", "status": "free"})
-            await db.commit()
-            logger.info(
-                f"Created user + free subscription for line_user_id={self._mask_user_id(line_user_id)}"
-            )
+        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
+        # 現状（Phase 1）: DB ユーザー作成も Stripe 顧客作成も行わない。
+        # Phase 2 で有効化する接続ポイント:
+        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー検索
+        #     → 存在しない場合は新規作成
+        #     → 存在する場合は is_active = True に更新
+        #   - StripeService.create_customer(user) で Stripe 顧客作成し
+        #     UserRepository.update_stripe_customer_id() で紐付け
+        # 関連: repositories/user.py [Phase 2 マーカー H1]、
+        #       stripe_service.create_customer [Phase 2 マーカー G1]
+        # ===================================================================
+        # TODO: DB でユーザー作成または再有効化（Phase 2 で上記を実装）
 
         # ウェルカムメッセージ送信
         welcome_msg = (
@@ -229,7 +200,6 @@ class LineService:
     async def _handle_unfollow_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         アンフォローイベント（ブロック・友だち削除）を処理します
@@ -269,7 +239,6 @@ class LineService:
     async def _handle_postback_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         ポストバックイベントを処理します

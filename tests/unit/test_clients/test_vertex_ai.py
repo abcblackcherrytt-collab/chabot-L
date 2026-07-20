@@ -12,6 +12,19 @@ from app.clients.vertex_ai import VertexAIClient, VertexAIError
 class TestVertexAIClient:
     """Vertex AIクライアントのテストクラス"""
 
+    def test_system_instruction_uses_concise_polite_sarcasm(self):
+        """LINE向けの回答プロンプトが新方針を保持することを確認する。"""
+        from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
+
+        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "儂" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "お前様" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
+
     @pytest.mark.asyncio
     async def test_query_success(self, mock_vertex_ai_response):
         """
@@ -91,17 +104,6 @@ class TestVertexAIClient:
             long_query = "a" * 1500
             assert len(client._sanitize_input(long_query)) == 1000
 
-    def test_default_model_names(self):
-        """
-        回答生成モデルと分類モデルの既定値が分離されていることをテスト
-        """
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-
-            assert client.model_name == "gemini-2.5-flash"
-            assert client.classification_model_name == "gemini-3.1-flash-lite"
-            assert client.classification_location == "global"
-
     @pytest.mark.asyncio
     async def test_check_denial_conditions(self):
         """
@@ -164,112 +166,3 @@ class TestVertexAIClient:
             assert len(filtered) == 2
             assert filtered[0]["confidence"] == 0.85
             assert filtered[1]["confidence"] == 0.75
-
-    def test_parse_classification_response(self):
-        """
-        質問意図と複数の臨床観点が正規化されることをテスト
-        """
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-
-            result = client._parse_classification_response(
-                """
-                {
-                  "question_type": "interpretation",
-                  "answer_aspects": ["rom", "pain", "biomechanics", "strength"],
-                  "answer_focus": "肩関節ROMの制限因子を中心に回答する"
-                }
-                """
-            )
-
-            assert result["question_type"] == "interpretation"
-            assert result["answer_aspects"] == ["rom", "pain", "biomechanics"]
-            assert result["answer_focus"] == "肩関節ROMの制限因子を中心に回答する"
-            assert result["available"] is True
-
-    def test_parse_classification_response_fallback(self):
-        """
-        分類LLMの応答が不正な場合、分類情報を使用しないことをテスト
-        """
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-
-            result = client._parse_classification_response("not json")
-
-            assert result["question_type"] is None
-            assert result["answer_aspects"] == []
-            assert result["answer_focus"] == ""
-            assert result["available"] is False
-
-    def test_generation_prompt_omits_unavailable_classification(self):
-        """未分類時は内部制御情報を回答LLMへ渡さないことをテスト"""
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-            prompt = client._build_generation_prompt(
-                "肩の痛みは何を評価しますか？",
-                {
-                    "question_type": None,
-                    "answer_aspects": [],
-                    "answer_focus": "",
-                    "available": False,
-                },
-            )
-
-        assert "[query_classification]" not in prompt
-        assert "question_type:" not in prompt
-        assert prompt == "ユーザーの質問:\n肩の痛みは何を評価しますか？"
-
-    def test_system_instruction_requires_concise_polite_sarcasm(self):
-        """回答プロンプトが丁寧で辛口な「回答＋要約」形式を指定することをテスト"""
-        from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
-
-        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "儂" not in DEFAULT_SYSTEM_INSTRUCTION
-        assert "お前様" not in DEFAULT_SYSTEM_INSTRUCTION
-        assert "原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
-
-    @pytest.mark.asyncio
-    async def test_query_passes_classification_to_generation_prompt(self):
-        """
-        前段分類結果が後段の回答生成プロンプトに渡されることをテスト
-        """
-
-        class MockResponse:
-            text = "ROM制限の回答です。"
-            candidates = []
-
-        classification = {
-            "question_type": "interpretation",
-            "answer_aspects": ["rom", "pain"],
-            "answer_focus": "肩関節ROMと疼痛の関係を中心に回答する",
-            "available": True,
-        }
-
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-            client._classify_query = AsyncMock(return_value=classification)
-
-            with patch.object(client, "_build_retrieval_tool", return_value=MagicMock()):
-                with patch("app.clients.vertex_ai.GenerativeModel") as mock_model_class:
-                    mock_model = MagicMock()
-                    mock_model.generate_content.return_value = MockResponse()
-                    mock_model_class.return_value = mock_model
-
-                    result = await client.query(
-                        text="肩関節外転のROM制限は何を見る？",
-                        include_context=False,
-                    )
-
-        generation_prompt = mock_model.generate_content.call_args.args[0]
-        assert "[query_classification]" in generation_prompt
-        assert "question_type: interpretation" in generation_prompt
-        assert "answer_aspects: rom, pain" in generation_prompt
-        assert "answer_focus: 肩関節ROMと疼痛の関係を中心に回答する" in generation_prompt
-        assert "confidence:" not in generation_prompt
-        assert "rationale:" not in generation_prompt
-        assert "肩関節外転のROM制限は何を見る？" in generation_prompt
-        assert result["classification"] == classification

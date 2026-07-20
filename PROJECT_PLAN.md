@@ -251,14 +251,12 @@ Phase 1 デプロイ（main push → GitHub Actions）は **「Authenticate to G
 - 上記 [A1][A2][A3][C7] を実施
 
 #### [P2-2] DB 接続の有効化
-- [x] **[2026-07-05 ローカル検証]** `app/server.py` lifespan で `init_db()`/`close_db()` 呼び出し **[Phase 2 マーカー I2]**
-- [x] **[2026-07-05]** `app/models/__init__.py` のエクスポート不備を是正（User/RefreshToken のみ → 全7モデル追加）
-- [ ] **[本番]** Cloud Run は DB 未接続のため未デプロイ（init_db 有効化・line_service db 注入はローカル専用・Cloud SQL 整備後に Phase 2 デプロイ）
+- [ ] `app/server.py:60` lifespan で `init_db()` 呼び出し **[Phase 2 マーカー I2]**
+- [ ] `app/models/__init__.py` のエクスポート不備を是正（現状 User/RefreshToken のみ → Subscription/UsageDaily/Conversation/RagPermission/StripeEvent を追加）
 
 #### [P2-3] LINE Webhook / Login フローの DB 連携（ユーザー永続化）
-- [x] **[2026-07-05 ローカル検証]** follow: ユーザー作成（未存在）+ free サブスク → `app/services/line_service.py` _handle_follow_event **[Phase 2 マーカー A4]**
-  - `UserRepository.find_by_line_user_id` / `create_line_user` を実装 **[H1]**
-  - ※ Stripe 顧客作成（G1）・is_active=True 再有効化は Phase 3
+- [ ] follow: ユーザー作成/再有効化 → `app/services/line_service.py:173` **[Phase 2 マーカー A4]**
+  - `UserRepository.find_by_line_user_id` / create を実装（シグネチャは `app/repositories/user.py:111-131` に既記載 **[Phase 2 マーカー H1]**）
 - [ ] LINE Login callback: ユーザー永続化 → `app/api/v1/auth_line.py:213-235` **[Phase 2 マーカー C1/C2]**
   - 現状の「仮 UUID 都度発行」を DB 検索した既存 ID に切替 / RefreshTokenRepository 保存
 
@@ -273,14 +271,13 @@ Phase 1 デプロイ（main push → GitHub Actions）は **「Authenticate to G
 - [ ] 制限超過時は `app/api/v1/webhooks/line.py:50` で RAG クエリせず制限メッセージを返却 **[Phase 2 マーカー B2]**
 
 #### [P2-6] プラン別コーパス切替
-- [x] **[2026-07-05 ローカル検証]** `RagPermissionRepository`（get_by_plan）を新設 **[Phase 2 マーカー H5]**
-- [x] **[2026-07-05]** RAGService.query / VertexAIClient.query が corpus_id/model_name 引数で動的切替（line_user_id → User → Subscription.plan → RagPermission 経路を検証済み）
-- [x] **[2026-07-05]** webhooks/line.py は BackgroundTasks 内で `async_session_maker` で DB 取得、chat.py は current_user から plan 解決
+- [ ] RagPermission.rag_corpus_id / model_name を読むリポジトリを **【新設】 [Phase 2 マーカー H5]**
+- [ ] `app/services/rag_service.py:35` の RAGService.query がユーザーのプランに応じて corpus_id を切替（VertexAIClient は __init__ で corpus_id を引数取り済み `app/clients/vertex_ai.py:59`）
 - [ ] Conversation テーブルに plan_at_request / rag_corpus_id / トークン使用量を記録
 
-#### [P2-7] ✅ 前提: Vertex AI 実 API 統合（Phase 1 で完了）
-- [x] **[2026-07-05]** `app/clients/vertex_ai.py` をモック → 実 API（vertexai.rag GA SDK）に置換済み
-- ※ コーパス切替の検証に必須（ローカル検証で確認済み）
+#### [P2-7] ⚠️ 前提: Vertex AI 実 API 統合（先行タスク）
+- [ ] 現状 `app/clients/vertex_ai.py:292` は完全モック（固定フォールバック応答）→ 実 API 呼び出しに置換
+- ※ コーパス切替の検証に必須
 
 #### Phase 2 の運用タスク
 - [ ] G6. state/nonce をインメモリ(_state_store)から Redis/Memorystore へ移行（推奨・Cloud Run マルチインスタンス）
@@ -489,19 +486,3 @@ Phase 1 デプロイ（main push → GitHub Actions）は **「Authenticate to G
 - [x] 検証: pytest 75 passed / alembic upgrade head が PostgreSQL 16 で成功 / autogenerate でスキーマ差分ゼロ確認
 
 > ※ ローカル開発DBはスキーマ変更（初期マイグレ直接修正）により再構築が必要 → [D0] 参照
-
-### 2026-07-05 Phase 2 モックプラン検証（ローカル PG・コーパス動的切替）
-- [x] ローカル PostgreSQL（docker `chabot-postgres`）で `alembic upgrade head` + rag_permissions seed（free/basic → shoulder コーパス `1766660099138387968`・gemini-2.5-flash）
-- [x] [P2-2] server.py lifespan で init_db/close_db 有効化・models/__init__.py に全7モデルエクスポート
-- [x] [P2-3] follow で User 作成 + free サブスク（UserRepository.find_by_line_user_id / create_line_user）
-- [x] [P2-6] RagPermissionRepository 新設・RAGService/VertexAIClient.query が corpus_id/model_name を動的受領・webhooks/line.py と chat.py で plan→corpus_id 解決
-- [x] 検証: follow → User 作成、message → plan=free で corpus_id 解決、手動 basic 昇格 → plan=basic に切替を確認（1コーパス検証・応答内容は同じ・plan 解決ログで確認）
-
-#### ⚠️ Phase 2 ローカル検証 以降の残タスク（本番化・機能拡充）
-- [ ] **[本番 DB]** Cloud SQL (PostgreSQL 16) 整備 [A1-A3/C7] → DATABASE_URL Secret 登録 → deploy.yml の Cloud SQL 接続復帰 → Phase 2 デプロイ（現在 init_db 有効化・line_service db 注入はローカル専用・本番 Cloud Run では DB 未接続でエラーになるため未デプロイ）
-- [ ] **[テスト]** test_line_service.py の9件が process_webhook_event(event, db) シグネチャ変更で失敗中 → Phase 2 で db mock を渡すよう修正
-- [ ] **[P2-3 続]** LINE Login callback（auth_line.py C1/C2）のユーザー永続化・RefreshToken 保存
-- [ ] **[P2-4]** require_active_subscription（deps.py D2）のモック実装
-- [ ] **[P2-5]** チャット回数判定（UsageDaily 集計サービス/リポジトリ新設・RagPermission.daily_message_limit 照合）
-- [ ] **[P2-6 続]** Conversation テーブルに plan_at_request / rag_corpus_id / トークン使用量を記録
-- [ ] **[Phase 3]** Stripe 実決済・イベント型フック（subscription.updated/deleted・invoice.payment_failed）でプラン更新・退会処理

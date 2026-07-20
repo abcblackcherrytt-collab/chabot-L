@@ -107,46 +107,6 @@ class UserRepository(BaseRepository[User]):
         """
         return (await self.get_by_email(email)) is not None
 
-    async def find_by_line_user_id(self, line_user_id: str) -> User | None:
-        """
-        LINE ユーザーID でユーザーを検索（Phase 2）
-
-        Args:
-            line_user_id: LINE ユーザーID
-
-        Returns:
-            ユーザー、存在しない場合は None
-        """
-        statement = select(User).where(User.line_user_id == line_user_id)
-        result = await self.db.execute(statement)
-        return result.scalar_one_or_none()
-
-    async def create_line_user(
-        self,
-        line_user_id: str,
-        display_name: str = "",
-        email: str | None = None,
-    ) -> User:
-        """
-        LINE ユーザーを新規作成（Email/Password 不要・Phase 2）
-
-        Args:
-            line_user_id: LINE ユーザーID
-            display_name: 表示名
-            email: メールアドレス（任意）
-
-        Returns:
-            作成されたユーザー
-        """
-        return await self.create(
-            {
-                "line_user_id": line_user_id,
-                "display_name": display_name,
-                "email": email,
-                "role": "user",
-            }
-        )
-
 
     # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
     # Phase 2 で以下のメソッドをこのクラスに追加（実装は置かない）:
