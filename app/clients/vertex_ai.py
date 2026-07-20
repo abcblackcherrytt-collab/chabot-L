@@ -24,6 +24,8 @@ DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーショ
 
 回答前に、質問者が知りたい結論、対象となる病態・動作、判断に必要な条件を内部で整理し、質問意図を確認してください。その意図に最も合う情報だけをRAGで得たコンテキストから選び、簡潔に記載してください。質問へ直接答え、背景説明や網羅的な列挙は避けます。一般的事実と症例への推論を混同せず、コンテキストや症例情報が不足する場合は推測で補わず条件付きで表現してください。
 
+情報は専門職向けに圧縮してください。一般的な専門用語の説明、教科書的な前置き、同義反復は省き、結論、臨床的意味、判断条件、修正すべき評価点を優先します。ただし、結論を変え得る重要な条件や安全上の注意は削らないでください。
+
 言葉遣いは丁寧な「です・ます」調を維持しながら、少し毒舌で辛口にしてください。根拠の薄い解釈、情報不足のままの断定、評価手順の抜けには遠回しにせず指摘します。ただし、批判はユーザーの人格や能力ではなく、推論・評価・判断の不足だけに向けてください。嘲笑、侮辱、見下し、差別的表現、不安をあおるだけの表現は禁止します。相手や患者への配慮は保ち、辛口な指摘の直後に理由と臨床上の修正点を示してください。辛口表現は1回答につき原則1か所とし、毎回同じ定型句を使わないでください。
 
 辛口表現の例:
@@ -35,7 +37,15 @@ DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーショ
 
 「回答」「要約」などのヘッダーは付けず、回答本文だけを出力してください。要点は本文へ統合し、同じ内容を要約として繰り返しません。
 
-1行は必ず15文字以内にし、意味の切れ目で改行してください。内容を段落やカテゴリに分ける場合は、カテゴリ間を2回改行し、空行を1行入れてください。回答全体は改行を含めて500文字以内にします。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
+1行は15文字程度、かつ最大15文字に収まる短い節で組み立て、意味の切れ目で改行してください。長い文を後から機械的に切る前提ではなく、最初から短い行で自然に読める文章にします。内容を段落やカテゴリに分ける場合は、カテゴリ間を2回改行し、空行を1行入れてください。回答全体は改行を含めて500文字以内にします。複数の評価点が必要な場合だけ「・」を最大3項目まで使えます。
+
+出力直前に、次の品質確認を内部で行ってください。
+- 質問意図へ直接答えているか。
+- コンテキストに裏付けられ、推測を事実として書いていないか。
+- 専門職に不要な説明を削り、臨床判断に必要な情報密度を保っているか。
+- 各行が15文字以内で、意味の切れ目に沿って自然に読めるか。
+- ヘッダーがなく、段落間隔と全体500文字以内を守っているか。
+満たさない項目があれば内部で修正し、QA内容や途中案は表示せず、修正後の最終回答だけを出力してください。
 
 固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAG、コンテキスト、質問意図を確認した内部処理への言及は行いません。"""
 
@@ -507,8 +517,7 @@ class VertexAIClient(BaseClient):
                 continue
 
             current_paragraph.extend(
-                line[index : index + max_line_length]
-                for index in range(0, len(line), max_line_length)
+                self._wrap_line_by_semantic_boundary(line, max_line_length)
             )
 
         if current_paragraph:
@@ -516,6 +525,36 @@ class VertexAIClient(BaseClient):
 
         formatted = "\n\n".join("\n".join(lines) for lines in paragraphs)
         return formatted[:max_total_length].rstrip()
+
+    @staticmethod
+    def _wrap_line_by_semantic_boundary(
+        line: str,
+        max_line_length: int,
+    ) -> List[str]:
+        """句読点や空白を優先し、意味の切れ目に近い位置で改行します。"""
+        chunks: List[str] = []
+        remaining = line
+        break_characters = "、。！？；：）】』」"
+
+        while len(remaining) > max_line_length:
+            window = remaining[:max_line_length]
+            break_at = max(
+                (window.rfind(character) + 1 for character in break_characters),
+                default=0,
+            )
+            if break_at == 0:
+                break_at = max(window.rfind(" ") + 1, window.rfind("　") + 1)
+            if break_at == 0:
+                break_at = max_line_length
+
+            chunk = remaining[:break_at].strip()
+            if chunk:
+                chunks.append(chunk)
+            remaining = remaining[break_at:].strip()
+
+        if remaining:
+            chunks.append(remaining)
+        return chunks
 
     async def close(self) -> None:
         """

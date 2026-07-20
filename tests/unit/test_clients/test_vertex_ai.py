@@ -17,9 +17,12 @@ class TestVertexAIClient:
         from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
 
         assert "ヘッダーは付けず" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "1行は必ず15文字以内" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "1行は15文字程度、かつ最大15文字" in DEFAULT_SYSTEM_INSTRUCTION
         assert "改行を含めて500文字以内" in DEFAULT_SYSTEM_INSTRUCTION
         assert "質問意図を確認" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "情報は専門職向けに圧縮" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "出力直前に、次の品質確認を内部で" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "QA内容や途中案は表示せず" in DEFAULT_SYSTEM_INSTRUCTION
         assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
         assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
         assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
@@ -74,6 +77,19 @@ class TestVertexAIClient:
         assert "\n\n" in result
         assert len(result) <= 500
         assert all(len(line) <= 15 for line in result.splitlines())
+
+    def test_format_line_output_prefers_semantic_boundaries(self):
+        """15文字以内で句読点を優先して改行することを確認する。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        result = client._format_line_output(
+            "外転時痛では、肩甲骨の代償と上腕骨頭の運動を確認します。"
+        )
+        lines = result.splitlines()
+
+        assert lines[0] == "外転時痛では、"
+        assert all(len(line) <= 15 for line in lines)
 
     @pytest.mark.asyncio
     async def test_query_success(self, mock_vertex_ai_response):
