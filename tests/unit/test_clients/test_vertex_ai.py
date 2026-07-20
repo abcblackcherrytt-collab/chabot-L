@@ -26,6 +26,34 @@ class TestVertexAIClient:
         assert "原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
 
     @pytest.mark.asyncio
+    async def test_query_passes_default_system_instruction_to_model(self):
+        """RAG回答生成モデルへ既定のシステムプロンプトが渡されることを確認する。"""
+
+        class MockResponse:
+            text = "回答：\n評価所見を整理します。\n\n要約：\n所見を統合してください。"
+            candidates = []
+
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            with patch.object(client, "_build_retrieval_tool", return_value=MagicMock()):
+                with patch("app.clients.vertex_ai.GenerativeModel") as model_class:
+                    model = MagicMock()
+                    model.generate_content.return_value = MockResponse()
+                    model_class.return_value = model
+
+                    result = await client.query(
+                        text="  肩関節外転のROM制限は何を評価しますか？  ",
+                        include_context=False,
+                    )
+
+        assert model_class.call_args.kwargs["system_instruction"] == client.system_instruction
+        model.generate_content.assert_called_once_with(
+            "肩関節外転のROM制限は何を評価しますか？"
+        )
+        assert result["answer"].startswith("回答：")
+
+    @pytest.mark.asyncio
     async def test_query_success(self, mock_vertex_ai_response):
         """
         RAGクエリが成功することをテスト
