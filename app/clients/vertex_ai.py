@@ -127,6 +127,7 @@ class VertexAIClient(BaseClient):
                 "assault",
                 "crime",
                 "attack",
+                "malware",
             ],
             "inappropriate_requests": [
                 "ハッキング",

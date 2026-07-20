@@ -194,8 +194,10 @@ class RAGService:
         if len(answer) <= max_length:
             return answer
 
-        # 先頭の要約を作成
-        return answer[:max_length] + "..."
+        # 省略記号を含めて最大文字数内に収める
+        if max_length <= 3:
+            return "." * max_length
+        return answer[: max_length - 3] + "..."
 
     def validate_query(
         self,
