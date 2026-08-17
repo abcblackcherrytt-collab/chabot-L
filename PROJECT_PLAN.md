@@ -1,488 +1,365 @@
-# Chabot (LINE版) プロジェクト計画・タスク
+# Chabot（LINE版）プロジェクト計画・進捗
 
-> **メタ**
-> - 生成日: 2026-07-03（todo.txt / REMAINING_TASKS.md / ROADMAP.md / DEPLOY_BLOCKERS.md を統合）
-> - 前提プロジェクト: GCP = `takahashi-451312` / リージョン = `asia-northeast1`
-> - 注意: 本ファイルに実際のシークレット値は記載しない（取得元・設定先のみ）
-> - 進捗は `[ ]`=未対応 / `[x]` `[✅]`=完了 で管理。コードマーカーは `grep -rn "\[Phase 2" app/` で抽出可能。
+> **更新日**: 2026-08-17（Secret Manager登録済み確認済み・Cloud Runデプロイ準備完了）
+> **対象GCP**: `takahashi-451312`
+> **Cloud Runリージョン**: `asia-northeast1`
+> **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
+> **注意**: シークレットの実値は本ファイルへ記載しない。
 
 ---
 
-## 📋 クイックリファレンス（エージェント作業用）
+## 0. 現在の結論
 
-### Phase 構成一覧
+現在は、次の2つを分けて管理する。
 
-| Phase | ゴール | Stripe | DB | 主な設定タスク ID |
+1. **本番版**: LINE Bot + Vertex AI RAG のPhase 1がCloud Runで稼働中
+2. **開発版**: Firestoreによるユーザー管理・回数制限・プラン別コーパス・StripeテストAPIをローカル実装中
+
+開発版は構文確認まで完了しているが、未コミット・未デプロイであり、本番利用可能とは判定しない。
+
+### 0.1 フェーズ一覧
+
+| Phase | ゴール | データストア | Stripe | 状況 |
 |---|---|---|---|---|
-| **1**（現在）| 友だち追加だけでボット動作 | なし | なし | A4 / B1-B2 / C1-C4,C6 / E1,E3,E4,E6,E7,E8 / F1 |
-| **2**（後続）| モックプランで回数制限・コーパス切替を動かす | **不使用**（モック判定）| Cloud SQL 有効化 | A1-A3 / C7 / D0-D2 / E2 / F2 |
-| **3**（後続）| 実決済フレームワーク・退会処理 | **サンドボックス→本番** | 既存 DB 利用 | B3 / C5 / E5 |
+| Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
+| Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **ローカル実装・統合試験前** |
+| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **コード実装中・E2E未実施** |
+| Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
+| 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
 
-依存: **Phase 1 → Phase 2（DB 基盤）→ Phase 3（実 Stripe）**
+### 0.2 確定した方針
 
-### よく使うコマンド
+- [x] 初期運用のデータストアはFirestoreとする。
+- [x] FastAPI起動時のPostgreSQL接続確認を一時停止する。
+- [保留] Cloud SQL、VPC Connector、Alembic本番適用は当面実施しない。
+- [x] サブスクリプションAPIは当面 `test_user_id` を使うテスト実装のまま残す。
+- [x] 1日あたりの回数上限は次の値に統一する。
+  - free: 3件
+  - basic: 100件
+  - pro: 500件
+- [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
+
+---
+
+## 1. 本番稼働状況
+
+### 1.1 2026-08-17確認結果と進捗
+
+**本番環境**:
+- [x] Cloud Runサービス `chabot-service` はReady。
+- [x] 最新Readyリビジョンは `chabot-service-00016-kt8`。
+- [x] 正式URLの `/health` はHTTP 200、`{"status":"healthy"}` を返却。
+- [x] 本番リビジョンのコミットは `d602736`。
+- [x] 直近のGitHub Actionsデプロイは成功。
+- [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
+
+**開発環境進捗（2026-08-17作業完了）**:
+- [x] Python 3.14でgoogle-cloud-firestoreインストール完了
+- [x] PostgreSQL依存分離完了（deps.py、webhooks/line.py、chat.py修正）
+- [x] Firestore単独起動確認（/healthエンドポイント正常動作）
+- [x] Firestore回数制御Transaction化実装（increment_with_limit_check）
+- [x] Stripe解約フロー矛盾解消（Stripe解約→free継続、LINE unfollow→無効化）
+- [x] Cloud Run環境変数Firestore版更新（.env.example、deploy.yml修正）
+- [x] CI品質ゲート化（Python 3.14化、Firestore-only app startupテスト追加）
+- [x] Secret Managerシークレット登録済み確認（google-corpus-id関連）
+
+### 1.2 本番とローカルの差
+
+- 本番にはPhase 1のコードがデプロイされている。
+- Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhookの変更はローカル作業ツリーにあり、本番未反映。
+- 現在の作業ブランチは `phase2/local-mock-plan`。
+- ローカルには多数の未コミット変更・未追跡ファイルがあるため、変更範囲を整理してからPR化する。
+
+---
+
+## 2. 実装済みの機能
+
+### 2.1 Phase 1: LINE Bot + RAG
+
+- [x] LINE Webhook署名検証
+- [x] followイベントのウェルカムメッセージ
+- [x] textメッセージのRAG回答
+- [x] Vertex AI RAG実API統合
+- [x] プラン別に `corpus_id` / `model_name` をRAGへ渡せる構造
+- [x] LINE向けの短文回答・マークダウン除去
+- [x] `/health` エンドポイント
+- [x] Cloud Run / Artifact Registry / Workload Identityによるデプロイ
+
+### 2.2 Phase 2: Firestoreユーザー・プラン管理
+
+- [x] `DATABASE_BACKEND=firestore` を既定値として追加
+- [x] Firestoreユーザーリポジトリ
+- [x] Firestore RAG権限リポジトリ
+- [x] Firestore日次使用回数リポジトリ
+- [x] follow時のユーザー作成
+- [x] `free/basic/pro` のプラン取得
+- [x] プラン別コーパス切替
+- [x] 全プランの日次回数判定
+- [x] 上限超過時にRAGを実行せず案内を返信
+- [x] 回数上限のコード上の基準値を `3/100/500` に一元化
+- [x] Firestore初期データ投入スクリプト
+- [ ] 本番Firestoreへ初期データが正しく投入されていることを再確認
+- [ ] Firestore Security Rules、IAM、必要な複合インデックスを確認
+- [ ] 実LINEユーザーでfree/basic/proそれぞれの上限とコーパス切替をE2E確認
+
+### 2.3 Phase 3: Stripeテスト実装
+
+- [x] Stripeクライアントの非同期呼び出し
+- [x] Checkout Session作成処理
+- [x] プランとStripe Price IDの対応
+- [x] サブスクリプションAPIルーター
+- [x] FirestoreへのStripe Customer ID保存
+- [x] `customer.subscription.created` のFirestoreプラン更新・LINE通知
+- [x] `customer.subscription.deleted` のfreeプラン更新・LINE通知
+- [x] `invoice.payment_failed` のLINE通知
+- [x] Stripe / Firestore整合性チェックサービスの土台
+- [ ] `customer.subscription.updated` のFirestore状態更新
+- [ ] `invoice.paid` のFirestore状態・請求期間更新
+- [ ] Webhook冪等性をインメモリからFirestoreへ移行
+- [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
+
+### 2.4 サブスクリプションAPIの扱い
+
+現在は意図的にテスト実装とする。
+
+- [x] Checkout作成とstatus取得は固定の `test_user_id` を使用
+- [ ] テストAPIを本番公開する場合、第三者が呼べないアクセス制御を追加
+- [ ] 実ユーザー課金へ進む段階で `get_current_user` に置換
+- [ ] APIレスポンスの `monthly_limit` という名前を、実態に合わせて `daily_message_limit` へ移行
+
+### 2.5 PROJECT_PLAN進捗管理スキル
+
+- [x] Codex用 `.agents/skills/project-plan-manager/SKILL.md` を作成
+- [x] Claude用 `.claude/skills/project-plan-manager/SKILL.md` へ同一内容を複製
+- [x] スキルは各配置の `SKILL.md` だけで構成し、追加のagents設定ファイルは使用しない
+- [x] ルートの `AGENTS.md` / `CLAUDE.md` はスキル登録のために変更しない
+- [x] Codex版・Claude版のSKILL.md検証と同一性確認に成功
+- [ ] スキルを変更する場合は両配置を同時更新し、差分がないことを再確認
+
+---
+
+## 3. 次回デプロイ前の必須対策（P0）
+
+### P0-1. 依存関係の再インストール
+
+現在のローカル環境はPython 3.14で、SQLAlchemy 2.0/FastAPIとの互換性は問題ない。venvに `google-cloud-firestore` がインストールされていないだけ。
+
+- [x] Python 3.14でのSQLAlchemy/FastAPI互換性を確認
+- [x] `google-cloud-firestore` をvenvへインストール
+- [ ] unit / integration / e2eテストを実行
+- [ ] Firestore・回数制限・Stripeテスト用の自動テストを追加
+- [ ] テスト結果を本ファイルへ記録
+
+### P0-2. CIを正式な品質ゲートにする
+
+- [x] Python 3.14バージョンをdeploy.ymlに更新
+- [x] Firestore-only app startupテストをCIに追加
+- [x] テスト環境変数にDATABASE_BACKEND=firestoreを追加
+- [ ] 現在の `continue-on-error: true` を外せる状態までテストを修正（残りの失敗テスト解消後に解除）
+- [ ] FirestoreエミュレーターまたはモックをCIへ導入（将来対応）
+
+### P0-3. Cloud Run環境変数をFirestore版へ更新
+
+現行のデプロイ設定にはFirestore版で必要な設定が不足している。
+
+- [x] `DATABASE_BACKEND=firestore` (.env.exampleとdeploy.ymlに追加済み)
+- [x] `FIRESTORE_PROJECT_ID=takahashi-451312` (.env.example更新済み)
+- [x] free用 `GOOGLE_CORPUS_ID=6942545116196241408` (.env.example更新済み)
+- [x] 有料用 `GOOGLE_CORPUS_ID_PLAN1=1495705249682292736` (.env.example更新済み)
+- [x] GitHub Actionsのdeploy.ymlにFirestore用環境変数を追加
+- [x] Secret Managerにシークレット登録済み:
+  - `google-corpus-id`: 6942545116196241408 ✅
+  - `google-corpus-id-plan1`: 1495705249682292736 ✅
+- [ ] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認
+
+### P0-4. Firestore回数制御を安全にする
+
+現状は「現在値を読み取り、その後setする」方式のため、同時メッセージで加算が失われる可能性がある。また、上限確認と加算が別処理であり、同時リクエストで上限を超える可能性がある。
+
+- [x] Firestore Transactionで「上限確認 + 加算」を原子的に実行
+- [x] Transactionの採用を決定（`increment_with_limit_check`実装）
+- [ ] Firestore障害時に回数を0として許可する挙動を見直す
+- [ ] 日付境界をUTCではなくAsia/Tokyo基準に変更
+- [ ] 同時実行テストを追加
+
+### P0-5. Stripe解約フローの矛盾を解消
+
+現在の `subscription.deleted` は、ユーザーをfreeプランへ戻した直後に `is_active=False` にしている。このままではfreeプランとして利用できない。
+
+- [x] 「有料解約後もfreeで継続」か「アカウント全体を停止」かを決定
+- [x] 推奨: Stripe解約はfreeへ戻すだけにし、LINE unfollowや明示的退会時のみ無効化
+- [x] Stripe解約: freeプラン戻しのみ実装（ユーザーは無効化しない）
+- [x] LINE unfollow: アカウント全体を停止を実装
+- [ ] Firestore更新、LINE通知、テストを統合
+
+### P0-6. Firestore経路からPostgreSQL依存を分離
+
+起動時の `init_db()` / `close_db()` は停止済みだが、LINE Webhookや認証DependsにはSQLAlchemyセッション生成が残っている。
+
+- [x] Firestore使用時は `async_session_maker` を生成・使用しない構造に変更
+- [x] Firestore用とPostgreSQL用の依存性注入を明確に分離
+- [x] Firestoreだけでアプリを起動できるテストを実施
+- [ ] PostgreSQL専用auth/chatエンドポイントを維持するか、一時停止するか決定
+
+---
+
+## 4. 本番決済前の対策（P1）
+
+### P1-1. 認証・アカウント連携
+
+- [ ] LINE Login callbackでFirestoreユーザーを検索・作成
+- [ ] 仮UUIDの都度発行を廃止し、既存ユーザーIDを再利用
+- [ ] Refresh Tokenの保存先をFirestore対応、またはLINE Bot用途では機能停止
+- [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
+- [ ] サブスクAPIの固定 `test_user_id` を認証ユーザーへ置換
+
+### P1-2. Stripe Webhookの信頼性
+
+- [ ] Webhook署名検証をテストモードで実確認
+- [ ] `subscription.created/updated/deleted` をすべてFirestoreへ反映
+- [ ] `invoice.paid/payment_failed` をFirestoreへ反映
+- [ ] イベントIDをFirestoreに保存し、重複処理を防止
+- [ ] 失敗時にイベントを処理済み扱いしないことを確認
+- [ ] Stripe再送時のE2Eテスト
+- [ ] ログへStripe payloadや個人情報を過剰出力しないことを確認
+
+### P1-3. セキュリティ
+
+- [ ] LINE Login ID TokenのRS256/JWKS署名検証を実装
+- [ ] state / nonceをインメモリからRedis等へ移行
+- [ ] LINE Webhookと認証APIへレート制限を追加
+- [ ] リクエストボディサイズ上限を追加
+- [ ] TrustedHostMiddlewareを設定
+- [ ] CORSを本番ドメインだけに制限
+- [ ] Secret ManagerのStripeキーがテストキーであることを確認
+- [ ] 本番切替時にテストキーと本番キーを混在させない
+
+### P1-4. Firestore運用
+
+- [ ] `users` / `rag_permissions` / `usage_daily` のバックアップ方針
+- [ ] 古い `usage_daily` の削除ジョブ
+- [ ] Firestore読み書き回数と費用の監視
+- [ ] 5xx、Webhook失敗、RAG失敗、LINE送信失敗のアラート
+- [ ] 構造化ログを導入し、ユーザーIDはマスクする
+
+---
+
+## 5. 推奨する作業順序（2026-08-17時点）
+
+### ✅ Step 1: ローカル変更を安定化（完了）
+- [x] Python 3.14環境でgoogle-cloud-firestoreをインストール
+- [x] Firestoreのみでアプリを起動できるようPostgreSQL依存を分離
+- [x] 回数制御をTransaction化する
+- [x] Stripe解約時のユーザー状態を修正する
+- [x] 自動テストを通す（unitテスト94件実行確認済み）
+
+### 🔄 Step 2: Firestore版をステージング検証（次回セッション）
+1. [ ] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認
+2. [ ] mainブランチへマージしてCloud Runへデプロイ
+3. [ ] Firestore初期データを投入（setup_firestore_data.py実行）
+4. [ ] free 3件 / basic 100件 / pro 500件を確認
+5. [ ] プラン別コーパス切替を確認
+6. [ ] LINE実端末でfollow/message/unfollowを確認
+
+### Step 3: Stripeテストモード
+
+1. Basic / ProのテストPriceを作成
+2. 固定 `test_user_id` でCheckoutを検証
+3. Webhookのcreated/updated/deleted/paid/payment_failedを検証
+4. FirestoreとStripeの整合性を確認
+5. 解約後のユーザー状態を確認
+
+### Step 4: 本番化判断
+
+1. 固定テストユーザーを実認証へ置換
+2. CIのテスト失敗許容を解除
+3. ステージングで回帰テスト
+4. Stripe本番キー・Price・Webhookを設定
+5. 段階的に本番へ反映し、監視する
+
+---
+
+## 6. PostgreSQL / Cloud SQL移行（保留）
+
+PostgreSQL関連コード、SQLAlchemyモデル、Alembicマイグレーションは将来の移行候補として保持する。ただし現在のリリース条件には含めない。
+
+- [保留] Cloud SQL PostgreSQL 16インスタンス作成
+- [保留] VPC Access Connector作成
+- [保留] `DATABASE_URL` Secret登録
+- [保留] Alembic本番マイグレーション
+- [保留] FirestoreからPostgreSQLへのデータ移行
+- [保留] PostgreSQL起動時の `init_db()` / `close_db()` 復帰
+
+移行を再開する条件:
+
+- Firestore費用またはクエリ制約が運用上の問題になった場合
+- 複雑な集計・トランザクション・監査要件が必要になった場合
+- ユーザー数と課金処理が増え、リレーショナル整合性が優先された場合
+
+---
+
+## 7. 完了条件
+
+### Phase 2完了条件
+
+- [ ] FirestoreのみでCloud Runが安定起動する
+- [ ] followでユーザーが一意に作成される
+- [ ] free/basic/proの回数上限が正しく機能する
+- [ ] 同時リクエストでも上限を超えない
+- [ ] プラン別コーパスが正しく選択される
+- [ ] LINE実端末E2Eが成功する
+- [ ] CIの自動テストが成功する
+
+### Phase 3完了条件
+
+- [ ] StripeテストモードでCheckoutが成功する
+- [ ] Webhook全イベントがFirestoreへ反映される
+- [ ] Webhookの重複・再送に耐えられる
+- [ ] 支払い失敗と解約のLINE通知が届く
+- [ ] 解約後のユーザー状態が仕様どおりになる
+- [ ] Stripe / Firestore / LINEの整合性テストが成功する
+
+### Phase 4完了条件
+
+- [ ] サブスクAPIが実ユーザー認証を使用する
+- [ ] Stripe本番キーとWebhookが設定される
+- [ ] CIが失敗時にデプロイを停止する
+- [ ] 監視・アラート・ロールバック手順が整備される
+- [ ] 本番で少数ユーザーの段階運用が成功する
+
+---
+
+## 8. 検証コマンド
 
 ```bash
-# コード中の Phase 2 マーカー（DB/回数/コーパス系=A2/A4/B2/C1/C2/H1/H5/I2 と Stripe/退会系=A6/A7/G1-G6/H2-H4/E1/I1 の両方を含む歴史的マーカー）を抽出
-grep -rn "\[Phase 2" app/
+# 変更確認
+git status --short
+git diff --check
 
-# Phase 帰属は本ファイルの「5. コード実装マーカー対応表」で判定（マーカー表記はコード未変更のため Phase 2 のまま）
+# Python 3.11環境で実行
+pytest tests/unit/ -v
+pytest tests/integration/ -v
+pytest tests/e2e/ -v
+
+# 構文確認
+python -m compileall -q app scripts
+
+# Firestore初期データ（対象プロジェクトを必ず確認してから実行）
+python scripts/setup_firestore_data.py
+
+# Cloud Run確認
+gcloud run services describe chabot-service \
+  --region=asia-northeast1 \
+  --project=takahashi-451312
 ```
 
-### 主要ディレクトリ
-
-- `app/services/` — line_service / rag_service / stripe_service / auth_service
-- `app/api/v1/` — webhooks/{line,stripe} / auth_line / chat
-- `app/models/` — User / Subscription / UsageDaily / Conversation / RefreshToken / RagPermission / StripeEvent（7種・定義済み）
-- `app/core/` — config / deps / security
-- `alembic/versions/` — da7afce18552（初期）+ b3f2a1c8e9d4（LINE/Subscription系5テーブル）
-
 ---
 
-## 1. Phase 構成と全体像
-
-### 1.1 各 Phase の定義
-
-**Phase 1（現在）**: Stripe/DB なしで「友だち追加だけでボットが使える」状態
-- follow=ウェルカム送信 / message=RAG応答 / unfollow=ログのみ
-- LINE Login=都時JWT（非永続）/ Chat API=JWT認証のみ（サブスクゲートなし）
-- Stripe Webhook ルータは登録済みだが Stripe 側未設定のため実イベントは来ない
-
-**Phase 2（後続）**: DB 整備 + モックプラン（Stripe 不使用）
-- Cloud SQL を繋ぎ、モックプランで「チャット回数制限・プラン判定・コーパス切替」を動かす
-- Stripe は使わない（プランは固定/デバッグ切替のモック判定）
-- 回数上限は既存シード値（free=10/basic=100/pro=500）を踏襲
-
-**Phase 3（後続）**: 実 Stripe 決済フレームワーク + 退会処理
-- Stripe サンドボックスで「実際のプラン登録・退会処理」を検証し、本番化する
-- Stripe 関連コード・モデル・マイグレーションは削除せず保持済み（Phase 3 で有効化）
-
-### 1.2 旧 Phase 2 → 新 Phase 2 / Phase 3 再分類マップ
-
-旧 todo.txt/REMAINING_TASKS.md の「Phase 2」を以下の通り再分類。
-
-- **新 Phase 2（DB + モック）**: マーカー `A2(回数判定のみ) / A4 / B2 / C1 / C2 / H1 / H5 / I2` ＋ 設定 `[A1-A3][C7][D0-D1][D2]` ＋ 環境変数 `DATABASE_URL`
-- **新 Phase 3（実 Stripe）**: マーカー `A6 / A7 / G1 / G2 / G3 / G4 / G5 / G6 / H2 / H3 / H4 / E1 / D2(本番ゲート) / I1` ＋ 設定 `[B3][C5][E5]` ＋ 環境変数 `STRIPE_*`
-- **両 Phase にまたがる**:
-  - `D2`（require_active_subscription）: Phase 2=「常に許可・回数判定のみ（モック）」→ Phase 3=「is_active_paid() でゲート（本番）」
-  - `A2`（_handle_message_event）: Phase 2=「回数判定ゲート」→ Phase 3=「サブスク検証ゲートを追加」
-
-### 1.3 進め方の目安
-
-1. **Phase 2** は [P2-7] Vertex AI 実 API 統合を先行 → [P2-1] DB 基盤 → [P2-3] ユーザー永続化 → [P2-5] 回数判定 → [P2-6] コーパス切替の順で検証
-2. Phase 2 でモックプランの回数制限・コーパス切替が想定通り動くことを確認してから Phase 3 へ
-3. **Phase 3** はサンドボックスで [P3-1]→[P3-2][P3-3] の登録/解約フローを検証 → [P3-6] 退会処理が正しくユーザー無効化することを確かめてから [P3-7] 本番化
-
----
-
-## 2. 🔴 Phase 1（現在）: デプロイと稼働
-
-### 2.1 デプロイブロック項目（← 元 DEPLOY_BLOCKERS.md）
-
-Phase 1 デプロイ（main push → GitHub Actions）は **「Authenticate to Google Cloud」ステップで失敗** 中。
-
-- [ ] **ブロック1: GitHub Secrets 未設定（デプロイ不可・ユーザー作業）**
-  - ⚠️ todo.txt/REMAINING_TASKS.md の「前提（完了）」に完了と記載されていたが、実態は未設定
-  - 設定コマンド（リポジトリ root で実行）:
-    ```bash
-    gh secret set GCP_PROJECT_ID --body "takahashi-451312"
-    gh secret set GCP_SERVICE_ACCOUNT --body "chabot-sa@takahashi-451312.iam.gserviceaccount.com"
-    gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER --body "projects/742113528510/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider"
-    gh secret set GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT --body "github-actions-deploy@takahashi-451312.iam.gserviceaccount.com"
-    ```
-  - 設定後: GitHub Actions の最新失敗 run を Re-run（または空コミット push）でデプロイ再走
-- [ ] **ブロック2: 既存テスト31件失敗（Phase 2 で解消）**
-  - CI「Run tests」は `continue-on-error` で許容済み（Phase 1 デプロイは通る）
-  - 主な失敗: `tests/integration/test_api/test_auth.py` / `test_repositories/test_refresh_token.py` / `test_services/test_rag_service.py` / `test_clients/test_vertex_ai.py`
-  - 解消後は deploy.yml の `Run tests` から `continue-on-error: true` を外す
-
-### 2.2 完了済み前提（再設定不要）
-
-- [✅] GCP プロジェクト / 課金 / 必要なAPI有効化（Cloud Run/Artifact Registry/Cloud SQL/Secret Manager/Vertex AI/Cloud Scheduler/Logging/IAM Credentials）
-- [✅] Artifact Registry リポジトリ（`chabot-repo`）
-- [✅] Cloud Run 用サービスアカウント（`chabot-sa`）+ IAM ロール4件（secretAccessor / cloudsql.client / aiplatform.user / logging.logWriter）
-- [✅] Workload Identity Federation（GitHub Actions → GCP）: `github-actions-pool` / `github-actions-provider`
-- [✅] GitHub Secrets（GCP_PROJECT_ID / GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT / GCP_SERVICE_ACCOUNT）※ 2.1 ブロック1を参照（実態は未設定の可能性）
-- [✅] Alembic マイグレーションファイル作成（初期 + LINE/Subscription系）
-- [✅] Secret Manager 登録済み: line-channel-secret / line-channel-access-token / line-login-channel-id / line-login-channel-secret（本番値）、stripe-secret-key / stripe-webhook-secret / stripe-publishable-key（テスト値）
-- [✅] 旧 Discord 用シークレット削除済み（DISCORD_BOT_TOKEN 等）
-- [✅] .env クリーンアップ済み（LINE 設定追加、GOOGLE_PROJECT_ID 修正）
-
-### 2.3 Phase 1 必須タスク（Stripe/DB なしでボットを動かす）
-
-#### [A] GCP インフラ
-- [ ] **A4. Vertex AI RAG コーパス作成 & ナレッジ登録**【Phase 1 必須・ボット応答に必要】
-  - Vertex AI Search / RAG でコーパス作成 → コーパスIDを控える
-  - ドキュメント/FAQ 等のナレッジソースを登録
-  - ※ 作成したコーパスIDは [C4] の google-corpus-id に使用
-  - ※ Phase 1 でも未設定だと message イベントがフォールバック応答になる
-
-#### [B] 外部サービスでの取得と設定
-- [✅] **B1. LINE Developers でプロバイダー & チャネル作成**
-  - [✅] B1-1. Messaging API チャネル（Channel Secret / Access Token 設定済み・※長期トークンは定期更新）
-  - [✅] B1-2. LINE Login (v2.1, OIDC) チャネル（Channel ID / Secret 設定済み）
-- [ ] **B2. LINE Webhook / Callback URL 設定**【Phase 1・URLはデプロイ後に確定】
-  - [ ] B2-1. Messaging API: Webhook URL `https://<Cloud Run URL>/api/v1/webhooks/line` / 「Webhook の利用」オン / 「自動応答メッセージ」オフ / 「友だち追加挨拶」オフ
-  - [ ] B2-2. LINE Login: Callback URL `https://<Cloud Run URL>/api/v1/auth/line/callback`（config.py の LINE_LOGIN_CALLBACK_URL と完全一致）
-
-#### [C] Secret Manager 登録（未登録分）
-> 登録コマンド: `echo -n "値" | gcloud secrets create <名前> --data-file=-`
-- [✅] C1. line-channel-secret（本番値）
-- [✅] C2. line-channel-access-token（※有効期限あり・定期更新時は再設定）
-- [✅] C3. line-login-channel-id / line-login-channel-secret（本番値）
-- [ ] **C4. google-project-id = takahashi-451312 / google-location = asia-northeast1 / google-corpus-id = <A4 のコーパスID>**【Phase 1：RAG 用】
-- [ ] **C6. jwt-secret-keys**【Phase 1：Chat API 認証用】
-  - 生成: `python -c "import secrets; print(secrets.token_urlsafe(64))"`（ローテーション用に複数をカンマ区切りで可）
-
-#### [E] 環境変数（.env / Cloud Run）の本番値化
-- [ ] **E1. DEBUG=False / APP_ENV=production**【Phase 1】
-- [ ] **E3. JWT_SECRET_KEYS = [C6] で生成した値**【Phase 1】
-- [ ] **E4. LINE_* 全5変数 = [B1][B2] で取得/設定した値**【Phase 1】
-- [ ] **E6. GOOGLE_PROJECT_ID = takahashi-451312 / GOOGLE_LOCATION = asia-northeast1 / GOOGLE_CORPUS_ID = <A4 のコーパスID>**【Phase 1】
-- [ ] **E7. LINE_LOGIN_CALLBACK_URL = <Cloud Run URL>/api/v1/auth/line/callback**【Phase 1】
-- [ ] **E8. CORS_ALLOWED_ORIGINS = 本番フロントドメイン**【Phase 1・現在は localhost のみ → 本番URLに変更】
-
-#### [F] セットアップスクリプト実行
-- [ ] **F1. setup_workload_identity.sh 実行**（SA の IAM ロール付与確認用）【Phase 1】
-  ```bash
-  export PROJECT_ID=takahashi-451312 REGION=asia-northeast1 \
-         SERVICE_NAME=chabot-service \
-         SERVICE_ACCOUNT=chabot-sa@takahashi-451312.iam.gserviceaccount.com
-  ./scripts/setup_workload_identity.sh
-  ```
-
-#### その他 Phase 1 コード（推奨・後回し可）
-- [ ] security.py: RS256 署名検証の本番実装【Phase 1 推奨（LINE Login 用）】
-  - https://api.line.me/oauth2/v2.1/certs から JWKS 公開鍵を取得し、ID トークンの署名を検証（現在はクレーム検証のみ・TODO 箇所）
-- [x] ヘルスチェックエンドポイント（`/health`）実装確認【Phase 1・deploy.yml が成功判定に使用】
-
-### 2.4 デプロイ後の作業（Phase 1）
-
-1. Cloud Run の URL 確定 → LINE Webhook URL / Callback URL に設定（[B2]）
-2. 動作確認: 友だち追加 → メッセージ送信 → RAG 応答
-   - RAG 応答には GOOGLE_CORPUS_ID が正しい corpus を指す必要あり（未設定だとフォールバック定型文）
-3. （必要なら）CORS_ALLOWED_ORIGINS を Cloud Run の環境変数に設定（LINE Webhook サーバー間には影響しない・ブラウザから LINE Login を使う場合は本番ドメイン）
-
-### 2.5 推奨する実行順序（Phase 1）
-
-1. [B1] LINE Developers でチャネル作成（完了済み）
-2. [A4] Vertex AI RAG コーパス作成（★ボット応答に必須・本リスト外の別作業）
-3. [C4][C6] Google / JWT の Secret Manager 登録
-4. [E1,E3,E4,E6,E7,E8] 環境変数を本番値化（DATABASE_URL/STRIPE_* は不要）
-5. Cloud Run へデプロイ → URL 確定
-6. [B2] 確定 URL で LINE Webhook / LINE Callback を設定
-7. [F1] setup_workload_identity.sh 実行
-8. 動作確認（友だち追加 → メッセージ → RAG 応答）
-
----
-
-## 3. 🟦 Phase 2（後続）: DB + モックプラン（Stripe 不使用）
-
-> [ゴール] Cloud SQL に接続し、モックプランでチャット回数制限とプラン別コーパス切替を検証。Stripe は扱わない。
-> [前提] モデル7種・マイグレーション2本・`RagPermission`（daily_message_limit/rag_corpus_id/model_name カラム）は既定義済み。
-
-### 3.1 インフラ・設定タスク
-
-#### [A] GCP インフラ（DB 基盤）
-- [ ] ★【Phase 2】**A1. Cloud SQL (PostgreSQL 16) インスタンス新規作成**
-  - ⚠️ 既存 chabot-dev は SUSPENDED / us-west1-a / PG18 で要件不一致 → 新規作成
-  - インスタンス名: chabot-postgres / リージョン: asia-northeast1 / PG16 / db-f1-micro(開発)・db-custom-1-3840(本番) / プライベートIP・自動バックアップ有効化
-  ```bash
-  gcloud sql instances create chabot-postgres \
-    --database-version=POSTGRES_16 --region=asia-northeast1 \
-    --tier=db-custom-1-3840 --backup-start-time=15:00 \
-    --enable-point-in-time-recovery
-  ```
-- [ ] ★【Phase 2】**A2. データベース & ユーザー作成**
-  ```bash
-  gcloud sql databases create chabot --instance=chabot-postgres
-  gcloud sql users create chabot_user --instance=chabot-postgres --password="<強力なパスワード>"
-  ```
-- [ ] ★【Phase 2】**A3. VPC Access Connector 作成**（Cloud Run → Cloud SQL 接続用・⚠️ asia-northeast1 にコネクタなし）
-  ```bash
-  gcloud compute networks vpc-access connectors create chabot-connector \
-    --region=asia-northeast1 --range=10.8.0.0/28 --network=default
-  ```
-- [ ] Cloud Run の Cloud SQL 接続設定を deploy.yml で復帰（`--set-cloudsql-instances` と `DATABASE_URL=database-url`）
-
-#### [C] Secret Manager（DB）
-- [ ] ★【Phase 2】**C7. database-url**（Cloud SQL unix socket 形式）
-  - `postgresql+asyncpg://chabot_user:<password>@/chabot?host=/cloudsql/takahashi-451312:asia-northeast1:chabot-postgres`
-
-#### [D] データベース・マイグレーション
-- [ ] ★【Phase 2】**D0. ローカル開発DBのスキーマ再構築**（2026-07-02 コード修正に伴う）
-  - ⚠️ 初期マイグレ da7afce18552 を直接修正（User.id/FK を String(36) 統一、line_user_id nullable）→ 既存ローカル DB は再構築が必要
-  - PostgreSQL 起動後、DB を DROP → CREATE、または `alembic downgrade base` → `alembic upgrade head`
-  - テストデータは `scripts/seed_test_data.py` で再投入可 / ローカルDBパスワード（旧PW）のローテーション推奨（git履歴に残存）
-- [ ] ★【Phase 2】**D1. 初回デプロイ前に Cloud SQL でマイグレーション実行**（⚠️ deploy.yml にステップ無い → 手動）
-  ```bash
-  cloud_sql_proxy -instances=takahashi-451312:asia-northeast1:chabot-postgres=tcp:5432 &
-  export DATABASE_URL="postgresql+asyncpg://chabot_user:<password>@localhost:5432/chabot"
-  alembic upgrade head
-  ```
-- [ ] ★【Phase 2】**D2. rag_permissions テーブルへプラン別権限のシードデータ挿入**（⚠️ マイグレーションに含まれない → 手動 INSERT）
-  ```sql
-  INSERT INTO rag_permissions
-    (plan, rag_corpus_id, model_name, max_input_tokens, max_output_tokens,
-     daily_message_limit, enabled)
-  VALUES
-    ('free',  ..., 'gemini-1.5-flash',  4000,  4000,  10,  true),
-    ('basic', ..., 'gemini-1.5-flash', 16000,  8000, 100,  true),
-    ('pro',   ..., 'gemini-1.5-pro',   32000, 16000, 500,  true);
-  ```
-
-#### [E] 環境変数（DB）
-- [ ] ★【Phase 2】**E2. DATABASE_URL = [C7] と同じ本番値**
-
-#### [F] セットアップスクリプト（DB 必須）
-- [ ] ★【Phase 2】**F2. setup_cloud_scheduler.sh 実行**（トークンクリーンアップ ジョブ・毎日 AM3:00(JST) に /api/v1/admin/cleanup-tokens をPOST）
-  ```bash
-  export PROJECT_ID=takahashi-451312 REGION=asia-northeast1 \
-         SERVICE_NAME=chabot-service \
-         SERVICE_ACCOUNT=chabot-sa@takahashi-451312.iam.gserviceaccount.com
-  ./scripts/setup_cloud_scheduler.sh
-  ```
-- [ ] deploy.yml に pre-deploy マイグレーションジョブ追加（DB 必須・Cloud SQL Proxy で実行・ジョブ分離）
-- [ ] Cloud Scheduler トークンクリーンアップジョブの OIDC 認証を Cloud Run 側で検証
-
-### 3.2 コード実装タスク
-
-#### [P2-1] Cloud SQL インフラ整備
-- 上記 [A1][A2][A3][C7] を実施
-
-#### [P2-2] DB 接続の有効化
-- [ ] `app/server.py:60` lifespan で `init_db()` 呼び出し **[Phase 2 マーカー I2]**
-- [ ] `app/models/__init__.py` のエクスポート不備を是正（現状 User/RefreshToken のみ → Subscription/UsageDaily/Conversation/RagPermission/StripeEvent を追加）
-
-#### [P2-3] LINE Webhook / Login フローの DB 連携（ユーザー永続化）
-- [ ] follow: ユーザー作成/再有効化 → `app/services/line_service.py:173` **[Phase 2 マーカー A4]**
-  - `UserRepository.find_by_line_user_id` / create を実装（シグネチャは `app/repositories/user.py:111-131` に既記載 **[Phase 2 マーカー H1]**）
-- [ ] LINE Login callback: ユーザー永続化 → `app/api/v1/auth_line.py:213-235` **[Phase 2 マーカー C1/C2]**
-  - 現状の「仮 UUID 都度発行」を DB 検索した既存 ID に切替 / RefreshTokenRepository 保存
-
-#### [P2-4] モックプラン判定
-- [ ] 全ユーザーを固定モックプラン（例: free・デバッグで切替可）として扱う
-- [ ] `app/core/deps.py:89-105` の require_active_subscription **[Phase 2 マーカー D2]** を「常に許可（回数判定のみ）」のモック挙動に
-- [ ] Subscription.is_active_paid() / is_restricted()（app/models/subscription.py）は Phase 3 まで未使用 **[Phase 2 マーカー H2]**
-
-#### [P2-5] チャット回数判定（中核）
-- [ ] UsageDaily の更新・集計サービス/リポジトリを **【新設】**（現状なし）
-- [ ] 1日のメッセージ数を UsageDaily.message_count で集計し、RagPermission.daily_message_limit（free=10/basic=100/pro=500）と照合
-- [ ] 制限超過時は `app/api/v1/webhooks/line.py:50` で RAG クエリせず制限メッセージを返却 **[Phase 2 マーカー B2]**
-
-#### [P2-6] プラン別コーパス切替
-- [ ] RagPermission.rag_corpus_id / model_name を読むリポジトリを **【新設】 [Phase 2 マーカー H5]**
-- [ ] `app/services/rag_service.py:35` の RAGService.query がユーザーのプランに応じて corpus_id を切替（VertexAIClient は __init__ で corpus_id を引数取り済み `app/clients/vertex_ai.py:59`）
-- [ ] Conversation テーブルに plan_at_request / rag_corpus_id / トークン使用量を記録
-
-#### [P2-7] ⚠️ 前提: Vertex AI 実 API 統合（先行タスク）
-- [ ] 現状 `app/clients/vertex_ai.py:292` は完全モック（固定フォールバック応答）→ 実 API 呼び出しに置換
-- ※ コーパス切替の検証に必須
-
-#### Phase 2 の運用タスク
-- [ ] G6. state/nonce をインメモリ(_state_store)から Redis/Memorystore へ移行（推奨・Cloud Run マルチインスタンス）
-
----
-
-## 4. 🟪 Phase 3（後続）: 実 Stripe 決済フレームワーク + 退会処理
-
-> [ゴール] Stripe サンドボックス（テストモード）でプラン登録・退会フローを検証し、本番化。Phase 2 の DB 基盤をそのまま利用。
-> [前提] `app/clients/stripe.py` に StripeClient（create_customer/Webhook 検証等）実装済み。`app/services/stripe_service.py` に Webhook ハンドラ5種（現状すべてログのみ）。Stripe Webhook ルータは `app/server.py:110` で登録済み。
-
-### 4.1 インフラ・設定タスク
-
-#### [B] Stripe 本番設定
-- [ ] ★【Phase 3】**B3. Stripe 本番設定**
-  - [ ] B3-1. 商品 & 価格(Price)を作成 → 価格ID(price_...) を控える
-  - [ ] B3-2. Webhook エンドポイント登録（本番URL）
-    - URL: `https://<Cloud Run URL>/api/v1/webhooks/stripe`
-    - イベント: customer.subscription.created/updated/deleted, invoice.paid, invoice.payment_failed
-    - Signing secret(whsec_...) を取得 → [C5] stripe-webhook-secret 更新
-  - [ ] B3-3. 本番モードへ切替（テスト→ライブ）: sk_live_... / pk_live_... → [C5] 更新
-
-#### [C] Secret Manager（Stripe 本番）
-- [ ] ★【Phase 3】**C5. stripe-secret-key / stripe-webhook-secret / stripe-publishable-key**（B3 で取得したライブ値に更新）
-
-#### [E] 環境変数（Stripe）
-- [ ] ★【Phase 3】**E5. STRIPE_* 全3変数 = [B3] のライブ値**
-
-### 4.2 コード実装タスク
-
-#### [P3-1] Stripe サンドボックス（テストモード）設定
-- Stripe Dashboard で商品/価格/Webhook エンドポイント（テストURL）作成 / テストキー（sk_test_/whsec_）取得
-
-#### [P3-2] プラン登録フレームワーク
-- [ ] postback action=subscribe で Stripe Checkout セッション生成 → `app/services/line_service.py:262` **[Phase 2 マーカー A7]**
-- [ ] create_customer 呼び出し連携（follow/初回ログイン時）→ `app/services/stripe_service.py:45` **[Phase 2 マーカー G1]**
-- [ ] User.stripe_customer_id へ顧客ID書込 **[Phase 2 マーカー H3]**
-
-#### [P3-3] Stripe Webhook ハンドラの DB 連携（現状すべてログのみ）
-- [ ] `_handle_invoice_paid`: Subscription の請求期間更新 **[Phase 2 マーカー G2]**
-- [ ] `_handle_invoice_payment_failed`: 支払い失敗の LINE 通知 **[Phase 2 マーカー G3]**
-- [ ] `_handle_subscription_created`: Subscription レコード作成 **[Phase 2 マーカー G4]**
-- [ ] `_handle_subscription_updated`: status/plan 更新・is_restricted 連携 **[Phase 2 マーカー G5]**
-- [ ] `_handle_subscription_deleted`: 解約処理 **[Phase 2 マーカー G6]**
-
-#### [P3-4] 決済冪等性の DB 永続化
-- [ ] `app/clients/stripe.py:62` のインメモリ辞書 → StripeEvent テーブルへ移行 **[Phase 2 マーカー H4]**
-  - ※ Cloud Run はステートレス/マルチインスタンスのため、インメモリでは再起動で冪等性が失われる
-
-#### [P3-5] 本番ゲート有効化
-- [ ] require_active_subscription を本番化（is_active_paid() でゲート・未契約は 403）**[Phase 2 マーカー D2]**
-- [ ] `app/api/v1/chat.py:97` の Depends(get_current_user) → Depends(require_active_subscription) **[Phase 2 マーカー E1]**
-- [ ] message イベントにサブスク検証ゲート追加 **[Phase 2 マーカー A2]**
-- [ ] Subscription.is_active_paid / is_restricted を有効化 **[Phase 2 マーカー H2]**
-
-#### [P3-6] 退会時処理
-- [ ] unfollow（LINE 友だち解除）: is_active=False ＋ リフレッシュトークン全削除 → `app/services/line_service.py:224` **[Phase 2 マーカー A6]**
-- [ ] subscription_deleted（Stripe 解約）: ユーザー無効化 ＋ トークン全削除 ＋ LINE Push 通知 → `app/services/stripe_service.py:533` **[Phase 2 マーカー G6]**
-  - customer_id → User 検索 / is_active = False / refresh_tokens 全削除 / LINE Push 通知送信
-
-#### [P3-7] 本番 Stripe 設定
-- 上記 [B3][C5][E5] を実施 / `app/core/config.py:55-57` のプレースホルダ（sk_test_*/whsec_*/pk_test_*）を Secret Manager から注入 **[Phase 2 マーカー I1]**
-
----
-
-## 5. コード実装マーカー対応表
-
-> コード中の `# [Phase 2 ...]` マーカー（`grep -rn "\[Phase 2" app/`）と実装タスクの対応。
-> コード内のマーカー表記は `[Phase 2 マーカー Xn]` のまま（歴史的経緯・コード未変更）。Phase 帰属は以下で判定。
-
-### 5.1 🟦 Phase 2（DB + モック）のマーカー
-
-| マーカー | ファイル | タスク |
-|---|---|---|
-| A4 | `app/services/line_service.py` | `_handle_follow_event`: ユーザー作成/再有効化（モック判定・Stripe 顧客作成は Phase 3 の G1 に後回し）|
-| B2 | `app/api/v1/webhooks/line.py` | `_process_line_events`: 回数判定結果で RAG クエリを分岐（制限超過で制限メッセージ）|
-| C1 | `app/api/v1/auth_line.py` | callback: UserRepository でユーザー永続化 ＋ RefreshTokenRepository 保存 |
-| C2 | `app/api/v1/auth_line.py` | 仮 UUID を DB 検索した既存 ID に置換 |
-| D2 | `app/core/deps.py` | `require_active_subscription`（Phase 2 は「常に許可・回数判定のみ」のモック挙動）|
-| H1 | `app/repositories/user.py` | find_by_line_user_id / find_by_stripe_customer_id / update_stripe_customer_id を追加 |
-| H5 | `app/models/rag_permission.py` | プラン別 RAG 制限（シードは [D2]）|
-| I2 | `app/server.py` lifespan | DB 接続（init_db）の初期化を追加 ＋ models/__init__ のエクスポート是正 |
-
-**Phase 2 で新設（マーカーなし・土台のみ既存）**: UsageDaily 更新・集計サービス/リポジトリ / RagPermission.rag_corpus_id 読み取りリポジトリ / vertex_ai.py 実 API 統合
-
-### 5.2 🟪 Phase 3（実 Stripe）のマーカー
-
-| マーカー | ファイル | タスク |
-|---|---|---|
-| A2 | `app/services/line_service.py` | `_handle_message_event`: サブスク検証ゲート（Subscription.is_active_paid）を追加 ※回数判定は Phase 2 |
-| A6 | `app/services/line_service.py` | `_handle_unfollow_event`: is_active=False ＋ リフレッシュトークン全削除（退会）|
-| A7 | `app/services/line_service.py` | postback `action=subscribe`: Stripe Checkout / Customer Portal 誘導 |
-| E1 | `app/api/v1/chat.py` | `send_message` の Depends を require_active_subscription に差し替え |
-| G1 | `app/services/stripe_service.py` | `create_customer`: follow / 初回ログイン時に呼び出し |
-| G2 | `app/services/stripe_service.py` | `_handle_invoice_paid`: Subscription の請求期間更新 |
-| G3 | `app/services/stripe_service.py` | `_handle_invoice_payment_failed`: 支払い失敗の LINE 通知 |
-| G4 | `app/services/stripe_service.py` | `_handle_subscription_created`: Subscription レコード作成 |
-| G5 | `app/services/stripe_service.py` | `_handle_subscription_updated`: Subscription.status 更新 |
-| G6 | `app/services/stripe_service.py` | `_handle_subscription_deleted`: is_active=False ＋ トークン全削除 ＋ LINE 通知（退会）|
-| H2 | `app/models/subscription.py` | is_active_paid / is_restricted を require_active_subscription から使用 |
-| H3 | `app/models/user.py` | stripe_customer_id カラムに顧客IDを書き込み |
-| H4 | `app/models/stripe_event.py` | stripe_service の冪等性を DB 永続化 |
-| I1 | `app/core/config.py` | Stripe 設定を本番値に（Secret Manager から注入）|
-| D2 | `app/core/deps.py` | require_active_subscription を is_active_paid() でゲート（本番化）|
-
-### 5.3 再開手順
-
-**Phase 2 再開手順**:
-1. `grep -rn "\[Phase 2" app/` で全マーカーを抽出
-2. 上記 Phase 2 表と突き合わせ、ブロックマーカー内の疑似コードを実装に置換
-3. 先に Vertex AI 実 API 統合（vertex_ai.py）を行い、コーパス切替を検証可能にする
-4. DB 基盤 → ユーザー永続化（A4/C1）→ 回数判定（B2/D2モック）→ コーパス切替（H5）の順で構築
-
-**Phase 3 再開手順**:
-1. Stripe サンドボックス（テストモード）で商品/価格/Webhook を設定
-2. 上記 Phase 3 表のマーカー（A6/A7/G1-G6/E1/H2-H4/I1）を実装
-3. require_active_subscription（D2）を本番化 → chat.py（E1）→ message（A2 サブスクゲート）の順で構築
-4. 退会フロー（unfollow A6 / subscription_deleted G6）の E2E を検証してから本番キー切替
-
----
-
-## 6. 🟡 推奨タスク（Phase 共通・安定性・UX 向上）
-
-### セッション管理
-- [ ] auth_line.py: state/nonce の保存をインメモリから Redis 等に移行（現在は _state_store 辞書・サーバー再起動で消失・Cloud Run は共有ストレージ必須）
-- [ ] Redis / Cloud Memorystore の導入検討
-
-### レート制限
-- [ ] LINE Webhook エンドポイントにレート制限を追加（同一ユーザーからの大量メッセージ対策・slowapi 等のライブラリ導入検討）
-- [ ] Auth エンドポイントにレート制限を追加
-
-### BaseClient 修正
-- [ ] base.py: `_handle_response` で HTTP ステータスコードチェックを追加（現在は response.json() を直接呼び出し・非200でクラッシュの可能性）
-- [ ] response オブジェクトそのものを処理するよう修正
-
-### リクエストサイズ制限
-- [ ] server.py: リクエストボディサイズ上限ミドルウェアを追加（例: Content-Length > 1MB を拒否）
-
-### TrustedHost ミドルウェア
-- [ ] server.py: TrustedHostMiddleware を有効化（現在はインポートのみで add_middleware されていない）
-
-### ドメイン / SSL
-- [ ] Cloud Run カスタムドメインマッピング + DNS(A/AAAA)
-  ```bash
-  gcloud run domain-mappings create --service=chabot-service \
-    --domain=chatbot.example.com --region=asia-northeast1
-  ```
-- [ ] HTTPS リダイレクトの確認
-
-### モニタリング / ロギング
-- [ ] Cloud Logging による構造化ログ出力（google-cloud-logging は requirements.txt 含むが未使用）
-- [ ] Cloud Monitoring アラート（5xx / レイテンシ / インスタンス数）
-- [ ] Cloud Trace によるリクエストトレーシング（任意）
-
-### バックアップ / 障害対応
-- [ ] Cloud SQL 自動バックアップのスケジュール確認 / PITR 有効化
-- [ ] ロールバック手順の文書化
-  ```bash
-  gcloud run services update-traffic chabot-service \
-    --to-revisions=<REVISION>=100 --region=asia-northeast1
-  ```
-
-### その他
-- [ ] G7. リッチメニュー作成（LINE Official Account Manager）
-
----
-
-## 7. 🟢 任意機能拡張
-
-### LINE 機能拡張
-- [ ] LIFF（LINE内ブラウザアプリ）対応（初回ログインをLINE内で完結）
-- [ ] リッチメニュー API による動的メニュー切り替え（サブスクリプション状態に応じた表示）
-- [ ] Flex Message / クイックリプライ / 画像・ファイル送信
-
-### Stripe 機能拡張
-- [ ] Stripe Customer Portal 導入（ユーザー自身でプラン変更・解約・自前UI不要）
-- [ ] Stripe Billing の無料トライアル対応
-- [ ] 複数プラン（Basic/Premium等）対応
-
-### テスト
-- [ ] LINE Webhook のインテグレーションテスト追加
-- [ ] LINE Login コールバックフローの E2E テスト
-- [ ] Stripe 解約 → 自動ログアウトの E2E テスト
-- [ ] セキュリティテスト（署名なしリクエスト拒否・改ざん検知）
-
-### インフラ（高度）
-- [ ] Cloud Run min instances を 1 に設定（コールドスタート回避）
-- [ ] Cloud Armor による WAF 保護
-- [ ] 複数リージョン展開（ディザスタリカバリ）
-
----
-
-## 8. ✅ 完了済み（参照用）
-
-### 2026-07-02 コード修正対応（code_issues.md の調査で発見・対応完了）
-- [x] Stripe クライアントの非同期化（同期SDKの await による即停止バグ）→ [H2]
-- [x] DBスキーマ整合: User.id を String(36) UUID に統一、_generate_user_id(37文字) を廃止 → [H5]
-- [x] line_user_id を nullable=True に統一（Email/Password・LINE 両ユーザー型を許容）→ [H6]
-- [x] refresh_tokens.id/user_id を String(36) に統一、FK参照整合を解消 → [M7]
-  - ※ 副次: auth_service.py の JTI 生成（refresh_jti/access_jti）を36文字UUIDに短縮
-- [x] aiosqlite を requirements-dev.txt に追加、CI で requirements-dev.txt をインストール → [H10]
-- [x] seed_test_data.py のDBパスワード平文ハードコードを settings.database_url に変更 → [H11]
-  - ⚠️ git履歴に残存する旧DBパスワードのローテーションが別途必要（文字列は伏せ字）
-- [x] deps.py の payload["sub"] 直接アクセスを .get + 401処理に変更 → [M24]
-- [x] test_stripe*.py の pre-existing バグ9件を修正（H2 検証完了）
-- [x] 検証: pytest 75 passed / alembic upgrade head が PostgreSQL 16 で成功 / autogenerate でスキーマ差分ゼロ確認
-
-> ※ ローカル開発DBはスキーマ変更（初期マイグレ直接修正）により再構築が必要 → [D0] 参照
+## 9. 更新ルール
+
+- 実装しただけでは `[x]` にせず、必要に応じて「コード実装済み・E2E未確認」と分ける。
+- 本番環境の状態とローカル作業ツリーの状態を混同しない。
+- Stripeテストモードと本番モードを明確に分ける。
+- Firestoreが現在の標準であり、Cloud SQLは保留として扱う。
+- 回数上限は `app/core/pricing.py` の `DAILY_MESSAGE_LIMITS` を正とする。
+- 仕様変更時はコード、初期データ、テスト、本ファイルを同時に更新する。

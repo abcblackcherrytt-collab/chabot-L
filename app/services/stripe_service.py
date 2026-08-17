@@ -392,6 +392,7 @@ class StripeService:
         """
         invoice = event.get("data", {}).get("object", {})
         subscription_id = invoice.get("subscription")
+        customer_id = invoice.get("customer")
         attempt_count = invoice.get("attempt_count", 0)
 
         logger.warning(
@@ -399,21 +400,29 @@ class StripeService:
             f"attempt={attempt_count}"
         )
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: LINE 通知なし（ログのみ）。
-        # Phase 2 で有効化する接続ポイント:
-        #   - user_repository.find_by_stripe_customer_id(invoice.get("customer"))
-        #   - line_service.send_subscription_notification(...) で支払い失敗を通知
-        # 関連: repositories/user.py [Phase 2 マーカー H1]
-        # ===================================================================
-        # TODO: LINE通知送信（支払い失敗の警告）（Phase 2 で実装）
-        # user = await user_repository.find_by_stripe_customer_id(invoice.get("customer"))
-        # if user and user.line_user_id:
-        #     line_service.send_subscription_notification(
-        #         user.line_user_id,
-        #         f"お支払いに失敗しました（{attempt_count}回目）。\n"
-        #         "お支払い方法を確認してください。"
-        #     )
+        try:
+            # Firestore連携とLINE通知
+            from app.repositories.firestore_user_repository import FirestoreUserRepository
+            from app.services.line_service import LineService
+
+            user_repo = FirestoreUserRepository()
+            line_service = LineService()
+
+            # Stripe顧客IDからユーザーを検索
+            user = await user_repo.find_by_stripe_customer_id(customer_id)
+            if user:
+                # LINE通知（既存メソッド活用）
+                await line_service.send_subscription_notification(
+                    user["line_user_id"],
+                    f"❌ お支払いに失敗しました（{attempt_count}回目）。\n\n"
+                    "お支払い方法を確認してください。\n"
+                    "支払いが完了するまでサービスが制限される可能性があります。"
+                )
+
+                logger.info(f"Sent payment failure notification to user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Error in payment failed handler: {e}")
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -433,6 +442,8 @@ class StripeService:
         """
         サブスクリプション作成イベントを処理します
 
+        Firestore連携によりプラン更新とLINE通知を行います。
+
         Args:
             event: イベントデータ
 
@@ -441,17 +452,65 @@ class StripeService:
         """
         subscription = event.get("data", {}).get("object", {})
         customer_id = subscription.get("customer")
+        subscription_id = subscription.get("id")
 
-        logger.info(f"Subscription created: {subscription.get('id')}, customer={customer_id}")
+        logger.info(f"Subscription created: {subscription_id}, customer={customer_id}")
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB 登録なし（ログのみ）。
-        # Phase 2 で有効化する接続ポイント:
-        #   - customer_id から user を特定し、Subscription レコードを作成
-        #     （stripe_subscription_id / plan / status / 請求期間を保存）
-        # 関連: repositories/user.py [Phase 2 マーカー H1]
-        # ===================================================================
-        # （簡易実装：実際にはデータベースでサブスクリプション情報を登録）
+        try:
+            # Firestore連携
+            from app.repositories.firestore_user_repository import FirestoreUserRepository
+            from app.core.pricing import get_plan_from_price_id
+            from app.services.line_service import LineService
+
+            user_repo = FirestoreUserRepository()
+            line_service = LineService()
+
+            # Stripe顧客IDからユーザーを検索（既存メソッド活用）
+            user = await user_repo.find_by_stripe_customer_id(customer_id)
+            if not user:
+                logger.warning(f"User not found for customer: {customer_id}")
+                return False
+
+            # 価格IDからプランを特定
+            price_id = subscription.get("items", {}).get("data", [{}])[0].get("price", {}).get("id")
+            if not price_id:
+                logger.warning(f"Price ID not found in subscription: {subscription_id}")
+                return False
+
+            try:
+                plan = get_plan_from_price_id(price_id)
+
+                # Firestoreでプラン更新（既存メソッド活用）
+                await user_repo.update_subscription_plan(user["id"], plan)
+
+                logger.info(
+                    f"Updated user {user['id']} to plan {plan} after subscription created"
+                )
+
+                # LINE通知（既存メソッド活用）
+                await line_service.send_subscription_notification(
+                    user["line_user_id"],
+                    f"🎉 有料プランへのご登録が完了しました！\n\n"
+                    f"プラン: {plan.upper()}\n"
+                    f"サブスクリプションID: {subscription_id}"
+                )
+
+            except ValueError as e:
+                logger.error(f"Invalid price ID: {price_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error in subscription created handler: {e}")
+            # エラーがあってもイベントを処理済みとしてマークしない（再試行可能にするため）
+            self.client.mark_event_processed(
+                event["id"],
+                {
+                    "event_type": event["type"],
+                    "processed_at": event["created"],
+                    "error": str(e),
+                },
+            )
+            return False
 
         # イベントを処理済みとしてマーク
         self.client.mark_event_processed(
@@ -514,10 +573,7 @@ class StripeService:
         """
         サブスクリプション削除イベントを処理します
 
-        解約時の自動ログアウト・アクセス遮断を実行します。
-        1. ユーザーを is_active = False に更新
-        2. 全リフレッシュトークンを削除（全デバイスからログアウト）
-        3. LINE Push API で解約通知を送信
+        解約時の処理としてfreeプラン戻しとLINE通知を行います。
 
         Args:
             event: イベントデータ
@@ -527,31 +583,63 @@ class StripeService:
         """
         subscription = event.get("data", {}).get("object", {})
         customer_id = subscription.get("customer")
+        subscription_id = subscription.get("id")
 
-        logger.info(f"Subscription deleted: {subscription.get('id')}, customer={customer_id}")
+        logger.info(f"Subscription deleted: {subscription_id}, customer={customer_id}")
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB 操作・LINE 通知なし（ログのみ）。
-        # Phase 2 で有効化する接続ポイント（下記 TODO ブロックを実装）:
-        #   1. customer_id からユーザーを検索
-        #   2. ユーザーを無効化（is_active=False）
-        #   3. 全リフレッシュトークンを削除（全デバイスからログアウト）
-        #   4. LINE Push API で解約通知を送信
-        # 関連: repositories/user.py [Phase 2 マーカー H1]、
-        #       line_service._handle_unfollow_event [Phase 2 マーカー A6]
-        # ===================================================================
-        # TODO: 以下のDB操作を実装（UserRepository, RefreshTokenRepository）
-        # 1. customer_id からユーザーを検索
-        #    user = await user_repository.find_by_stripe_customer_id(customer_id)
-        # 2. ユーザーを無効化
-        #    await user_repository.update(user.id, is_active=False)
-        # 3. 全リフレッシュトークンを削除
-        #    await refresh_token_repository.revoke_all_by_user(user.id)
-        # 4. LINE通知送信
-        #    if user.line_user_id:
-        #        line_service.send_subscription_notification(
-        #            user.line_user_id,
-        #            "サブスクリプションが終了しました。\nご利用ありがとうございました。"
+        try:
+            # Firestore連携
+            from app.repositories.firestore_user_repository import FirestoreUserRepository
+            from app.services.line_service import LineService
+
+            user_repo = FirestoreUserRepository()
+            line_service = LineService()
+
+            # Stripe顧客IDからユーザーを検索
+            user = await user_repo.find_by_stripe_customer_id(customer_id)
+            if not user:
+                logger.warning(f"User not found for customer: {customer_id}")
+                return False
+
+            # freeプランに戻す（有料解約後もfreeで継続利用可能）
+            await user_repo.update_subscription_plan(user["id"], "free")
+
+            logger.info(f"Updated user {user['id']} to free plan after subscription deleted")
+
+            # ユーザーは無効化しない（freeプランとして継続利用可能）
+            # LINE unfollowや明示的退会時のみ無効化
+
+            # LINE通知（既存メソッド活用）
+            await line_service.send_subscription_notification(
+                user["line_user_id"],
+                "📱 有料プランのサブスクリプションが終了しました。\n\n"
+                "フリープラン（1日3回）として継続利用可能です。\n\n"
+                "またのご利用をお待ちしております！"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in subscription deleted handler: {e}")
+            # エラーがあってもイベントを処理済みとしてマークしない
+            self.client.mark_event_processed(
+                event["id"],
+                {
+                    "event_type": event["type"],
+                    "processed_at": event["created"],
+                    "error": str(e),
+                },
+            )
+            return False
+
+        # イベントを処理済みとしてマーク
+        self.client.mark_event_processed(
+            event["id"],
+            {
+                "event_type": event["type"],
+                "processed_at": event["created"],
+            },
+        )
+
+        return True
         #        )
 
         # イベントを処理済みとしてマーク

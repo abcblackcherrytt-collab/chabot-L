@@ -12,6 +12,7 @@ from fastapi.responses import Response
 
 from app.core.config import settings
 from app.core.security import verify_webhook_signature
+from app.db.session import async_session_maker
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,22 @@ async def _process_line_events(
         rag_service: RAGService インスタンス
     """
     for event in events:
+        # BackgroundTasks はリクエストスコープ外のため get_db（Depends）が使えない。
+        # DATABASE_BACKEND に応じてDBセッションを取得
         try:
-            result = await line_service.process_webhook_event(event)
+            if settings.database_backend == "firestore":
+                # Firestore時はDBセッション不要
+                result = await line_service.process_webhook_event(event, db=None)
+            else:
+                # PostgreSQL時はasync_session_makerでセッションを取得
+                async with async_session_maker() as db:
+                    result = await line_service.process_webhook_event(event, db)
 
             if not result:
                 continue
 
             # メッセージイベントの場合、RAGで応答生成
-            # [Phase 2] ここでサブスク検証結果を分岐する接続ポイント。
-            #   Phase 2 では result に制限/拒否フラグを持たせ、
-            #   未契約/期限切れの場合は RAG クエリせず制限メッセージを返す。
+            # Phase 2: result からプラン別 corpus_id/model_name を受け取って切替
             if (
                 result.get("status") == "processed"
                 and result.get("message")
@@ -59,6 +66,9 @@ async def _process_line_events(
                     rag_result = await rag_service.query(
                         text=result["message"],
                         max_results=10,
+                        corpus_id=result.get("corpus_id"),
+                        model_name=result.get("model_name"),
+                        user_id=result.get("user_id"),
                     )
                     answer = rag_result.get(
                         "answer",

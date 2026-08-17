@@ -4,15 +4,18 @@ FastAPIのDependsで使用する認証・認可の共通関数を定義します
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Union
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.repositories.user import UserRepository
+from app.repositories.firestore_user_repository import FirestoreUserRepository
+from app.repositories.base_user_repository import BaseUserRepository
 from app.services.auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -21,9 +24,29 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 
+def get_user_repository(
+    db: Annotated[AsyncSession, Depends(get_db)]
+) -> BaseUserRepository:
+    """
+    データベースバックエンドに応じたユーザーリポジトリを返します
+
+    Args:
+        db: データベースセッション（PostgreSQL時のみ使用）
+
+    Returns:
+        BaseUserRepository実装（FirestoreUserRepositoryまたはUserRepository）
+    """
+    if settings.database_backend == "firestore":
+        return FirestoreUserRepository()
+    elif settings.database_backend == "postgresql":
+        return UserRepository(db)
+    else:
+        raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
+
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    user_repo: Annotated[BaseUserRepository, Depends(get_user_repository)],
 ) -> User:
     """
     JWTから現在のユーザーを取得します
@@ -36,7 +59,7 @@ async def get_current_user(
 
     Args:
         credentials: HTTP Bearer認証情報
-        db: データベースセッション
+        user_repo: ユーザーリポジトリ（FirestoreまたはPostgreSQL）
 
     Returns:
         認証されたユーザー
@@ -44,8 +67,29 @@ async def get_current_user(
     Raises:
         HTTPException: 認証失敗時
     """
-    auth_service = AuthService(db)
-    payload = await auth_service.verify_access_token(credentials.credentials)
+    # JWT検証はDBセッション不要（decode_tokenはロジックのみ）
+    from app.core.security import decode_token
+
+    # アクセストークンを検証
+    payload = decode_token(credentials.credentials)
+
+    if not payload:
+        logger.warning("Invalid access token attempt")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # トークンタイプを確認
+    token_type = payload.get("type")
+    if token_type != "access":
+        logger.warning(f"Invalid token type: {token_type}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not payload:
         logger.warning(f"Invalid access token attempt")
@@ -64,26 +108,58 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_repo = UserRepository(db)
-    user = await user_repo.get(user_id)
+    # リポジトリ経由でユーザー取得
+    if settings.database_backend == "firestore":
+        # Firestoreの場合は辞書形式で取得
+        user_dict = await user_repo.find_by_id(user_id)
+        if not user_dict:
+            logger.warning(f"User not found: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    if not user:
-        logger.warning(f"User not found: {user_id}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
+        if not user_dict.get('is_active', False):
+            logger.warning(f"Inactive user attempt: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is inactive",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # 辞書からUserオブジェクトクト作成（簡易実装）
+        user = User(
+            id=user_dict['id'],
+            line_user_id=user_dict.get('line_user_id'),
+            email=user_dict.get('email'),
+            display_name=user_dict.get('display_name'),
+            role=user_dict.get('role', 'user'),
+            is_active=user_dict.get('is_active', True),
         )
+        return user
 
-    if not user.is_active:
-        logger.warning(f"Inactive user attempt: {user.id}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account is inactive",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    else:
+        # PostgreSQLの場合は既存のロジック
+        user = await user_repo.get(user_id)
 
-    return user
+        if not user:
+            logger.warning(f"User not found: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not user.is_active:
+            logger.warning(f"Inactive user attempt: {user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is inactive",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return user
 
 
 # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====

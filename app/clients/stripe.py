@@ -385,3 +385,76 @@ class StripeClient(BaseClient):
         except stripe.error.StripeError as e:
             logger.error(f"Price listing error: {e}")
             raise StripeError(f"価格取得エラー: {e}")
+
+    async def create_checkout_session(
+        self,
+        customer_id: str,
+        price_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str] | None = None,
+    ) -> stripe.checkout.Session:
+        """
+        Stripe Checkoutセッションを作成
+
+        Args:
+            customer_id: 顧客ID
+            price_id: 価格ID
+            success_url: 成功時のリダイレクトURL
+            cancel_url: キャンセル時のリダイレクトURL
+            metadata: メタデータ
+
+        Returns:
+            作成されたCheckoutセッション
+
+        Raises:
+            StripeError: Checkout作成エラーが発生した場合
+        """
+        try:
+            session_data = {
+                "customer": customer_id,
+                "mode": "subscription",
+                "payment_method_types": ["card"],
+                "line_items": [{"price": price_id, "quantity": 1}],
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+            }
+
+            if metadata:
+                session_data["metadata"] = metadata
+
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.create, **session_data
+            )
+            logger.info(f"Checkout session created: {session.id}")
+            return session
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Checkout session creation error: {e}")
+            raise StripeError(f"Checkout作成エラー: {e}")
+
+    async def get_checkout_session(
+        self,
+        session_id: str,
+    ) -> stripe.checkout.Session:
+        """
+        Checkoutセッションを取得
+
+        Args:
+            session_id: セッションID
+
+        Returns:
+            Checkoutセッション
+
+        Raises:
+            StripeError: セッション取得エラーが発生した場合
+        """
+        try:
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve, session_id
+            )
+            return session
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Checkout session retrieval error: {e}")
+            raise StripeError(f"Checkout取得エラー: {e}")

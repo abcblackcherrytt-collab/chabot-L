@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.v1 import auth_router, chat_router, stripe_webhook_router
+from app.api.v1 import auth_router, chat_router, stripe_webhook_router, subscription_router
 from app.api.v1.auth_line import router as line_auth_router
 from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
@@ -56,8 +56,8 @@ async def lifespan(app: FastAPI):
     起動時にRAG/LINEサービスを初期化し、
     シャットダウン時にリソースを解放します。
 
-    Phase 1（現在）: Stripe/DB を起動時に初期化しない（LINE ボットは DB なしで動作）。
-    Phase 2: StripeService と DB 接続（init_db）の初期化をここに追加する接続ポイント。
+    現在は Firestore を使用するため、PostgreSQL 接続は起動時に初期化しません。
+    PostgreSQL を再開する場合は、バックエンド設定に応じた初期化を追加します。
     """
     # 起動時の処理
     logger.info(f"Starting {settings.app_name} ({settings.app_env})")
@@ -106,6 +106,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(auth_router, prefix=f"/api/{settings.api_version}")
 app.include_router(line_auth_router, prefix=f"/api/{settings.api_version}")
 app.include_router(chat_router, prefix=f"/api/{settings.api_version}")
+app.include_router(subscription_router, prefix=f"/api/{settings.api_version}")
 app.include_router(line_webhook_router, prefix=f"/api/{settings.api_version}")
 app.include_router(stripe_webhook_router, prefix=f"/api/{settings.api_version}")
 

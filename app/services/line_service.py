@@ -13,8 +13,17 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
+from app.core.pricing import get_daily_message_limit
+from app.models.subscription import Subscription
+from app.models.user import User
+from app.repositories.base import BaseRepository
+from app.repositories.base_user_repository import BaseUserRepository
+from app.repositories.rag_permission import RagPermissionRepository
+from app.repositories.user import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +55,49 @@ class LineService:
         )
         logger.info("LINE service initialized")
 
+    def _get_user_repository(
+        self,
+        db: Optional[AsyncSession] = None,
+    ) -> BaseUserRepository:
+        """
+        データベースバックエンドに応じたユーザーリポジトリを返します
+
+        Args:
+            db: データベースセッション（PostgreSQL時のみ使用）
+
+        Returns:
+            BaseUserRepository実装
+        """
+        if settings.database_backend == "firestore":
+            from app.repositories.firestore_user_repository import FirestoreUserRepository
+            return FirestoreUserRepository()
+        elif settings.database_backend == "postgresql":
+            from app.repositories.user import UserRepository
+            return UserRepository(db)
+        else:
+            raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
+    def _get_rag_permission_repository(self):
+        """
+        データベースバックエンドに応じたRAG権限リポジトリを返します
+
+        Returns:
+            RAG権限リポジトリ実装
+        """
+        if settings.database_backend == "firestore":
+            from app.repositories.firestore_rag_permission_repository import FirestoreRagPermissionRepository
+            return FirestoreRagPermissionRepository()
+        elif settings.database_backend == "postgresql":
+            from app.repositories.rag_permission import RagPermissionRepository
+            # PostgreSQL版はAsyncSessionが必要ですが、ここでは仮実装
+            return RagPermissionRepository(None)
+        else:
+            raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
     async def process_webhook_event(
         self,
         event: Dict[str, Any],
+        db: Optional[AsyncSession] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         LINE Webhook イベントを処理します
@@ -57,6 +106,7 @@ class LineService:
 
         Args:
             event: LINE Webhook イベントオブジェクト
+            db: データベースセッション（PostgreSQL時のみ使用、Firestore時はNone）
 
         Returns:
             処理結果、未処理イベントは None
@@ -64,13 +114,13 @@ class LineService:
         event_type = event.get("type")
 
         if event_type == "message":
-            return await self._handle_message_event(event)
+            return await self._handle_message_event(event, db)
         elif event_type == "follow":
-            return await self._handle_follow_event(event)
+            return await self._handle_follow_event(event, db)
         elif event_type == "unfollow":
-            return await self._handle_unfollow_event(event)
+            return await self._handle_unfollow_event(event, db)
         elif event_type == "postback":
-            return await self._handle_postback_event(event)
+            return await self._handle_postback_event(event, db)
         else:
             logger.info(f"Unhandled event type: {event_type}")
             return None
@@ -78,6 +128,7 @@ class LineService:
     async def _handle_message_event(
         self,
         event: Dict[str, Any],
+        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         メッセージイベントを処理します
@@ -85,8 +136,12 @@ class LineService:
         ユーザーからのメッセージを受信し、RAGサービスで応答を生成して
         リプライメッセージとして送信します。
 
+        Phase 2: line_user_id → User → Subscription.plan → RagPermission で
+        プラン別の corpus_id / model_name を解決します。
+
         Args:
             event: メッセージイベントオブジェクト
+            db: データベースセッション
 
         Returns:
             処理結果
@@ -121,34 +176,133 @@ class LineService:
             f"Processing message from LINE user: {self._mask_user_id(line_user_id)}"
         )
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: ユーザー認識・サブスクリプション検証なし。
-        #   メッセージをそのままRAGサービスに渡す（友だち追加だけで利用可能）。
-        # Phase 2 で有効化する接続ポイント:
-        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
-        #   - Subscription.is_active_paid() でサブスク検証（未契約/期限切れは制限）
-        #   - 検証結果を result に持たせ、webhooks/line.py 側で分岐
-        # 関連: deps.py require_active_subscription [Phase 2 マーカー D2]
-        # ===================================================================
+        # Phase 2: ユーザー特定 → プラン → RAG 権限（corpus_id/model_name）解決
+        user_repo = self._get_user_repository(db)
+
+        # 使用回数リポジトリを取得（Firestore版を使用）
+        from app.repositories.firestore_usage_repository import FirestoreUsageRepository
+        usage_repo = FirestoreUsageRepository()
+
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        # ユーザーが見つからない場合はエラー（本来はfollowイベントで作成されているはず）
+        if not user_dict:
+            await self._send_reply(
+                reply_token,
+                "ユーザー情報が見つかりません。友だち登録からやり直してください。"
+            )
+            return {"status": "error", "reason": "user_not_found"}
+
+        # ユーザーが非アクティブな場合は案内
+        is_user_active = await user_repo.is_active(user_dict['id'])
+        if not is_user_active:
+            await self._send_reply(
+                reply_token,
+                "このアカウントは現在無効です。サポートまでお問い合わせください。"
+            )
+            return {"status": "skipped", "reason": "user_inactive"}
+        user = None
+        if user_dict:
+            # 辞書からUserオブジェクトクト作成（簡易実装）
+            user = User(
+                id=user_dict.get('id'),
+                line_user_id=user_dict.get('line_user_id'),
+                email=user_dict.get('email'),
+                display_name=user_dict.get('display_name'),
+                role=user_dict.get('role', 'user'),
+                is_active=user_dict.get('is_active', True),
+            )
+
+        plan = "free"
+        if user_dict:
+            plan = await user_repo.get_subscription_plan(user_dict['id'])
+
+        # データベースバックエンドに応じたRAG権限リポジトリを使用
+        rag_perm_repo = self._get_rag_permission_repository()
+        rag_perm = await rag_perm_repo.get_by_plan(plan)
+
+        # Firestore版とPostgreSQL版でデータ形式を統一
+        corpus_id = None
+        model_name = None
+        # Firestore上の値ではなく、コードで定義した3/100/500を制限値の基準にする。
+        daily_limit = get_daily_message_limit(plan)
+
+        if rag_perm:
+            if isinstance(rag_perm, dict):
+                # Firestore版（辞書）
+                corpus_id = rag_perm.get('rag_corpus_id')
+                model_name = rag_perm.get('model_name')
+            else:
+                # PostgreSQL版（オブジェクト）
+                corpus_id = rag_perm.rag_corpus_id
+                model_name = rag_perm.model_name
+
+        logger.info(
+            f"Resolved plan={plan}, corpus_id={corpus_id}, model={model_name}, "
+            f"daily_limit={daily_limit} for line_user_id={self._mask_user_id(line_user_id)}"
+        )
+
+        # 全プランで1日あたりのメッセージ上限をチェック・インクリメントを原子的に実行
+        if daily_limit is not None:
+            limit_result = await usage_repo.increment_with_limit_check(
+                user_dict['id'], plan, daily_limit
+            )
+
+            if not limit_result['success']:
+                # 制限超過メッセージを作成
+                limit_message = f"📊 {limit_result['message']}"
+                if plan == "free":
+                    limit_message += (
+                        "\n\n💡 さらに利用するにはプラン登録をご検討ください。"
+                        f"\n\n📱 ベーシックプラン（1日100回まで）:\n"
+                        f"{settings.subscription_basic_url}"
+                        f"\n\n🚀 プロプラン（1日500回まで）:\n"
+                        f"{settings.subscription_pro_url}"
+                    )
+                elif plan == "basic":
+                    limit_message += (
+                        "\n\n🚀 プロプラン（1日500回まで）への変更はこちら:\n"
+                        f"{settings.subscription_pro_url}"
+                    )
+                limit_message += "\n\n明日になると利用回数がリセットされます。"
+                await self._send_reply(reply_token, limit_message)
+                return {
+                    "status": "limit_reached",
+                    "plan": plan,
+                    "daily_limit": daily_limit,
+                    "remaining": limit_result['remaining']
+                }
+
+            logger.info(
+                f"Message count incremented: {limit_result['current_count']}/{daily_limit}, "
+                f"remaining: {limit_result['remaining']}"
+            )
+
         return {
             "status": "processed",
             "reply_token": reply_token,
             "line_user_id": line_user_id,
+            "user_id": user.id if user else None,
+            "plan": plan,
+            "corpus_id": corpus_id,
+            "model_name": model_name,
             "message": user_message,
         }
 
     async def _handle_follow_event(
         self,
         event: Dict[str, Any],
+        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         フォローイベント（友だち追加）を処理します
 
-        Phase 1（現在）: ウェルカムメッセージ送信のみ（DB 登録・Stripe 連携なし）。
-        Phase 2: ユーザー作成/再有効化と Stripe 顧客作成を追加（下記 [Phase 2] マーカー）。
+        Phase 2（現在）: ユーザー作成（未存在）+ free サブスク（モック）。
+        Phase 3: Stripe 顧客作成（G1）・再有効化（is_active=True）を追加予定。
 
         Args:
             event: フォローイベントオブジェクト
+            db: データベースセッション
 
         Returns:
             処理結果
@@ -170,18 +324,25 @@ class LineService:
         except LINEError as e:
             logger.warning(f"Failed to get profile: {e}")
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB ユーザー作成も Stripe 顧客作成も行わない。
-        # Phase 2 で有効化する接続ポイント:
-        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー検索
-        #     → 存在しない場合は新規作成
-        #     → 存在する場合は is_active = True に更新
-        #   - StripeService.create_customer(user) で Stripe 顧客作成し
-        #     UserRepository.update_stripe_customer_id() で紐付け
-        # 関連: repositories/user.py [Phase 2 マーカー H1]、
-        #       stripe_service.create_customer [Phase 2 マーカー G1]
-        # ===================================================================
-        # TODO: DB でユーザー作成または再有効化（Phase 2 で上記を実装）
+        # Phase 2: ユーザー作成（未存在）+ free サブスク（モック）
+        # ※ Stripe 顧客作成（G1）・再有効化（is_active=True）は Phase 3
+        user_repo = self._get_user_repository(db)
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        if not user_dict:
+            # 新規ユーザー作成
+            user_dict = await user_repo.create_line_user(
+                line_user_id=line_user_id,
+                display_name=display_name,
+            )
+            logger.info(
+                f"Created user for line_user_id={self._mask_user_id(line_user_id)}"
+            )
+        else:
+            # 既存ユーザーの場合、再有効化（Phase 3 で Stripe 連携時に有効化）
+            logger.info(
+                f"Existing user found: {self._mask_user_id(line_user_id)}"
+            )
 
         # ウェルカムメッセージ送信
         welcome_msg = (
@@ -200,15 +361,16 @@ class LineService:
     async def _handle_unfollow_event(
         self,
         event: Dict[str, Any],
+        db: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
         """
         アンフォローイベント（ブロック・友だち削除）を処理します
 
-        Phase 1（現在）: ログ記録のみ（DB 無効化なし）。
-        Phase 2: ユーザー無効化・リフレッシュトークン削除を追加（下記 [Phase 2] マーカー）。
+        Stripe解約とは異なり、LINE unfollow時はアカウント全体を停止します。
 
         Args:
             event: アンフォローイベントオブジェクト
+            db: データベースセッション（PostgreSQL時のみ使用）
 
         Returns:
             処理結果
@@ -221,14 +383,14 @@ class LineService:
 
         logger.info(f"Unfollow from: {self._mask_user_id(line_user_id)}")
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB ユーザー無効化は行わない。
-        # Phase 2 で有効化する接続ポイント:
-        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
-        #     → is_active = False
-        #     → refresh_tokens を全削除（RefreshTokenRepository.revoke_all_by_user）
-        # 関連: repositories/user.py [Phase 2 マーカー H1]
-        # ===================================================================
+        # Firestoreユーザー無効化（推奨方針: LINE unfollow時はアカウント全体を停止）
+        user_repo = self._get_user_repository(db)
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        if user_dict:
+            # ユーザーを無効化
+            await user_repo.deactivate_user(user_dict['id'])
+            logger.info(f"Deactivated user {user_dict['id']} after LINE unfollow")
 
         return {
             "status": "processed",
@@ -239,6 +401,7 @@ class LineService:
     async def _handle_postback_event(
         self,
         event: Dict[str, Any],
+        db: AsyncSession,
     ) -> Dict[str, Any]:
         """
         ポストバックイベントを処理します
