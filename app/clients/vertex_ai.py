@@ -146,6 +146,8 @@ class VertexAIClient(BaseClient):
         classification_location: Optional[str] = None,
         system_instruction: Optional[str] = None,
         classification_system_instruction: Optional[str] = None,
+        qwen_model_name: Optional[str] = None,
+        qwen_location: Optional[str] = None,
     ):
         """
         Vertex AIクライアントを初期化します
@@ -160,6 +162,8 @@ class VertexAIClient(BaseClient):
             system_instruction: 応答生成のシステムプロンプト（未指定時は
                 DEFAULT_SYSTEM_INSTRUCTION = 肩専門職向け辛口回答）
             classification_system_instruction: 前段分類用システムプロンプト
+            qwen_model_name: Qwenモデル名
+            qwen_location: Qwenモデルのロケーション
         """
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
         self.project_id = project_id or settings.google_project_id
@@ -180,6 +184,8 @@ class VertexAIClient(BaseClient):
             if classification_system_instruction is not None
             else DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION
         )
+        self.qwen_model_name = qwen_model_name or settings.qwen_model_name
+        self.qwen_location = qwen_location or settings.qwen_location
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
         self.corpus_name = (

@@ -17,8 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
+from app.core.pricing import get_daily_message_limit
 from app.models.subscription import Subscription
+from app.models.user import User
 from app.repositories.base import BaseRepository
+from app.repositories.base_user_repository import BaseUserRepository
 from app.repositories.rag_permission import RagPermissionRepository
 from app.repositories.user import UserRepository
 
@@ -52,10 +55,49 @@ class LineService:
         )
         logger.info("LINE service initialized")
 
+    def _get_user_repository(
+        self,
+        db: Optional[AsyncSession] = None,
+    ) -> BaseUserRepository:
+        """
+        データベースバックエンドに応じたユーザーリポジトリを返します
+
+        Args:
+            db: データベースセッション（PostgreSQL時のみ使用）
+
+        Returns:
+            BaseUserRepository実装
+        """
+        if settings.database_backend == "firestore":
+            from app.repositories.firestore_user_repository import FirestoreUserRepository
+            return FirestoreUserRepository()
+        elif settings.database_backend == "postgresql":
+            from app.repositories.user import UserRepository
+            return UserRepository(db)
+        else:
+            raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
+    def _get_rag_permission_repository(self):
+        """
+        データベースバックエンドに応じたRAG権限リポジトリを返します
+
+        Returns:
+            RAG権限リポジトリ実装
+        """
+        if settings.database_backend == "firestore":
+            from app.repositories.firestore_rag_permission_repository import FirestoreRagPermissionRepository
+            return FirestoreRagPermissionRepository()
+        elif settings.database_backend == "postgresql":
+            from app.repositories.rag_permission import RagPermissionRepository
+            # PostgreSQL版はAsyncSessionが必要ですが、ここでは仮実装
+            return RagPermissionRepository(None)
+        else:
+            raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
     async def process_webhook_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
+        db: Optional[AsyncSession] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         LINE Webhook イベントを処理します
@@ -64,7 +106,7 @@ class LineService:
 
         Args:
             event: LINE Webhook イベントオブジェクト
-            db: データベースセッション（Phase 2: ユーザー永続化・プラン解決）
+            db: データベースセッション（PostgreSQL時のみ使用、Firestore時はNone）
 
         Returns:
             処理結果、未処理イベントは None
@@ -135,20 +177,106 @@ class LineService:
         )
 
         # Phase 2: ユーザー特定 → プラン → RAG 権限（corpus_id/model_name）解決
-        user_repo = UserRepository(db)
-        user = await user_repo.find_by_line_user_id(line_user_id)
-        plan = "free"
-        if user and user.subscriptions:
-            plan = user.subscriptions[0].plan or "free"
+        user_repo = self._get_user_repository(db)
 
-        rag_perm_repo = RagPermissionRepository(db)
+        # 使用回数リポジトリを取得（Firestore版を使用）
+        from app.repositories.firestore_usage_repository import FirestoreUsageRepository
+        usage_repo = FirestoreUsageRepository()
+
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        # ユーザーが見つからない場合はエラー（本来はfollowイベントで作成されているはず）
+        if not user_dict:
+            await self._send_reply(
+                reply_token,
+                "ユーザー情報が見つかりません。友だち登録からやり直してください。"
+            )
+            return {"status": "error", "reason": "user_not_found"}
+
+        # ユーザーが非アクティブな場合は案内
+        is_user_active = await user_repo.is_active(user_dict['id'])
+        if not is_user_active:
+            await self._send_reply(
+                reply_token,
+                "このアカウントは現在無効です。サポートまでお問い合わせください。"
+            )
+            return {"status": "skipped", "reason": "user_inactive"}
+        user = None
+        if user_dict:
+            # 辞書からUserオブジェクトクト作成（簡易実装）
+            user = User(
+                id=user_dict.get('id'),
+                line_user_id=user_dict.get('line_user_id'),
+                email=user_dict.get('email'),
+                display_name=user_dict.get('display_name'),
+                role=user_dict.get('role', 'user'),
+                is_active=user_dict.get('is_active', True),
+            )
+
+        plan = "free"
+        if user_dict:
+            plan = await user_repo.get_subscription_plan(user_dict['id'])
+
+        # データベースバックエンドに応じたRAG権限リポジトリを使用
+        rag_perm_repo = self._get_rag_permission_repository()
         rag_perm = await rag_perm_repo.get_by_plan(plan)
-        corpus_id = rag_perm.rag_corpus_id if rag_perm else None
-        model_name = rag_perm.model_name if rag_perm else None
+
+        # Firestore版とPostgreSQL版でデータ形式を統一
+        corpus_id = None
+        model_name = None
+        # Firestore上の値ではなく、コードで定義した3/100/500を制限値の基準にする。
+        daily_limit = get_daily_message_limit(plan)
+
+        if rag_perm:
+            if isinstance(rag_perm, dict):
+                # Firestore版（辞書）
+                corpus_id = rag_perm.get('rag_corpus_id')
+                model_name = rag_perm.get('model_name')
+            else:
+                # PostgreSQL版（オブジェクト）
+                corpus_id = rag_perm.rag_corpus_id
+                model_name = rag_perm.model_name
+
         logger.info(
-            f"Resolved plan={plan}, corpus_id={corpus_id}, model={model_name} "
-            f"for line_user_id={self._mask_user_id(line_user_id)}"
+            f"Resolved plan={plan}, corpus_id={corpus_id}, model={model_name}, "
+            f"daily_limit={daily_limit} for line_user_id={self._mask_user_id(line_user_id)}"
         )
+
+        # 全プランで1日あたりのメッセージ上限をチェック・インクリメントを原子的に実行
+        if daily_limit is not None:
+            limit_result = await usage_repo.increment_with_limit_check(
+                user_dict['id'], plan, daily_limit
+            )
+
+            if not limit_result['success']:
+                # 制限超過メッセージを作成
+                limit_message = f"📊 {limit_result['message']}"
+                if plan == "free":
+                    limit_message += (
+                        "\n\n💡 さらに利用するにはプラン登録をご検討ください。"
+                        f"\n\n📱 ベーシックプラン（1日100回まで）:\n"
+                        f"{settings.subscription_basic_url}"
+                        f"\n\n🚀 プロプラン（1日500回まで）:\n"
+                        f"{settings.subscription_pro_url}"
+                    )
+                elif plan == "basic":
+                    limit_message += (
+                        "\n\n🚀 プロプラン（1日500回まで）への変更はこちら:\n"
+                        f"{settings.subscription_pro_url}"
+                    )
+                limit_message += "\n\n明日になると利用回数がリセットされます。"
+                await self._send_reply(reply_token, limit_message)
+                return {
+                    "status": "limit_reached",
+                    "plan": plan,
+                    "daily_limit": daily_limit,
+                    "remaining": limit_result['remaining']
+                }
+
+            logger.info(
+                f"Message count incremented: {limit_result['current_count']}/{daily_limit}, "
+                f"remaining: {limit_result['remaining']}"
+            )
 
         return {
             "status": "processed",
@@ -198,18 +326,22 @@ class LineService:
 
         # Phase 2: ユーザー作成（未存在）+ free サブスク（モック）
         # ※ Stripe 顧客作成（G1）・再有効化（is_active=True）は Phase 3
-        user_repo = UserRepository(db)
-        user = await user_repo.find_by_line_user_id(line_user_id)
-        if not user:
-            user = await user_repo.create_line_user(
+        user_repo = self._get_user_repository(db)
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        if not user_dict:
+            # 新規ユーザー作成
+            user_dict = await user_repo.create_line_user(
                 line_user_id=line_user_id,
                 display_name=display_name,
             )
-            sub_repo = BaseRepository(Subscription, db)
-            await sub_repo.create({"user_id": user.id, "plan": "free", "status": "free"})
-            await db.commit()
             logger.info(
-                f"Created user + free subscription for line_user_id={self._mask_user_id(line_user_id)}"
+                f"Created user for line_user_id={self._mask_user_id(line_user_id)}"
+            )
+        else:
+            # 既存ユーザーの場合、再有効化（Phase 3 で Stripe 連携時に有効化）
+            logger.info(
+                f"Existing user found: {self._mask_user_id(line_user_id)}"
             )
 
         # ウェルカムメッセージ送信
@@ -229,16 +361,16 @@ class LineService:
     async def _handle_unfollow_event(
         self,
         event: Dict[str, Any],
-        db: AsyncSession,
+        db: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
         """
         アンフォローイベント（ブロック・友だち削除）を処理します
 
-        Phase 1（現在）: ログ記録のみ（DB 無効化なし）。
-        Phase 2: ユーザー無効化・リフレッシュトークン削除を追加（下記 [Phase 2] マーカー）。
+        Stripe解約とは異なり、LINE unfollow時はアカウント全体を停止します。
 
         Args:
             event: アンフォローイベントオブジェクト
+            db: データベースセッション（PostgreSQL時のみ使用）
 
         Returns:
             処理結果
@@ -251,14 +383,14 @@ class LineService:
 
         logger.info(f"Unfollow from: {self._mask_user_id(line_user_id)}")
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB ユーザー無効化は行わない。
-        # Phase 2 で有効化する接続ポイント:
-        #   - UserRepository.find_by_line_user_id(line_user_id) でユーザー特定
-        #     → is_active = False
-        #     → refresh_tokens を全削除（RefreshTokenRepository.revoke_all_by_user）
-        # 関連: repositories/user.py [Phase 2 マーカー H1]
-        # ===================================================================
+        # Firestoreユーザー無効化（推奨方針: LINE unfollow時はアカウント全体を停止）
+        user_repo = self._get_user_repository(db)
+        user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+        if user_dict:
+            # ユーザーを無効化
+            await user_repo.deactivate_user(user_dict['id'])
+            logger.info(f"Deactivated user {user_dict['id']} after LINE unfollow")
 
         return {
             "status": "processed",

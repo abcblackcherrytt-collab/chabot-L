@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     # データベース設定
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/chabot"
 
+    # データベースバックエンド選択（移行用）
+    # "firestore": Firestoreを使用（初期運用・無料）
+    # "postgresql": Cloud SQLを使用（本番運用）
+    database_backend: str = "firestore"
+
+    # Firestore設定（database_backend="firestore"時使用）
+    firestore_project_id: str = "takahashi-451312"
+
     # JWT認証設定（カンマ区切りの文字列で指定）
     jwt_secret_keys: str = "your-secret-key-here"
     jwt_algorithm: str = "HS256"
@@ -56,12 +64,19 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = "whsec_your-webhook-secret"
     stripe_publishable_key: str = "pk_test_your-stripe-publishable-key"
 
+    # サブスクリプション設定
+    # メッセージ制限到達時に案内するサブスクリプション登録URL
+    subscription_basic_url: str = "https://your-service.com/subscription/basic"
+    subscription_pro_url: str = "https://your-service.com/subscription/pro"
+
     # Google Cloud Vertex AI設定
     # RAG Engine の GA リージョンは us-central1 / europe-west3 のみ（asia-northeast1 非対応）。
     # Cloud Run（asia-northeast1）からクロスリージョン呼び出しを行う。
     google_project_id: str = "your-project-id"
     google_location: str = "us-central1"
-    google_corpus_id_plan1: str = "your-corpus-id"
+    # 重要: google_corpus_idがfree用、google_corpus_id_plan1が有料（basic/pro）用
+    google_corpus_id: str = "your-free-corpus-id"  # freeプラン用コーパスID
+    google_corpus_id_plan1: str = "your-paid-corpus-id"  # 有料プラン用コーパスID
     # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
     # gemini-2.0-flash-001 は 2026年時点で廃止済み（404）。2.5 Flash は 2026-10-16 廃止予定。
     google_model_name: str = "gemini-2.5-flash"
@@ -69,6 +84,12 @@ class Settings(BaseSettings):
     google_classification_model_name: str = "gemini-3.1-flash-lite"
     # Gemini 3.1 Flash-Lite は google-genai の Vertex AI global endpoint で分類に使用する。
     google_classification_location: str = "global"
+
+    # Qwenモデル設定（Vertex AI Model Garden）
+    # Qwen 2.5 72B Instructモデル
+    qwen_model_name: str = "qwen-2.5-72b-instruct"
+    # Qwenモデルのロケーション（通常 us-central1）
+    qwen_location: str = "us-central1"
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]

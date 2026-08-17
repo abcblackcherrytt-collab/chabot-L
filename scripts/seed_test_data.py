@@ -113,8 +113,8 @@ async def seed():
                                              daily_message_limit, enabled)
                 VALUES
                     (:id1, 'free',   'general_basic',   'gemini-1.5-flash', 1000, 800,  3,   true),
-                    (:id2, 'basic',  'general_plus',    'gemini-1.5-flash', 4000, 2000, 50,  true),
-                    (:id3, 'pro',    'premium_domain',  'gemini-1.5-pro',   12000, 4000, 200, true),
+                    (:id2, 'basic',  'general_plus',    'gemini-1.5-flash', 4000, 2000, 100, true),
+                    (:id3, 'pro',    'premium_domain',  'gemini-1.5-pro',   12000, 4000, 500, true),
                     (:id4, 'enterprise', 'premium_domain', 'gemini-1.5-pro', 32000, 8000, 999999, true)
                 ON CONFLICT DO NOTHING
             """), {
