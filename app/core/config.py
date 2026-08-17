@@ -80,10 +80,6 @@ class Settings(BaseSettings):
     # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
     # gemini-2.0-flash-001 は 2026年時点で廃止済み（404）。2.5 Flash は 2026-10-16 廃止予定。
     google_model_name: str = "gemini-2.5-flash"
-    # 前段クエリ分類モデル。公式モデルIDでは Gemini 3.1 Flash-Lite は gemini-3.1-flash-lite。
-    google_classification_model_name: str = "gemini-3.1-flash-lite"
-    # Gemini 3.1 Flash-Lite は google-genai の Vertex AI global endpoint で分類に使用する。
-    google_classification_location: str = "global"
 
     # Qwenモデル設定（Vertex AI Model Garden）
     # Qwen 2.5 72B Instructモデル

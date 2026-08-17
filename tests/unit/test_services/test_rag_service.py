@@ -19,7 +19,7 @@ class TestRAGService:
         """
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.query = AsyncMock(return_value=mock_vertex_ai_response)
 
         service = RAGService(vertex_ai_client=mock_client)
@@ -45,7 +45,7 @@ class TestRAGService:
         """
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.query = AsyncMock(return_value=mock_vertex_ai_denied_response)
 
         service = RAGService(vertex_ai_client=mock_client)
@@ -72,7 +72,7 @@ class TestRAGService:
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         async def mock_query_side_effect(*args, **kwargs):
             return mock_responses.pop(0)
@@ -104,10 +104,10 @@ class TestRAGService:
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         async def mock_query_side_effect(*args, **kwargs):
-            if "Query 2" in args[0]:
+            if "Query 2" in kwargs["text"]:
                 raise VertexAIError("Query failed")
             return {"answer": "Answer", "confidence": 0.8, "denied": False}
 
@@ -223,7 +223,7 @@ class TestRAGService:
         """
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.query = AsyncMock(return_value={
             "answer": "Hello",
             "denied": False,
@@ -244,7 +244,7 @@ class TestRAGService:
         """
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
+        mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
         service = RAGService(vertex_ai_client=mock_client)
