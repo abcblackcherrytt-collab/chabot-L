@@ -28,9 +28,50 @@ def mock_line_client():
 
 
 @pytest.fixture
-def line_service(mock_line_client):
+def line_service(mock_line_client, monkeypatch):
     """テスト用 LINE サービス"""
-    return LineService(line_client=mock_line_client)
+    user_repo = MagicMock()
+    user_repo.find_by_line_user_id = AsyncMock(return_value={
+        "id": "user-123",
+        "line_user_id": "U_test123",
+        "email": None,
+        "display_name": "テストユーザー",
+        "role": "user",
+        "is_active": True,
+        "subscription_plan": "free",
+    })
+    user_repo.create_line_user = AsyncMock()
+    user_repo.is_active = AsyncMock(return_value=True)
+    user_repo.get_subscription_plan = AsyncMock(return_value="free")
+    user_repo.deactivate_user = AsyncMock()
+
+    rag_permission_repo = MagicMock()
+    rag_permission_repo.get_by_plan = AsyncMock(return_value={
+        "rag_corpus_id": "test-corpus",
+        "model_name": "test-model",
+    })
+
+    usage_repo = MagicMock()
+    usage_repo.increment_with_limit_check = AsyncMock(return_value={
+        "success": True,
+        "current_count": 1,
+        "remaining": 2,
+        "message": "ok",
+    })
+
+    service = LineService(line_client=mock_line_client)
+    monkeypatch.setattr(service, "_get_user_repository", lambda db=None: user_repo)
+    monkeypatch.setattr(
+        service,
+        "_get_rag_permission_repository",
+        lambda: rag_permission_repo,
+    )
+    monkeypatch.setattr(
+        "app.repositories.firestore_usage_repository.FirestoreUsageRepository",
+        lambda: usage_repo,
+    )
+    service._test_usage_repo = usage_repo
+    return service
 
 
 class TestProcessWebhookEvent:
@@ -109,7 +150,7 @@ class TestFollowEvent:
     """フォローイベント詳細テスト"""
 
     @pytest.mark.asyncio
-    async def test_missing_user_id(self, line_service):
+    async def test_missing_user_id(self, line_service, db_session):
         """userId がない場合はスキップされること"""
         event = {
             "type": "follow",
@@ -117,11 +158,11 @@ class TestFollowEvent:
             "source": {},
         }
 
-        result = await line_service._handle_follow_event(event)
+        result = await line_service._handle_follow_event(event, db_session)
         assert result["status"] == "skipped"
 
     @pytest.mark.asyncio
-    async def test_profile_fetch_failure(self, line_service, mock_line_client):
+    async def test_profile_fetch_failure(self, line_service, mock_line_client, db_session):
         """プロフィール取得失敗時にエラーにならないこと"""
         mock_line_client.get_profile.side_effect = LINEError("API Error")
 
@@ -131,7 +172,7 @@ class TestFollowEvent:
             "source": {"userId": "U_test123"},
         }
 
-        result = await line_service._handle_follow_event(event)
+        result = await line_service._handle_follow_event(event, db_session)
         assert result["status"] == "processed"
         mock_line_client.reply_message.assert_called_once()
 
@@ -140,7 +181,7 @@ class TestMessageEvent:
     """メッセージイベント詳細テスト"""
 
     @pytest.mark.asyncio
-    async def test_empty_message(self, line_service, mock_line_client):
+    async def test_empty_message(self, line_service, mock_line_client, db_session):
         """空メッセージはエラーメッセージが返ること"""
         event = {
             "type": "message",
@@ -149,12 +190,12 @@ class TestMessageEvent:
             "message": {"type": "text", "text": "   "},
         }
 
-        result = await line_service._handle_message_event(event)
+        result = await line_service._handle_message_event(event, db_session)
         assert result["status"] == "processed"
         assert result["reason"] == "empty_message"
 
     @pytest.mark.asyncio
-    async def test_missing_reply_token(self, line_service):
+    async def test_missing_reply_token(self, line_service, db_session):
         """replyToken がない場合はスキップされること"""
         event = {
             "type": "message",
@@ -162,8 +203,41 @@ class TestMessageEvent:
             "message": {"type": "text", "text": "hello"},
         }
 
-        result = await line_service._handle_message_event(event)
+        result = await line_service._handle_message_event(event, db_session)
         assert result["status"] == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_firestore_usage_failure_is_not_reported_as_limit(
+        self,
+        line_service,
+        mock_line_client,
+        db_session,
+    ):
+        """Firestore障害を回数上限として誤案内しないこと"""
+        line_service._test_usage_repo.increment_with_limit_check.return_value = {
+            "success": False,
+            "error": True,
+            "current_count": 0,
+            "remaining": 0,
+            "message": "使用回数を確認できませんでした",
+        }
+        event = {
+            "type": "message",
+            "replyToken": "test_token",
+            "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "hello"},
+        }
+
+        result = await line_service._handle_message_event(event, db_session)
+
+        assert result == {
+            "status": "error",
+            "reason": "usage_check_failed",
+            "plan": "free",
+        }
+        sent_message = mock_line_client.reply_message.await_args.args[1][0]["text"]
+        assert "利用回数を確認できません" in sent_message
+        assert "上限" not in sent_message
 
 
 class TestInputSanitization:

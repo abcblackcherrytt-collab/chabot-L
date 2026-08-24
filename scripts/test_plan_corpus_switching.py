@@ -147,7 +147,10 @@ async def test_plan_corpus_switching():
     from google.cloud import firestore
     from datetime import datetime
 
-    db = firestore.Client(project=settings.firestore_project_id)
+    db = firestore.Client(
+        project=settings.firestore_project_id,
+        database=settings.firestore_database_id,
+    )
     db.collection('users').document(user_id).update({
         'is_active': True,
         'updated_at': datetime.utcnow().isoformat()

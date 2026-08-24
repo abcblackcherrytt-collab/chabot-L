@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # Firestore設定（database_backend="firestore"時使用）
     firestore_project_id: str = "takahashi-451312"
+    firestore_database_id: str = "chabotline"
 
     # JWT認証設定（カンマ区切りの文字列で指定）
     jwt_secret_keys: str = "your-secret-key-here"
@@ -86,6 +87,10 @@ class Settings(BaseSettings):
     qwen_model_name: str = "qwen-2.5-72b-instruct"
     # Qwenモデルのロケーション（通常 us-central1）
     qwen_location: str = "us-central1"
+
+    # 分類用モデル設定（前段クエリ分類）
+    google_classification_model_name: str = "gemini-1.5-flash"
+    google_classification_location: str = "us-central1"
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]

@@ -103,7 +103,10 @@ def check_production_secrets(project_id="takahashi-451312"):
     return found_secrets
 
 
-def check_firestore_collections(project_id="takahashi-451312"):
+def check_firestore_collections(
+    project_id="takahashi-451312",
+    database_id="chabotline",
+):
     """
     Firestoreのコレクション構造を確認
 
@@ -114,7 +117,7 @@ def check_firestore_collections(project_id="takahashi-451312"):
 
     try:
         from google.cloud import firestore
-        db = firestore.Client(project=project_id)
+        db = firestore.Client(project=project_id, database=database_id)
 
         # コレクション一覧を取得
         collections = db.collections()

@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
+from app.core.config import settings
 from app.repositories.base_user_repository import BaseUserRepository
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,12 @@ class FirestoreUserRepository(BaseUserRepository):
     Firestoreをデータベースとして使用する実装です。
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestoreクライアントを初期化します"""
-        self.db = firestore.Client()
+        self.db = client or firestore.AsyncClient(
+            project=settings.firestore_project_id,
+            database=settings.firestore_database_id,
+        )
         logger.info("Firestore user repository initialized")
 
     async def find_by_line_user_id(self, line_user_id: str) -> Optional[Dict[str, Any]]:
@@ -38,7 +42,7 @@ class FirestoreUserRepository(BaseUserRepository):
             ユーザーデータの辞書、存在しない場合はNone
         """
         try:
-            docs = self.db.collection('users')\
+            docs = await self.db.collection('users')\
                 .where('line_user_id', '==', line_user_id)\
                 .limit(1)\
                 .get()
@@ -91,7 +95,7 @@ class FirestoreUserRepository(BaseUserRepository):
             }
 
             # ユーザードキュメント作成
-            self.db.collection('users').document(user_id).set(user_data)
+            await self.db.collection('users').document(user_id).set(user_data)
 
             logger.info(f"Created new user: {user_id} (line_user_id: {line_user_id})")
             return user_data
@@ -111,7 +115,7 @@ class FirestoreUserRepository(BaseUserRepository):
             ユーザーデータの辞書、存在しない場合はNone
         """
         try:
-            doc = self.db.collection('users').document(user_id).get()
+            doc = await self.db.collection('users').document(user_id).get()
 
             if doc.exists:
                 user_data = doc.to_dict()
@@ -166,10 +170,12 @@ class FirestoreUserRepository(BaseUserRepository):
             if plan == 'free':
                 update_data['subscription_status'] = 'active'
 
-            doc_ref.update(update_data)
+            await doc_ref.update(update_data)
 
             # 更新後のデータを取得
-            doc = doc_ref.get()
+            doc = await doc_ref.get()
+            if not doc.exists:
+                raise LookupError(f"User not found after plan update: {user_id}")
             updated_data = doc.to_dict()
             updated_data['id'] = doc.id
 
@@ -206,7 +212,7 @@ class FirestoreUserRepository(BaseUserRepository):
         try:
             doc_ref = self.db.collection('users').document(user_id)
 
-            doc_ref.update({
+            await doc_ref.update({
                 'is_active': False,
                 'updated_at': datetime.utcnow().isoformat()
             })
@@ -230,7 +236,7 @@ class FirestoreUserRepository(BaseUserRepository):
             ユーザーデータの辞書、存在しない場合は None
         """
         try:
-            docs = self.db.collection('users')\
+            docs = await self.db.collection('users')\
                 .where('stripe_customer_id', '==', stripe_customer_id)\
                 .limit(1)\
                 .get()
@@ -259,7 +265,7 @@ class FirestoreUserRepository(BaseUserRepository):
         try:
             doc_ref = self.db.collection('users').document(user_id)
 
-            doc_ref.update({
+            await doc_ref.update({
                 'stripe_customer_id': stripe_customer_id,
                 'updated_at': datetime.utcnow().isoformat()
             })

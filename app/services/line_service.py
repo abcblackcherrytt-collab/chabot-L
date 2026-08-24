@@ -10,7 +10,6 @@ Phase 2: ユーザー管理・サブスクリプション連携を追加。詳�
 """
 
 import logging
-import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,12 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
 from app.core.pricing import get_daily_message_limit
-from app.models.subscription import Subscription
-from app.models.user import User
-from app.repositories.base import BaseRepository
 from app.repositories.base_user_repository import BaseUserRepository
-from app.repositories.rag_permission import RagPermissionRepository
-from app.repositories.user import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -201,18 +195,6 @@ class LineService:
                 "このアカウントは現在無効です。サポートまでお問い合わせください。"
             )
             return {"status": "skipped", "reason": "user_inactive"}
-        user = None
-        if user_dict:
-            # 辞書からUserオブジェクトクト作成（簡易実装）
-            user = User(
-                id=user_dict.get('id'),
-                line_user_id=user_dict.get('line_user_id'),
-                email=user_dict.get('email'),
-                display_name=user_dict.get('display_name'),
-                role=user_dict.get('role', 'user'),
-                is_active=user_dict.get('is_active', True),
-            )
-
         plan = "free"
         if user_dict:
             plan = await user_repo.get_subscription_plan(user_dict['id'])
@@ -249,6 +231,16 @@ class LineService:
             )
 
             if not limit_result['success']:
+                if limit_result.get('error'):
+                    await self._send_reply(
+                        reply_token,
+                        "現在、利用回数を確認できません。しばらくしてからもう一度お試しください。",
+                    )
+                    return {
+                        "status": "error",
+                        "reason": "usage_check_failed",
+                        "plan": plan,
+                    }
                 # 制限超過メッセージを作成
                 limit_message = f"📊 {limit_result['message']}"
                 if plan == "free":
@@ -282,7 +274,7 @@ class LineService:
             "status": "processed",
             "reply_token": reply_token,
             "line_user_id": line_user_id,
-            "user_id": user.id if user else None,
+            "user_id": user_dict['id'],
             "plan": plan,
             "corpus_id": corpus_id,
             "model_name": model_name,

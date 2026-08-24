@@ -8,12 +8,15 @@ Firestore版実装で、freeプランのメッセージ制限（3件/日）を�
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 
+from app.core.config import settings
 from app.core.pricing import get_daily_message_limit
 
 logger = logging.getLogger(__name__)
+JST = ZoneInfo("Asia/Tokyo")
 
 
 class FirestoreUsageRepository:
@@ -23,9 +26,12 @@ class FirestoreUsageRepository:
     ユーザーのメッセージ使用回数を追跡し、プラン別の制限管理を行います。
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestoreクライアントを初期化します"""
-        self.db = firestore.Client()
+        self.db = client or firestore.AsyncClient(
+            project=settings.firestore_project_id,
+            database=settings.firestore_database_id,
+        )
         self.daily_collection_name = 'usage_daily'
         logger.info("Firestore usage repository initialized")
 
@@ -36,7 +42,7 @@ class FirestoreUsageRepository:
         Returns:
             今日の日付文字列
         """
-        return datetime.utcnow().strftime('%Y-%m-%d')
+        return datetime.now(JST).strftime('%Y-%m-%d')
 
     async def get_daily_message_count(self, user_id: str) -> int:
         """
@@ -52,7 +58,7 @@ class FirestoreUsageRepository:
             today = self._get_today_date_str()
             doc_id = f"{user_id}_{today}"
 
-            doc = self.db.collection(self.daily_collection_name).document(doc_id).get()
+            doc = await self.db.collection(self.daily_collection_name).document(doc_id).get()
 
             if doc.exists:
                 usage_data = doc.to_dict()
@@ -80,7 +86,7 @@ class FirestoreUsageRepository:
             doc_ref = self.db.collection(self.daily_collection_name).document(doc_id)
 
             # 現在の値を取得
-            doc = doc_ref.get()
+            doc = await doc_ref.get()
             if doc.exists:
                 current_count = doc.to_dict().get('message_count', 0)
             else:
@@ -93,15 +99,15 @@ class FirestoreUsageRepository:
                 'user_id': user_id,
                 'date': today,
                 'message_count': new_count,
-                'updated_at': datetime.utcnow().isoformat()
+                'updated_at': datetime.now(JST).isoformat()
             }
 
             # 新規作成の場合はcreated_atを追加
             if not doc.exists:
-                update_data['created_at'] = datetime.utcnow().isoformat()
+                update_data['created_at'] = datetime.now(JST).isoformat()
 
             # ドキュメントを設定（createまたはupdate）
-            doc_ref.set(update_data)
+            await doc_ref.set(update_data)
 
             logger.debug(f"Incremented message count for user {user_id}: {new_count}")
             return new_count
@@ -172,9 +178,9 @@ class FirestoreUsageRepository:
             transaction = self.db.transaction()
 
             @firestore.async_transactional
-            def update_in_transaction(tx):
+            async def update_in_transaction(tx):
                 # トランザクション内でドキュメントを取得
-                doc = tx.get(doc_ref)[0]
+                doc = await doc_ref.get(transaction=tx)
 
                 if doc.exists:
                     current_count = doc.to_dict().get('message_count', 0)
@@ -198,12 +204,12 @@ class FirestoreUsageRepository:
                     'user_id': user_id,
                     'date': today,
                     'message_count': new_count,
-                    'updated_at': datetime.utcnow().isoformat()
+                    'updated_at': datetime.now(JST).isoformat()
                 }
 
                 # 新規作成の場合はcreated_atを追加
                 if not doc.exists:
-                    update_data['created_at'] = datetime.utcnow().isoformat()
+                    update_data['created_at'] = datetime.now(JST).isoformat()
 
                 # ドキュメントを設定（createまたはupdate）
                 tx.set(doc_ref, update_data)
@@ -215,7 +221,7 @@ class FirestoreUsageRepository:
                     'message': f'メッセージ回数をインクリメントしました（残り{daily_limit - new_count}件）'
                 }
 
-            result = await transaction(update_in_transaction)
+            result = await update_in_transaction(transaction)
 
             logger.info(f"Transaction result for user {user_id}: {result}")
             return result
@@ -224,9 +230,10 @@ class FirestoreUsageRepository:
             logger.error(f"Error in increment_with_limit_check: {e}")
             return {
                 'success': False,
+                'error': True,
                 'current_count': 0,
                 'remaining': 0,
-                'message': f'エラーが発生しました: {str(e)}'
+                'message': '使用回数を確認できませんでした'
             }
 
     async def get_remaining_messages(self, user_id: str, plan: str, daily_limit: Optional[int] = None) -> int:
@@ -266,10 +273,10 @@ class FirestoreUsageRepository:
             削除したレコード数
         """
         try:
-            cutoff_date = (datetime.utcnow() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
+            cutoff_date = (datetime.now(JST) - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
 
             # 古い日付のドキュメントを検索して削除
-            docs = self.db.collection(self.daily_collection_name)\
+            docs = await self.db.collection(self.daily_collection_name)\
                 .where('date', '<', cutoff_date)\
                 .get()
 
@@ -284,12 +291,12 @@ class FirestoreUsageRepository:
 
                 # Firestoreは1回のバッチで最大500操作
                 if batch_size >= 500:
-                    batch.commit()
+                    await batch.commit()
                     batch = self.db.batch()
                     batch_size = 0
 
             if batch_size > 0:
-                batch.commit()
+                await batch.commit()
 
             logger.info(f"Cleaned up {deleted_count} old usage records")
             return deleted_count
@@ -312,7 +319,7 @@ class FirestoreUsageRepository:
             today = self._get_today_date_str()
             doc_id = f"{user_id}_{today}"
 
-            self.db.collection(self.daily_collection_name).document(doc_id).delete()
+            await self.db.collection(self.daily_collection_name).document(doc_id).delete()
             logger.info(f"Reset daily count for user: {user_id}")
             return True
 

@@ -10,6 +10,8 @@ from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,9 +23,12 @@ class FirestoreRagPermissionRepository:
     Firestore から参照します。
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestore クライアントを初期化します"""
-        self.db = firestore.Client()
+        self.db = client or firestore.AsyncClient(
+            project=settings.firestore_project_id,
+            database=settings.firestore_database_id,
+        )
         self.collection_name = 'rag_permissions'
         logger.info("Firestore RAG permission repository initialized")
 
@@ -38,7 +43,7 @@ class FirestoreRagPermissionRepository:
             RAG 権限データの辞書、存在しない場合は None
         """
         try:
-            docs = self.db.collection(self.collection_name)\
+            docs = await self.db.collection(self.collection_name)\
                 .where('plan', '==', plan)\
                 .where('enabled', '==', True)\
                 .limit(1)\
@@ -65,7 +70,7 @@ class FirestoreRagPermissionRepository:
             RAG 権限データの辞書リスト
         """
         try:
-            docs = self.db.collection(self.collection_name)\
+            docs = await self.db.collection(self.collection_name)\
                 .where('enabled', '==', True)\
                 .get()
 
@@ -127,7 +132,7 @@ class FirestoreRagPermissionRepository:
                 'updated_at': now.isoformat()
             }
 
-            self.db.collection(self.collection_name).document(perm_id).set(perm_data)
+            await self.db.collection(self.collection_name).document(perm_id).set(perm_data)
 
             logger.info(f"Created RAG permission for plan: {plan}")
             return perm_data
@@ -155,7 +160,7 @@ class FirestoreRagPermissionRepository:
             from datetime import datetime
 
             # まず対象のドキュメントを検索
-            docs = self.db.collection(self.collection_name)\
+            docs = await self.db.collection(self.collection_name)\
                 .where('plan', '==', plan)\
                 .limit(1)\
                 .get()
@@ -166,10 +171,12 @@ class FirestoreRagPermissionRepository:
                 # 更新データにタイムスタンプを追加
                 update_data = {**updates, 'updated_at': datetime.utcnow().isoformat()}
 
-                doc_ref.update(update_data)
+                await doc_ref.update(update_data)
 
                 # 更新後のデータを取得
-                updated_doc = doc_ref.get()
+                updated_doc = await doc_ref.get()
+                if not updated_doc.exists:
+                    raise LookupError(f"RAG permission disappeared during update: {plan}")
                 updated_data = updated_doc.to_dict()
                 updated_data['id'] = updated_doc.id
 
@@ -195,13 +202,13 @@ class FirestoreRagPermissionRepository:
         """
         try:
             # 対象のドキュメントを検索して削除
-            docs = self.db.collection(self.collection_name)\
+            docs = await self.db.collection(self.collection_name)\
                 .where('plan', '==', plan)\
                 .limit(1)\
                 .get()
 
             for doc in docs:
-                self.db.collection(self.collection_name).document(doc.id).delete()
+                await self.db.collection(self.collection_name).document(doc.id).delete()
                 logger.info(f"Deleted RAG permission for plan: {plan}")
                 return True
 

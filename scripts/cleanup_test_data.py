@@ -175,7 +175,10 @@ def main():
     args = parser.parse_args()
 
     # Firestoreクライアントの初期化
-    db = firestore.Client(project=settings.firestore_project_id)
+    db = firestore.Client(
+        project=settings.firestore_project_id,
+        database=settings.firestore_database_id,
+    )
 
     if args.user_id:
         # 特定のユーザーを削除

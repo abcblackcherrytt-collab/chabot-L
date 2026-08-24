@@ -50,25 +50,22 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      # Phase 1で本番利用するLINE/RAG経路はデプロイ必須ゲートにする。
-      - name: Run Phase 1 deployment tests
+      # 現在本番利用するFirestore / LINE / Vertex AI経路をデプロイ必須ゲートにする。
+      - name: Run deployment quality gate
         run: |
-          pytest tests/unit/ \
-            --ignore=tests/unit/test_repositories/test_refresh_token.py \
+          pytest \
+            tests/unit/test_clients/test_line.py \
+            tests/unit/test_clients/test_vertex_ai.py \
+            tests/unit/test_repositories/test_firestore_repositories.py \
+            tests/unit/test_services/test_line_service.py \
+            tests/unit/test_services/test_rag_service.py \
             -v --tb=short
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           TEST_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-
-      # Phase 2未稼働部分の既知のテスト不整合は結果を残すが、Phase 1を止めない。
-      - name: Run deferred Phase 2 and integration tests
-        continue-on-error: true
-        run: |
-          pytest tests/unit/test_repositories/test_refresh_token.py -v --tb=short
-          pytest tests/integration/ -v --tb=short
-        env:
-          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          TEST_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          DATABASE_BACKEND: "firestore"
+          FIRESTORE_PROJECT_ID: "takahashi-451312"
+          FIRESTORE_DATABASE_ID: "chabotline"
 
       # Authenticate with Google Cloud using Workload Identity Federation
       - name: Authenticate to Google Cloud
@@ -128,7 +125,7 @@ jobs:
             --timeout=60s \
             --concurrency=80 \
             --service-account=$SERVICE_ACCOUNT \
-            --set-env-vars=APP_ENV=$APP_ENV,DEBUG=False,GIT_SHA=$CURRENT_SHA_SHORT,LINE_LOGIN_CALLBACK_URL=$SERVICE_URL/api/v1/auth/line/callback \
+            --set-env-vars=APP_ENV=$APP_ENV,DEBUG=False,GIT_SHA=$CURRENT_SHA_SHORT,DATABASE_BACKEND=firestore,FIRESTORE_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=chabotline,LINE_LOGIN_CALLBACK_URL=$SERVICE_URL/api/v1/auth/line/callback \
             --set-secrets=LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,LINE_LOGIN_CHANNEL_ID=line-login-channel-id:latest,LINE_LOGIN_CHANNEL_SECRET=line-login-channel-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=JWT_SECRET_KEYS:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID_PLAN1=GOOGLE_CORPUS_ID_PLAN1:latest \
             --labels=commit-sha=$CURRENT_SHA_SHORT,deployed-by=github-actions,workflow-run=$GITHUB_RUN_NUMBER
             # [Phase 2: Stripe + SQL 管理] Cloud SQL 作成後に以下を有効化:

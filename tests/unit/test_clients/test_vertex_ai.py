@@ -13,21 +13,32 @@ class TestVertexAIClient:
     """Vertex AIクライアントのテストクラス"""
 
     def test_system_instruction_uses_concise_polite_sarcasm(self):
-        """LINE向けの回答プロンプトが新方針を保持することを確認する。"""
+        """Phase 1回答方針プロンプトが2部構成と辛口表現を保持することを確認する。"""
         from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
 
-        assert "ヘッダーは付けず" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "1行は15文字程度、かつ最大15文字" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "改行を含めて500文字以内" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "質問意図を確認" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "情報は専門職向けに圧縮" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "出力直前に、次の品質確認を内部で" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "QA内容や途中案は表示せず" in DEFAULT_SYSTEM_INSTRUCTION
+        # 2部構成
+        assert "出力は必ず次の2ブロックだけにしてください" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
+
+        # 文字数制限（現在の仕様）
+        assert "全体は原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "本文は通常100〜400字" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約は20〜60字" in DEFAULT_SYSTEM_INSTRUCTION
+
+        # 辛口表現
         assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
         assert "人格や能力ではなく" in DEFAULT_SYSTEM_INSTRUCTION
         assert "辛口表現は1回答につき原則1か所" in DEFAULT_SYSTEM_INSTRUCTION
+
+        # 丁寧さ
+        assert "です・ます" in DEFAULT_SYSTEM_INSTRUCTION
+
+        # 古いフォーマットが含まれていないこと
         assert "儂" not in DEFAULT_SYSTEM_INSTRUCTION
         assert "お前様" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "1行は必ず15文字以内" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "ヘッダーは付けず" not in DEFAULT_SYSTEM_INSTRUCTION
 
     @pytest.mark.asyncio
     async def test_query_passes_default_system_instruction_to_model(self):
@@ -53,43 +64,23 @@ class TestVertexAIClient:
 
         assert model_class.call_args.kwargs["system_instruction"] == client.system_instruction
         model.generate_content.assert_called_once_with(
-            "肩関節外転のROM制限は何を評価しますか？"
+            "ユーザーの質問:\n肩関節外転のROM制限は何を評価しますか？"
         )
-        assert "回答：" not in result["answer"]
-        assert "要約：" not in result["answer"]
-        assert all(len(line) <= 15 for line in result["answer"].splitlines())
+        # 現在の実装では回答：/要約：は残る（これらはLLM出力の一部）
+        # _strip_markdown()はMarkdownのみ削除
+        assert "回答：" in result["answer"] or "要約：" in result["answer"]
 
-    def test_format_line_output_enforces_line_and_total_limits(self):
-        """LINE出力の行長、総文字数、ヘッダー除去、段落間隔を確認する。"""
+    def test_strip_markdown_removes_markdown_formatting(self):
+        """Markdown記法の除去を確認する。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
             client = VertexAIClient()
 
-        raw_text = (
-            "回答：\n"
-            "肩関節外転時の疼痛では上腕骨頭の運動と肩甲骨の代償を確認します。\n\n"
-            "要約：\n"
-            + "評価所見を統合してください。" * 30
-        )
-        result = client._format_line_output(raw_text)
+        markdown_text = "**太字**と`コード`\n## 見出し"
+        result = client._strip_markdown(markdown_text)
 
-        assert "回答：" not in result
-        assert "要約：" not in result
-        assert "\n\n" in result
-        assert len(result) <= 500
-        assert all(len(line) <= 15 for line in result.splitlines())
-
-    def test_format_line_output_prefers_semantic_boundaries(self):
-        """15文字以内で句読点を優先して改行することを確認する。"""
-        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
-            client = VertexAIClient()
-
-        result = client._format_line_output(
-            "外転時痛では、肩甲骨の代償と上腕骨頭の運動を確認します。"
-        )
-        lines = result.splitlines()
-
-        assert lines[0] == "外転時痛では、"
-        assert all(len(line) <= 15 for line in lines)
+        assert "**" not in result
+        assert "`" not in result
+        assert "##" not in result
 
     @pytest.mark.asyncio
     async def test_query_success(self, mock_vertex_ai_response):
