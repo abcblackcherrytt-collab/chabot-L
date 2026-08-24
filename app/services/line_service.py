@@ -564,6 +564,139 @@ class LineService:
             return "***masked***"
         return f"{user_id[:4]}...{user_id[-4:]}"
 
+    async def _get_user_data_for_parallel(
+        self,
+        line_user_id: str,
+        db: Optional[AsyncSession] = None,
+        db_maker: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        並列実行用のユーザーデータ取得（回数制限チェックなし）
+
+        FirestoreアクセスとRAG処理の並列化のために、
+        ユーザー情報・プラン・RAG権限のみを取得します。
+        回数制限チェックは別途 `_check_and_increment_usage()` で行います。
+
+        Args:
+            line_user_id: LINEユーザーID
+            db: データベースセッション（PostgreSQL時のみ使用）
+            db_maker: データベースセッションメーカー（PostgreSQL時）
+
+        Returns:
+            ユーザーデータ辞書
+        """
+        try:
+            user_repo = self._get_user_repository(db)
+            user_dict = await user_repo.find_by_line_user_id(line_user_id)
+
+            if not user_dict:
+                return {
+                    "status": "error",
+                    "message": "ユーザー情報が見つかりません。友だち登録からやり直してください。"
+                }
+
+            # ユーザーアクティブチェック
+            is_user_active = await user_repo.is_active(user_dict['id'])
+            if not is_user_active:
+                return {
+                    "status": "error",
+                    "message": "このアカウントは現在無効です。サポートまでお問い合わせください。"
+                }
+
+            # プラン取得
+            plan = await user_repo.get_subscription_plan(user_dict['id'])
+
+            # RAG権限取得
+            rag_perm_repo = self._get_rag_permission_repository()
+            rag_perm = await rag_perm_repo.get_by_plan(plan)
+
+            corpus_id = None
+            model_name = None
+            if rag_perm:
+                if isinstance(rag_perm, dict):
+                    corpus_id = rag_perm.get('rag_corpus_id')
+                    model_name = rag_perm.get('model_name')
+                else:
+                    corpus_id = rag_perm.rag_corpus_id
+                    model_name = rag_perm.model_name
+
+            return {
+                "status": "success",
+                "user_id": user_dict['id'],
+                "line_user_id": line_user_id,
+                "plan": plan,
+                "corpus_id": corpus_id,
+                "model_name": model_name,
+            }
+
+        except Exception as e:
+            logger.error(f"Error in _get_user_data_for_parallel: {e}")
+            return {
+                "status": "error",
+                "message": "ユーザー情報の取得に失敗しました。"
+            }
+
+    async def _check_and_increment_usage(
+        self,
+        user_id: str,
+        plan: str,
+        db: Optional[AsyncSession] = None,
+        db_maker: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        並列実行用の回数制限チェックとインクリメント
+
+        RAG処理と並列実行した後に、回数制限をチェック・インクリメントします。
+
+        Args:
+            user_id: ユーザーID
+            plan: プラン（free/basic/pro）
+            db: データベースセッション（PostgreSQL時のみ使用）
+            db_maker: データベースセッションメーカー（PostgreSQL時）
+
+        Returns:
+            チェック結果辞書
+        """
+        try:
+            from app.repositories.firestore_usage_repository import FirestoreUsageRepository
+            from app.core.pricing import get_daily_message_limit
+
+            usage_repo = FirestoreUsageRepository()
+            daily_limit = get_daily_message_limit(plan)
+
+            if daily_limit is None:
+                return {"success": True, "current_count": 0, "remaining": None}
+
+            limit_result = await usage_repo.increment_with_limit_check(
+                user_id, plan, daily_limit
+            )
+
+            if not limit_result['success']:
+                return {
+                    "success": False,
+                    "message": limit_result.get('message', '回数制限を超えました'),
+                    "current_count": limit_result.get('current_count'),
+                    "remaining": limit_result.get('remaining'),
+                }
+
+            logger.info(
+                f"Usage count incremented: {limit_result['current_count']}/{daily_limit}, "
+                f"remaining: {limit_result['remaining']}"
+            )
+
+            return {
+                "success": True,
+                "current_count": limit_result['current_count'],
+                "remaining": limit_result['remaining'],
+            }
+
+        except Exception as e:
+            logger.error(f"Error in _check_and_increment_usage: {e}")
+            return {
+                "success": False,
+                "message": "現在、利用回数を確認できません。しばらくしてからもう一度お試しください。"
+            }
+
     async def health_check(self) -> Dict[str, Any]:
         """
         LINEサービスのヘルスチェックを行います
