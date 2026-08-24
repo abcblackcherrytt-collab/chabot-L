@@ -12,8 +12,8 @@
 
 現在は、次の2つを分けて管理する。
 
-1. **本番版**: LINE Bot + Vertex AI RAG のPhase 1がCloud Runで稼働中
-2. **ローカルPhase 2版**: Firestoreによるユーザー管理・回数制限・プラン別コーパス・StripeテストAPIはmainにマージ済み。ただしCloud Runは旧Phase 1リビジョンのまま
+1. **本番版**: LINE Bot + Vertex AI RAG + FirestoreのPhase 2版がCloud Runで稼働中
+2. **次の検証**: 実LINEユーザーで回数制限・プラン別コーパス・follow/message/unfollowをE2E確認する
 
 2026-08-24 作業進捗:
 - **実DB確認**: Firestore Nativeデータベース `chabotline`（`nam5`）の存在を確認
@@ -21,18 +21,17 @@
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
 - **テスト**: Vertex AI 10件、CI必須ゲート（Firestore / LINE / Vertex AI）60件、PostgreSQL Refresh Tokenを除くunit 89件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Runは `chabot-service-00016-kt8`（`GIT_SHA=d602736`）が100%稼働中。今回のPhase 2修正は未デプロイ
+- **本番状態**: Cloud Run `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）へPhase 2をデプロイし、100%トラフィック・`/health` HTTP 200を確認
 - **次ステップ**:
-  1. ローカルで成功したCI品質ゲートをコミットし、GitHub Actionsで再実行する
-  2. Phase 2をCloud Runへデプロイし、`FIRESTORE_DATABASE_ID=chabotline` を確認
-  3. LINE実端末でのE2E検証実施
+  1. LINE実端末でのE2E検証実施
+  2. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
 
 ### 0.1 フェーズ一覧
 
 | Phase | ゴール | データストア | Stripe | 状況 |
 |---|---|---|---|---|
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
-| Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **ローカル修正・実DB初期化済み、本番未デプロイ** |
+| Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化（RAG並列化） | Firestore | - | **次ステップ（Stripeテスト前）** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **コード実装完了・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
@@ -60,10 +59,10 @@
 **本番環境**:
 - [x] Cloud Runサービス `chabot-service` はReady。
 - [x] PR #2 が正常にマージ完了（コミット: `a5359b3`）。
-- [ ] 直近のGitHub Actions（run `31999017607`）は `app.repositories.rag_permission` 欠落で失敗。ローカルには修正ファイルがあるが未コミット・CI未再実行。
-- [ ] Phase 2のCloud Runデプロイ（2026-08-24確認時点では旧リビジョン `chabot-service-00016-kt8`）。
+- [x] GitHub Actions run `32692371297` が品質ゲート・ビルド・Cloud Runデプロイまで成功。
+- [x] Phase 2をCloud Runリビジョン `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）へデプロイし、100%トラフィックを確認。
 - [x] Cloud Runサービスアカウント `chabot-sa@takahashi-451312.iam.gserviceaccount.com` へFirestore権限付与完了。
-- [ ] デプロイ完了後の最新リビジョンと`/health`確認待ち。
+- [x] 最新リビジョンのReady状態と公開`/health` HTTP 200を確認。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
 
@@ -74,14 +73,14 @@
 - [x] Firestore回数制御Transaction化実装（increment_with_limit_check）
 - [x] Stripe解約フロー矛盾解消（Stripe解約→free継続、LINE unfollow→無効化）
 - [x] Cloud Run環境変数Firestore版更新（.env.example、deploy.yml修正）
-- [ ] CI品質ゲート化（Firestore / LINE / Vertex AIの60件はローカル成功。GitHub Actions未再実行・本番未反映）
+- [x] CI品質ゲート化（Firestore / LINE / Vertex AIの60件がGitHub Actions上で成功し、デプロイ完了）
 - [x] Secret Managerシークレット登録済み確認（google-corpus-id関連）
 
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud Runは旧Phase 1リビジョン `chabot-service-00016-kt8`（`GIT_SHA=d602736`）が稼働中。
-- Phase 2コードと2026-08-24のFirestore修正はローカル未コミット・本番未反映。
+- Cloud RunはPhase 2リビジョン `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）が100%稼働中。
+- Phase 2コードと2026-08-24のFirestore修正はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
 
@@ -177,7 +176,7 @@
 
 ### P0-3. Cloud Run環境変数をFirestore版へ更新
 
-現行のデプロイ設定にはFirestore版で必要な設定が不足している。
+Firestore版に必要な設定をデプロイ設定へ追加し、本番リビジョンへの反映を確認した。
 
 - [x] `DATABASE_BACKEND=firestore` (.env.exampleとdeploy.ymlに追加済み)
 - [x] `FIRESTORE_PROJECT_ID=takahashi-451312` (.env.example更新済み)
@@ -314,9 +313,9 @@ RAG処理(2-6秒)         ────────┘
 - [x] Stripe解約時のユーザー状態を修正する
 - [x] Firestore/LINE関連の自動テストを通す（28件成功）
 
-### 🔄 Step 2: Firestore版をステージング検証（進行中）
+### 🔄 Step 2: Firestore版を本番E2E検証（進行中）
 1. [x] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認（2026-08-17 14:37完了）
-2. [ ] Phase 2をCloud Runへデプロイ（PR #2はマージ済みだが、稼働中は旧Phase 1リビジョン）
+2. [x] Phase 2をCloud Runへデプロイ（`chabot-service-00017-5pt`、`GIT_SHA=b19d341`、`/health` HTTP 200）
 3. [x] インポートエラー修正（rag_permission.py作成）
 4. [x] 現行CI品質ゲートのローカルテスト成功（60件）。PostgreSQL Refresh Tokenを除くunitも89件成功
 5. [x] Firestore `chabotline` へ初期データを投入し、3プランを読み戻し確認
@@ -393,13 +392,13 @@ PostgreSQL関連コード、SQLAlchemyモデル、Alembicマイグレーショ�
 
 ### Phase 2完了条件
 
-- [ ] FirestoreのみでCloud Runが安定起動する
+- [x] FirestoreのみでCloud Runが起動し、Ready・`/health` HTTP 200を確認
 - [ ] followでユーザーが一意に作成される
 - [ ] free/basic/proの回数上限が正しく機能する
 - [ ] 同時リクエストでも上限を超えない
 - [ ] プラン別コーパスが正しく選択される
 - [ ] LINE実端末E2Eが成功する
-- [ ] CIの自動テストが成功する
+- [x] CIの自動テストが成功する
 
 ### Phase 3完了条件
 
