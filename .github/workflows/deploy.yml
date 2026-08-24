@@ -57,6 +57,7 @@ jobs:
             tests/unit/test_clients/test_line.py \
             tests/unit/test_clients/test_vertex_ai.py \
             tests/unit/test_repositories/test_firestore_repositories.py \
+            tests/unit/test_services/test_line_webhook_pipeline.py \
             tests/unit/test_services/test_line_service.py \
             tests/unit/test_services/test_rag_service.py \
             -v --tb=short

@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-24（Firestore修正・Vertex AIテスト追従・CI品質ゲート更新・RAG並列化実装完了）
+> **更新日**: 2026-08-24（Firestore修正・CI品質ゲート更新・安全なRAG処理順を検証）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -20,7 +20,7 @@
 - **根本原因修正**: コードが誤って `(default)` を参照していたため、`FIRESTORE_DATABASE_ID=chabotline` を全実行経路へ追加
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
-- **テスト**: Vertex AI 10件、CI必須ゲート（Firestore / LINE / Vertex AI）60件、PostgreSQL Refresh Tokenを除くunit 89件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
+- **テスト**: CI必須ゲート（Firestore / LINE / Vertex AI / Webhook処理順）62件、PostgreSQL Refresh Tokenを除くunit 91件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
 - **本番状態**: Cloud Run `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）へPhase 2をデプロイし、100%トラフィック・`/health` HTTP 200を確認
 - **次ステップ**:
   1. LINE実端末でのE2E検証実施
@@ -32,7 +32,7 @@
 |---|---|---|---|---|
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
-| Phase 2.5 | パフォーマンス最適化（RAG並列化） | Firestore | - | **次ステップ（Stripeテスト前）** |
+| Phase 2.5 | パフォーマンス最適化 | Firestore | - | **[保留] 安全な方式を再設計** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **コード実装完了・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
@@ -47,7 +47,7 @@
   - free: 3件
   - basic: 100件
   - pro: 500件
-- [x] パフォーマンス最適化（RAG並列化）はStripeテストモードの前に実施する。
+- [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
 
 ---
@@ -73,7 +73,7 @@
 - [x] Firestore回数制御Transaction化実装（increment_with_limit_check）
 - [x] Stripe解約フロー矛盾解消（Stripe解約→free継続、LINE unfollow→無効化）
 - [x] Cloud Run環境変数Firestore版更新（.env.example、deploy.yml修正）
-- [x] CI品質ゲート化（Firestore / LINE / Vertex AIの60件がGitHub Actions上で成功し、デプロイ完了）
+- [ ] CI品質ゲート更新（Firestore / LINE / Vertex AI / Webhook処理順の62件はローカル成功、GitHub Actions再実行待ち）
 - [x] Secret Managerシークレット登録済み確認（google-corpus-id関連）
 
 ### 1.2 本番とローカルの差
@@ -160,7 +160,7 @@
 
 - [x] Python 3.14でのSQLAlchemy/FastAPI互換性を確認
 - [x] `google-cloud-firestore` をvenvへインストール
-- [x] 現行品質ゲート対象の自動テストに成功（Firestore / LINE / Vertex AI 60件、PostgreSQL Refresh Tokenを除くunit 89件）
+- [x] 現行品質ゲート対象の自動テストに成功（Firestore / LINE / Vertex AI / Webhook処理順 62件、PostgreSQL Refresh Tokenを除くunit 91件）
 - [保留] PostgreSQL認証のunit / integration / E2Eテスト（現在のFirestore運用とCI品質ゲートの対象外）
 - [x] Firestore非同期I/O・Transaction・障害時案内の自動テストを追加
 - [x] 2026-08-24のテスト結果を本ファイルへ記録
@@ -221,68 +221,18 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] Firestoreだけでアプリを起動できるテストを実施
 - [ ] PostgreSQL専用auth/chatエンドポイントを維持するか、一時停止するか決定
 
-### P0-7. パフォーマンス最適化（RAG並列化）⚠️ デプロイ待ち
+### P0-7. パフォーマンス最適化（安全性再設計）[保留]
 
-現在の処理フローではFirestoreアクセスとRAG処理が逐次実行されており、無駄な待機時間が発生しています。これらを並列化することでレスポンス時間を短縮し、コストも削減できます。
+FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユーザー情報・プラン・回数上限が確定する前にRAGを開始すると、次の回帰が発生するためである。
 
-現在の処理フローではFirestoreアクセスとRAG処理が逐次実行されており、無駄な待機時間が発生しています。これらを並列化することでレスポンス時間を短縮し、コストも削減できます。
+- 上限超過ユーザーでもVertex AIを実行し、不要なコストが発生する
+- basic/proユーザーへfree用コーパスで回答する可能性がある
+- 既存の入力サニタイズとエラー応答経路を迂回する
 
-**現在の処理フロー（逐次）**:
-```
-Firestoreアクセス(100-300ms) → RAG処理(2-6秒) → LINE返信(100-300ms)
-総合: 2.3-6.6秒
-```
-
-**目標の処理フロー（並列）**:
-```
-Firestoreアクセス(100-300ms) ─┐
-                              ├→ 並列実行 → LINE返信(100-300ms)
-RAG処理(2-6秒)         ────────┘
-総合: 2.0-6.3秒（-100-300ms）
-```
-
-- [x] FirestoreアクセスとRAG処理の並列化実装
-  - `line.py` の `_process_line_events` 関数修正
-  - `asyncio.gather` での並列実行
-  - ユーザーデータ取得とRAGクエリの同時実行
-  - ヘルパーメソッド追加: `_get_user_data_for_parallel`, `_check_and_increment_usage`
-- [x] エラーハンドリングの強化
-  - 並列処理時の例外処理（return_exceptions=True）
-  - Firestore/RAGの一方失敗時のフォールバック
-  - 回数制限チェックの独立性確保
-- [x] テストと検証
-  - 並列処理ユニットテスト追加（`tests/unit/test_parallel_rag/test_line_parallel.py`）
-  - タイミング検証、例外処理、統合シナリオテスト
-  - 構文チェック完了
-- [ ] ローカルでの並列処理動作確認
-- [ ] レイテンシ計測（改善前後の比較）
-- [ ] Cloud Runへのデプロイ
-- [ ] 本番でのレスポンス時間確認
-- [ ] エラーレートの監視
-
-**期待効果**:
-- レスポンス時間: 2.3-6.6秒 → 2.0-6.3秒（-100-300ms）
-- コスト: 月間5-15%削減（処理時間短縮によるCloud Run請求時間削減）
-- 追加インフラコスト: なし
-- 実装難易度: 中（非同期処理のエラーハンドリングが必要）
-
-**実装完了日**: 2026-08-24
-
-**⚠️ デプロイ状況（2026-08-24）**:
-- コミット完了: `ed480fe perf(parallel): implement RAG parallelization with Firestore access`
-- 変更内容: 4 files changed, 587 insertions(+), 56 deletions(-)
-- **認証エラー**: GitHubへのプッシュでSSH/HTTPS認証エラー発生
-- **必要なアクション**: 認証設定を確認し、`git push origin main` を実行
-- **認証解決方法**:
-  1. SSH鍵確認: `ls -la ~/.ssh/id_*.pub`
-  2. GitHub CLI再認証: `gh auth login`
-  3. パーソナルアクセストークン使用: `git push https://<TOKEN>@github.com/...`
-
-**次のステップ**:
-1. 認証問題を解決
-2. `git push origin main` でGitHubへプッシュ
-3. GitHub Actionsが自動的にCloud Runへデプロイ
-4. 本番でのレスポンス時間とエラーレートを監視
+- [x] 安全な処理順へ修正（ユーザー・プラン・上限確認 → RAG → LINE返信）
+- [x] 上限到達時にRAGを呼ばない回帰テストを追加
+- [x] 確定済み `corpus_id` / `model_name` / `user_id` をRAGへ渡す回帰テストを追加
+- [保留] レイテンシ最適化は、正確性と課金制御を維持できる別方式で再設計する
 
 ---
 
@@ -340,49 +290,17 @@ RAG処理(2-6秒)         ────────┘
 1. [x] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認（2026-08-17 14:37完了）
 2. [x] Phase 2をCloud Runへデプロイ（`chabot-service-00017-5pt`、`GIT_SHA=b19d341`、`/health` HTTP 200）
 3. [x] インポートエラー修正（rag_permission.py作成）
-4. [x] 現行CI品質ゲートのローカルテスト成功（60件）。PostgreSQL Refresh Tokenを除くunitも89件成功
+4. [x] 現行CI品質ゲートのローカルテスト成功（62件）。PostgreSQL Refresh Tokenを除くunitも91件成功
 5. [x] Firestore `chabotline` へ初期データを投入し、3プランを読み戻し確認
 6. [ ] free 3件 / basic 100件 / pro 500件を確認
 7. [ ] プラン別コーパス切替を確認
 8. [ ] LINE実端末でfollow/message/unfollowを確認
 
-### ⚡ Step 2.5: パフォーマンス最適化（RAG並列化）
+### Step 2.5: パフォーマンス最適化 [保留]
 
-**目的**: FirestoreアクセスとRAG処理を並列化し、レスポンス時間を100-300ms短縮
-
-1. [x] FirestoreアクセスとRAG処理の並列化実装
-   - `line.py` の `_process_line_events` 関数修正
-   - `asyncio.gather` での並列実行
-   - ユーザーデータ取得とRAGクエリの同時実行
-   - ヘルパーメソッド追加: `_get_user_data_for_parallel`, `_check_and_increment_usage`
-
-2. [x] エラーハンドリングの強化
-   - 並列処理時の例外処理（return_exceptions=True）
-   - Firestore/RAGの一方失敗時のフォールバック
-   - 回数制限チェックの独立性確保
-
-3. [x] テストと検証
-   - 並列処理ユニットテスト追加（`tests/unit/test_parallel_rag/test_line_parallel.py`）
-   - タイミング検証、例外処理、統合シナリオテスト
-   - 構文チェック完了
-
-4. [ ] ローカルでの並列処理動作確認
-5. [ ] レイテンシ計測（改善前後の比較）
-6. [ ] Cloud Runへのデプロイ
-7. [ ] 本番でのレスポンス時間確認
-8. [ ] エラーレートの監視
-
-**期待効果**:
-- レスポンス時間: 2.3-6.6秒 → 2.0-6.3秒（-100-300ms）
-- コスト: 月間5-15%削減
-
-**実装完了日**: 2026-08-24
-
-**⚠️ デプロイ待ち（2026-08-24）**:
-- コミット完了: `ed480fe` (local only)
-- 認証問題によりGitHubへのプッシュが保留中
-- 認証解決後に `git push origin main` でデプロイ開始
-- 追加インフラコスト: なし
+- [x] 直接並列化案の正確性・課金上の問題を確認
+- [x] 安全な逐次処理と回帰テストへ戻す
+- [保留] 実測レイテンシを取得後、安全な最適化方式を再検討
 
 ### Step 3: Stripeテストモード
 
@@ -464,6 +382,7 @@ pytest \
   tests/unit/test_clients/test_line.py \
   tests/unit/test_clients/test_vertex_ai.py \
   tests/unit/test_repositories/test_firestore_repositories.py \
+  tests/unit/test_services/test_line_webhook_pipeline.py \
   tests/unit/test_services/test_line_service.py \
   tests/unit/test_services/test_rag_service.py \
   -v --tb=short
