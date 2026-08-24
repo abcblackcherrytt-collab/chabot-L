@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-24（Firestore修正・CI品質ゲート更新・安全なRAG処理順を検証）
+> **更新日**: 2026-08-24（安全なRAG処理順をCloud Runへデプロイ・検証）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -21,7 +21,7 @@
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
 - **テスト**: CI必須ゲート（Firestore / LINE / Vertex AI / Webhook処理順）62件、PostgreSQL Refresh Tokenを除くunit 91件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Run `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）へPhase 2をデプロイし、100%トラフィック・`/health` HTTP 200を確認
+- **本番状態**: Cloud Run `chabot-service-00018-jrs`（`GIT_SHA=f031631`）へ安全なRAG処理順を含むPhase 2をデプロイし、100%トラフィック・`/health` HTTP 200・デプロイ後ERRORログ0件を確認
 - **次ステップ**:
   1. LINE実端末でのE2E検証実施
   2. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
@@ -59,8 +59,8 @@
 **本番環境**:
 - [x] Cloud Runサービス `chabot-service` はReady。
 - [x] PR #2 が正常にマージ完了（コミット: `a5359b3`）。
-- [x] GitHub Actions run `32692371297` が品質ゲート・ビルド・Cloud Runデプロイまで成功。
-- [x] Phase 2をCloud Runリビジョン `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）へデプロイし、100%トラフィックを確認。
+- [x] GitHub Actions run `32701466958` が品質ゲート・ビルド・Cloud Runデプロイまで成功。
+- [x] 安全なRAG処理順を含むPhase 2をCloud Runリビジョン `chabot-service-00018-jrs`（`GIT_SHA=f031631`）へデプロイし、100%トラフィックを確認。
 - [x] Cloud Runサービスアカウント `chabot-sa@takahashi-451312.iam.gserviceaccount.com` へFirestore権限付与完了。
 - [x] 最新リビジョンのReady状態と公開`/health` HTTP 200を確認。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
@@ -73,13 +73,13 @@
 - [x] Firestore回数制御Transaction化実装（increment_with_limit_check）
 - [x] Stripe解約フロー矛盾解消（Stripe解約→free継続、LINE unfollow→無効化）
 - [x] Cloud Run環境変数Firestore版更新（.env.example、deploy.yml修正）
-- [ ] CI品質ゲート更新（Firestore / LINE / Vertex AI / Webhook処理順の62件はローカル成功、GitHub Actions再実行待ち）
+- [x] CI品質ゲート更新（Firestore / LINE / Vertex AI / Webhook処理順の62件がローカル・GitHub Actionsともに成功）
 - [x] Secret Managerシークレット登録済み確認（google-corpus-id関連）
 
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud RunはPhase 2リビジョン `chabot-service-00017-5pt`（`GIT_SHA=b19d341`）が100%稼働中。
+- Cloud RunはPhase 2リビジョン `chabot-service-00018-jrs`（`GIT_SHA=f031631`）が100%稼働中。
 - Phase 2コードと2026-08-24のFirestore修正はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
@@ -288,7 +288,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 ### 🔄 Step 2: Firestore版を本番E2E検証（進行中）
 1. [x] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認（2026-08-17 14:37完了）
-2. [x] Phase 2をCloud Runへデプロイ（`chabot-service-00017-5pt`、`GIT_SHA=b19d341`、`/health` HTTP 200）
+2. [x] 安全なRAG処理順を含むPhase 2をCloud Runへデプロイ（`chabot-service-00018-jrs`、`GIT_SHA=f031631`、`/health` HTTP 200、デプロイ後ERRORログ0件）
 3. [x] インポートエラー修正（rag_permission.py作成）
 4. [x] 現行CI品質ゲートのローカルテスト成功（62件）。PostgreSQL Refresh Tokenを除くunitも91件成功
 5. [x] Firestore `chabotline` へ初期データを投入し、3プランを読み戻し確認
