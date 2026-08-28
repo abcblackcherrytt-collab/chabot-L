@@ -4,14 +4,15 @@ FastAPIのDependsで使用する認証・認可の共通関数を定義します
 """
 
 import logging
-from typing import Annotated, Union
+from datetime import datetime
+from typing import Annotated, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import get_optional_db
 from app.models.user import User
 from app.repositories.user import UserRepository
 from app.repositories.firestore_user_repository import FirestoreUserRepository
@@ -25,7 +26,7 @@ security = HTTPBearer()
 
 
 def get_user_repository(
-    db: Annotated[AsyncSession, Depends(get_db)]
+    db: Annotated[Optional[AsyncSession], Depends(get_optional_db)]
 ) -> BaseUserRepository:
     """
     データベースバックエンドに応じたユーザーリポジトリを返します
@@ -39,6 +40,8 @@ def get_user_repository(
     if settings.database_backend == "firestore":
         return FirestoreUserRepository()
     elif settings.database_backend == "postgresql":
+        if db is None:
+            raise RuntimeError("PostgreSQL session is not available")
         return UserRepository(db)
     else:
         raise ValueError(f"Unsupported database backend: {settings.database_backend}")
@@ -91,14 +94,6 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not payload:
-        logger.warning(f"Invalid access token attempt")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
     user_id = payload.get("sub")
     if not user_id:
         logger.warning("Access token payload missing 'sub' claim")
@@ -129,6 +124,13 @@ async def get_current_user(
             )
 
         # 辞書からUserオブジェクトクト作成（簡易実装）
+        created_at = user_dict.get('created_at')
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        updated_at = user_dict.get('updated_at')
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at)
+
         user = User(
             id=user_dict['id'],
             line_user_id=user_dict.get('line_user_id'),
@@ -136,7 +138,10 @@ async def get_current_user(
             display_name=user_dict.get('display_name'),
             role=user_dict.get('role', 'user'),
             is_active=user_dict.get('is_active', True),
+            created_at=created_at,
+            updated_at=updated_at,
         )
+        user.subscription_plan = user_dict.get('subscription_plan', 'free')
         return user
 
     else:

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 
-from app.core.config import settings
+from app.core.firestore import get_firestore_client_sync
 from app.core.pricing import get_daily_message_limit
 
 logger = logging.getLogger(__name__)
@@ -28,10 +28,7 @@ class FirestoreUsageRepository:
 
     def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestoreクライアントを初期化します"""
-        self.db = client or firestore.AsyncClient(
-            project=settings.firestore_project_id,
-            database=settings.firestore_database_id,
-        )
+        self.db = client or get_firestore_client_sync()
         self.daily_collection_name = 'usage_daily'
         logger.info("Firestore usage repository initialized")
 

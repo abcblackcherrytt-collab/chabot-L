@@ -40,6 +40,21 @@ class TestVertexAIClient:
         assert "1行は必ず15文字以内" not in DEFAULT_SYSTEM_INSTRUCTION
         assert "ヘッダーは付けず" not in DEFAULT_SYSTEM_INSTRUCTION
 
+    def test_classification_client_is_reused(self):
+        """分類ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
+        with (
+            patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"),
+            patch("app.clients.vertex_ai.genai.Client") as client_class,
+        ):
+            client_class.return_value = MagicMock()
+            client = VertexAIClient()
+
+            first = client._get_classification_client()
+            second = client._get_classification_client()
+
+        assert first is second
+        client_class.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_query_passes_default_system_instruction_to_model(self):
         """RAG回答生成モデルへ既定のシステムプロンプトが渡されることを確認する。"""

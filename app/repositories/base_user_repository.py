@@ -111,6 +111,11 @@ class BaseUserRepository(ABC):
         """
         pass
 
+    @abstractmethod
+    async def activate_user(self, user_id: str) -> None:
+        """既存ユーザーを再フォロー時に再有効化する。"""
+        pass
+
     # ===== Stripe 顧客管理関連メソッド =====
 
     @abstractmethod

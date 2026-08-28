@@ -3,6 +3,7 @@
 JWTトークンの生成・検証・失効管理を行うサービスを定義します。
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict, cast
@@ -115,7 +116,7 @@ class AuthService:
         )
 
         # リフレッシュトークンをデータベースに保存
-        refresh_token_hash = hash_token(refresh_token)
+        refresh_token_hash = await asyncio.to_thread(hash_token, refresh_token)
         await self.token_repo.create(
             {
                 "id": refresh_jti,
@@ -208,7 +209,11 @@ class AuthService:
             return None
 
         # トークンハッシュを確認（タイミング攻撃対策済みの検証方式を使用）
-        if not verify_token_hash(refresh_token, existing_token.token_hash):
+        if not await asyncio.to_thread(
+            verify_token_hash,
+            refresh_token,
+            existing_token.token_hash,
+        ):
             return None
 
         # ユーザーを取得
@@ -236,7 +241,10 @@ class AuthService:
         )
 
         # 新しいリフレッシュトークンをデータベースに保存
-        new_refresh_token_hash = hash_token(new_refresh_token)
+        new_refresh_token_hash = await asyncio.to_thread(
+            hash_token,
+            new_refresh_token,
+        )
         new_token_entity = await self.token_repo.create(
             {
                 "id": new_refresh_jti,

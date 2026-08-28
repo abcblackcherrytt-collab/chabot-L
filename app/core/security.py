@@ -6,12 +6,12 @@ JWTの生成・検証・失効管理、LINE署名検証を行います。
 import base64
 import hmac
 import hashlib
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import jwt as pyjwt
+import httpx
 from jwt import PyJWTError
 from passlib.context import CryptContext
 
@@ -252,15 +252,15 @@ def verify_webhook_signature(
     return hmac.compare_digest(received_signature, expected_signature)
 
 
-def verify_line_id_token(
+async def verify_line_id_token(
     id_token: str,
     channel_id: str,
+    nonce: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     LINE Login の ID トークンを検証します
 
-    OIDC仕様に基づき、ID トークンの署名・クレームを検証します。
-    LINE PlatformはRS256（RSA + SHA-256）を使用します。
+    LINE公式の検証APIで署名とOIDCクレームを検証します。
 
     Args:
         id_token: LINE Login から取得したID トークン
@@ -273,57 +273,36 @@ def verify_line_id_token(
         return None
 
     try:
-        # ヘッダーをデコード（署名検証のため）
-        parts = id_token.split(".")
-        if len(parts) != 3:
-            logger.warning("Invalid ID token format")
+        verify_data = {"id_token": id_token, "client_id": channel_id}
+        if nonce:
+            verify_data["nonce"] = nonce
+
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            response = await http_client.post(
+                "https://api.line.me/oauth2/v2.1/verify",
+                data=verify_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        if response.status_code != 200:
+            logger.warning("LINE ID token verification rejected: %s", response.status_code)
             return None
 
-        header_b64 = parts[0]
-        header_json = base64.urlsafe_b64decode(header_b64 + "==")
-        header = json.loads(header_json)
-
-        if header.get("alg") != "RS256":
-            logger.warning(f"Unsupported algorithm: {header.get('alg')}")
-            return None
-
-        # ペイロードをデコード（署名検証なしで中身を確認）
-        payload_b64 = parts[1]
-        payload_json = base64.urlsafe_b64decode(payload_b64 + "==")
-        payload = json.loads(payload_json)
-
-        # クレームの検証
-        now = datetime.now(timezone.utc)
-
-        # issuer の検証
+        payload = response.json()
         if payload.get("iss") != "https://access.line.me":
-            logger.warning(f"Invalid issuer: {payload.get('iss')}")
+            logger.warning("Invalid LINE ID token issuer")
             return None
-
-        # audience の検証
         if payload.get("aud") != channel_id:
-            logger.warning("Audience mismatch")
+            logger.warning("LINE ID token audience mismatch")
             return None
-
-        # 有効期限の検証
-        exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < now:
-            logger.warning("ID token expired")
+        if nonce and payload.get("nonce") != nonce:
+            logger.warning("LINE ID token nonce mismatch")
             return None
-
-        # 発行時刻の検証（5分以上前は拒否）
-        iat = payload.get("iat")
-        if iat and (now - datetime.fromtimestamp(iat, tz=timezone.utc)).total_seconds() > 300:
-            logger.warning("ID token too old")
+        if not payload.get("sub"):
+            logger.warning("LINE ID token subject is missing")
             return None
-
-        # TODO: RS256署名の検証を実装
-        # 本番運用時は LINE の公開鍵（JWKS）を取得して署名を検証する必要があります
-        # https://api.line.me/oauth2/v2.1/certs から公開鍵を取得
-        logger.warning("ID token signature verification not yet implemented")
-
         return payload
 
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
         logger.error(f"ID token verification failed: {e}")
         return None

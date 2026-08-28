@@ -108,15 +108,10 @@ async def send_message(
     rag_service = http_request.app.state.rag_service
 
     # Phase 2: ユーザーのプラン → RAG 権限（corpus_id/model_name）解決
-    plan = "free"
-    if current_user.subscriptions:
-        plan = current_user.subscriptions[0].plan or "free"
+    plan = getattr(current_user, "subscription_plan", None) or "free"
 
     # Firestore用プラン解決（user_repo経由でプラン取得）
     from app.repositories.firestore_rag_permission_repository import FirestoreRagPermissionRepository
-    from app.core.deps import get_user_repository
-
-    user_repo = await get_user_repository()
     rag_perm_repo = FirestoreRagPermissionRepository()
     rag_perm = await rag_perm_repo.get_by_plan(plan)
     corpus_id = rag_perm.get('rag_corpus_id') if rag_perm else None

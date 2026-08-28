@@ -5,6 +5,7 @@ LINE Messaging APIからのWebhookイベントを処理します。
 
 import json
 import logging
+import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -63,6 +64,7 @@ async def _process_line_events(
                 and result.get("reply_token")
             ):
                 try:
+                    rag_started = time.perf_counter()
                     rag_result = await rag_service.query(
                         text=result["message"],
                         max_results=10,
@@ -73,6 +75,10 @@ async def _process_line_events(
                     answer = rag_result.get(
                         "answer",
                         "申し訳ありません、回答を生成できませんでした。",
+                    )
+                    logger.info(
+                        "LINE RAG latency: %.1fms",
+                        (time.perf_counter() - rag_started) * 1000,
                     )
                 except Exception as e:
                     logger.error(f"RAG query failed: {e}")

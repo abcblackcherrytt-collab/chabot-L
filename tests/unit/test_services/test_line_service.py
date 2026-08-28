@@ -44,6 +44,7 @@ def line_service(mock_line_client, monkeypatch):
     user_repo.is_active = AsyncMock(return_value=True)
     user_repo.get_subscription_plan = AsyncMock(return_value="free")
     user_repo.deactivate_user = AsyncMock()
+    user_repo.activate_user = AsyncMock()
 
     rag_permission_repo = MagicMock()
     rag_permission_repo.get_by_plan = AsyncMock(return_value={
@@ -70,7 +71,10 @@ def line_service(mock_line_client, monkeypatch):
         "app.repositories.firestore_usage_repository.FirestoreUsageRepository",
         lambda: usage_repo,
     )
+    revoke_all = AsyncMock(return_value=1)
+    monkeypatch.setattr(service, "_revoke_all_user_tokens", revoke_all)
     service._test_usage_repo = usage_repo
+    service._test_revoke_all = revoke_all
     return service
 
 
@@ -92,6 +96,9 @@ class TestProcessWebhookEvent:
         assert result["status"] == "processed"
         assert result["message"] == "こんにちは"
         assert result["line_user_id"] == "U_test123"
+        user_repo = line_service._get_user_repository()
+        user_repo.is_active.assert_not_awaited()
+        user_repo.get_subscription_plan.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_message_event_non_text(self, line_service, mock_line_client):
@@ -135,6 +142,9 @@ class TestProcessWebhookEvent:
 
         assert result["status"] == "processed"
         assert result["action"] == "unfollow"
+        user_repo = line_service._get_user_repository()
+        user_repo.deactivate_user.assert_awaited_once_with("user-123")
+        line_service._test_revoke_all.assert_awaited_once_with("user-123", None)
 
     @pytest.mark.asyncio
     async def test_unhandled_event(self, line_service):
@@ -175,6 +185,27 @@ class TestFollowEvent:
         result = await line_service._handle_follow_event(event, db_session)
         assert result["status"] == "processed"
         mock_line_client.reply_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refollow_reactivates_existing_user(self, line_service, db_session):
+        """unfollow後の再フォローで既存ユーザーIDを再有効化すること。"""
+        user_repo = line_service._get_user_repository()
+        user_repo.find_by_line_user_id.return_value = {
+            "id": "user-123",
+            "line_user_id": "U_test123",
+            "is_active": False,
+        }
+        event = {
+            "type": "follow",
+            "replyToken": "test_token",
+            "source": {"userId": "U_test123"},
+        }
+
+        result = await line_service._handle_follow_event(event, db_session)
+
+        assert result["status"] == "processed"
+        user_repo.activate_user.assert_awaited_once_with("user-123")
+        user_repo.create_line_user.assert_not_awaited()
 
 
 class TestMessageEvent:

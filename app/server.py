@@ -14,6 +14,7 @@ from app.api.v1 import auth_router, chat_router, stripe_webhook_router, subscrip
 from app.api.v1.auth_line import router as line_auth_router
 from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
+from app.core.firestore import close_firestore_client, get_firestore_client
 from app.services.line_service import LineService
 from app.services.rag_service import RAGService
 
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
     # 起動時の処理
     logger.info(f"Starting {settings.app_name} ({settings.app_env})")
 
+    if settings.database_backend == "firestore":
+        await get_firestore_client()
+
     # RAGサービスを初期化（アプリケーション全体で再利用）
     logger.info("Initializing RAG service...")
     app.state.rag_service = RAGService()
@@ -79,6 +83,8 @@ async def lifespan(app: FastAPI):
     # LINE クライアントのHTTP接続を閉じる
     if hasattr(app.state, "line_service") and app.state.line_service:
         await app.state.line_service.client.close()
+    if settings.database_backend == "firestore":
+        await close_firestore_client()
 
 
 # FastAPIアプリケーション作成

@@ -10,6 +10,7 @@ Phase 2: ユーザー管理・サブスクリプション連携を追加。詳�
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +88,24 @@ class LineService:
             return RagPermissionRepository(None)
         else:
             raise ValueError(f"Unsupported database backend: {settings.database_backend}")
+
+    async def _revoke_all_user_tokens(
+        self,
+        user_id: str,
+        db: Optional[AsyncSession] = None,
+    ) -> int:
+        """LINE unfollow時にログイン中の全セッションを失効させる。"""
+        if settings.database_backend == "firestore":
+            from app.services.firestore_auth_service import FirestoreAuthService
+
+            return await FirestoreAuthService().revoke_all_user_tokens(user_id)
+
+        if db is None:
+            raise RuntimeError("PostgreSQL session is unavailable")
+
+        from app.services.auth_service import AuthService
+
+        return await AuthService(db).revoke_all_user_tokens(user_id)
 
     async def process_webhook_event(
         self,
@@ -169,6 +188,7 @@ class LineService:
         logger.info(
             f"Processing message from LINE user: {self._mask_user_id(line_user_id)}"
         )
+        pre_rag_started = time.perf_counter()
 
         # Phase 2: ユーザー特定 → プラン → RAG 権限（corpus_id/model_name）解決
         user_repo = self._get_user_repository(db)
@@ -177,7 +197,9 @@ class LineService:
         from app.repositories.firestore_usage_repository import FirestoreUsageRepository
         usage_repo = FirestoreUsageRepository()
 
+        user_lookup_started = time.perf_counter()
         user_dict = await user_repo.find_by_line_user_id(line_user_id)
+        user_lookup_ms = (time.perf_counter() - user_lookup_started) * 1000
 
         # ユーザーが見つからない場合はエラー（本来はfollowイベントで作成されているはず）
         if not user_dict:
@@ -187,21 +209,20 @@ class LineService:
             )
             return {"status": "error", "reason": "user_not_found"}
 
-        # ユーザーが非アクティブな場合は案内
-        is_user_active = await user_repo.is_active(user_dict['id'])
-        if not is_user_active:
+        # 最初のユーザー取得結果を再利用し、同一ドキュメントの再読込を避ける。
+        if not user_dict.get('is_active', False):
             await self._send_reply(
                 reply_token,
                 "このアカウントは現在無効です。サポートまでお問い合わせください。"
             )
             return {"status": "skipped", "reason": "user_inactive"}
-        plan = "free"
-        if user_dict:
-            plan = await user_repo.get_subscription_plan(user_dict['id'])
+        plan = user_dict.get('subscription_plan') or "free"
 
         # データベースバックエンドに応じたRAG権限リポジトリを使用
         rag_perm_repo = self._get_rag_permission_repository()
+        permission_started = time.perf_counter()
         rag_perm = await rag_perm_repo.get_by_plan(plan)
+        permission_ms = (time.perf_counter() - permission_started) * 1000
 
         # Firestore版とPostgreSQL版でデータ形式を統一
         corpus_id = None
@@ -225,10 +246,13 @@ class LineService:
         )
 
         # 全プランで1日あたりのメッセージ上限をチェック・インクリメントを原子的に実行
+        usage_ms = 0.0
         if daily_limit is not None:
+            usage_started = time.perf_counter()
             limit_result = await usage_repo.increment_with_limit_check(
                 user_dict['id'], plan, daily_limit
             )
+            usage_ms = (time.perf_counter() - usage_started) * 1000
 
             if not limit_result['success']:
                 if limit_result.get('error'):
@@ -269,6 +293,15 @@ class LineService:
                 f"Message count incremented: {limit_result['current_count']}/{daily_limit}, "
                 f"remaining: {limit_result['remaining']}"
             )
+
+        logger.info(
+            "LINE pre-RAG latency: user_lookup_ms=%.1f, permission_ms=%.1f, "
+            "usage_ms=%.1f, total_ms=%.1f",
+            user_lookup_ms,
+            permission_ms,
+            usage_ms,
+            (time.perf_counter() - pre_rag_started) * 1000,
+        )
 
         return {
             "status": "processed",
@@ -331,7 +364,9 @@ class LineService:
                 f"Created user for line_user_id={self._mask_user_id(line_user_id)}"
             )
         else:
-            # 既存ユーザーの場合、再有効化（Phase 3 で Stripe 連携時に有効化）
+            # unfollow後の再フォローでは既存IDを維持して再有効化する。
+            if not user_dict.get("is_active", False):
+                await user_repo.activate_user(user_dict["id"])
             logger.info(
                 f"Existing user found: {self._mask_user_id(line_user_id)}"
             )
@@ -382,6 +417,7 @@ class LineService:
         if user_dict:
             # ユーザーを無効化
             await user_repo.deactivate_user(user_dict['id'])
+            await self._revoke_all_user_tokens(user_dict['id'], db)
             logger.info(f"Deactivated user {user_dict['id']} after LINE unfollow")
 
         return {

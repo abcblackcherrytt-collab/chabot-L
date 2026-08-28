@@ -37,7 +37,10 @@ class RefreshTokenRequest(BaseModel):
     トークンリフレッシュリクエストスキーマ
     """
 
-    refresh_token: str = Field(..., description="リフレッシュトークン")
+    refresh_token: Optional[str] = Field(
+        default=None,
+        description="リフレッシュトークン（Cookie利用時は省略可能）",
+    )
 
 
 class RefreshTokenResponse(BaseModel):
@@ -46,7 +49,10 @@ class RefreshTokenResponse(BaseModel):
     """
 
     access_token: str = Field(..., description="新しいアクセストークン")
-    refresh_token: str = Field(..., description="新しいリフレッシュトークン")
+    refresh_token: Optional[str] = Field(
+        default=None,
+        description="新しいリフレッシュトークン（Cookie利用時はレスポンスから除外）",
+    )
     token_type: str = Field(default="Bearer", description="トークンタイプ")
     expires_in: int = Field(..., description="アクセストークンの有効期限（秒）")
 
@@ -56,7 +62,10 @@ class LogoutRequest(BaseModel):
     ログアウトリクエストスキーマ
     """
 
-    refresh_token: str = Field(..., description="リフレッシュトークン")
+    refresh_token: Optional[str] = Field(
+        default=None,
+        description="リフレッシュトークン（Cookie利用時は省略可能）",
+    )
 
 
 class LogoutResponse(BaseModel):

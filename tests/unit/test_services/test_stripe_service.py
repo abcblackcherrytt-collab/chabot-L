@@ -4,7 +4,7 @@ Stripeサービスのユニットテスト
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.stripe_service import StripeService
 
@@ -225,7 +225,17 @@ class TestStripeService:
             },
         }
 
-        result = await service.process_webhook_event(event)
+        with (
+            patch(
+                "app.repositories.firestore_user_repository.FirestoreUserRepository"
+            ) as user_repo_class,
+            patch("app.services.line_service.LineService") as line_service_class,
+        ):
+            user_repo_class.return_value.find_by_stripe_customer_id = AsyncMock(
+                return_value=None
+            )
+            line_service_class.return_value.send_subscription_notification = AsyncMock()
+            result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
@@ -249,11 +259,28 @@ class TestStripeService:
                 "object": {
                     "id": "sub_test123",
                     "customer": "cus_test123",
+                    "items": {
+                        "data": [{"price": {"id": "price_test_basic"}}]
+                    },
                 }
             },
         }
 
-        result = await service.process_webhook_event(event)
+        with (
+            patch(
+                "app.repositories.firestore_user_repository.FirestoreUserRepository"
+            ) as user_repo_class,
+            patch("app.services.line_service.LineService") as line_service_class,
+            patch("app.core.pricing.get_plan_from_price_id", return_value="basic"),
+        ):
+            user_repo = user_repo_class.return_value
+            user_repo.find_by_stripe_customer_id = AsyncMock(return_value={
+                "id": "user-123",
+                "line_user_id": "U_test123",
+            })
+            user_repo.update_subscription_plan = AsyncMock()
+            line_service_class.return_value.send_subscription_notification = AsyncMock()
+            result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()
@@ -312,7 +339,20 @@ class TestStripeService:
             },
         }
 
-        result = await service.process_webhook_event(event)
+        with (
+            patch(
+                "app.repositories.firestore_user_repository.FirestoreUserRepository"
+            ) as user_repo_class,
+            patch("app.services.line_service.LineService") as line_service_class,
+        ):
+            user_repo = user_repo_class.return_value
+            user_repo.find_by_stripe_customer_id = AsyncMock(return_value={
+                "id": "user-123",
+                "line_user_id": "U_test123",
+            })
+            user_repo.update_subscription_plan = AsyncMock()
+            line_service_class.return_value.send_subscription_notification = AsyncMock()
+            result = await service.process_webhook_event(event)
 
         assert result is True
         mock_client.mark_event_processed.assert_called_once()

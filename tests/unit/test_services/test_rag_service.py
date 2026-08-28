@@ -37,6 +37,13 @@ class TestRAGService:
         assert result["denied"] is False
         assert result["user_id"] == "user123"
         assert result["metadata"]["source"] == "test"
+        mock_client.query.assert_awaited_once_with(
+            text="What is the meaning of life?",
+            max_results=5,
+            include_context=True,
+            corpus_id=None,
+            model_name=None,
+        )
 
     @pytest.mark.asyncio
     async def test_query_denied(self, mock_vertex_ai_denied_response):

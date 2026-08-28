@@ -5,12 +5,12 @@ Firestoreをデータベースバックエンドとして使用するユーザ�
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
-from app.core.config import settings
+from app.core.firestore import get_firestore_client_sync
 from app.repositories.base_user_repository import BaseUserRepository
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,7 @@ class FirestoreUserRepository(BaseUserRepository):
 
     def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestoreクライアントを初期化します"""
-        self.db = client or firestore.AsyncClient(
-            project=settings.firestore_project_id,
-            database=settings.firestore_database_id,
-        )
+        self.db = client or get_firestore_client_sync()
         logger.info("Firestore user repository initialized")
 
     async def find_by_line_user_id(self, line_user_id: str) -> Optional[Dict[str, Any]]:
@@ -221,6 +218,21 @@ class FirestoreUserRepository(BaseUserRepository):
 
         except Exception as e:
             logger.error(f"Error deactivating user: {e}")
+            raise
+
+    async def activate_user(self, user_id: str) -> None:
+        """再フォローした既存ユーザーを有効化する。"""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            await self.db.collection('users').document(user_id).update({
+                'is_active': True,
+                'deactivated_at': None,
+                'reactivated_at': now,
+                'updated_at': now,
+            })
+            logger.info(f"Activated user: {user_id}")
+        except Exception as e:
+            logger.error(f"Error activating user: {e}")
             raise
 
     # ===== Stripe 顧客管理関連メソッド =====

@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-24（安全なRAG処理順をCloud Runへデプロイ・検証）
+> **更新日**: 2026-08-28（LINE Loginセッション永続化・認証強化をローカル実装・検証）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -22,6 +22,10 @@
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
 - **テスト**: CI必須ゲート（Firestore / LINE / Vertex AI / Webhook処理順）62件、PostgreSQL Refresh Tokenを除くunit 91件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
 - **本番状態**: Cloud Run `chabot-service-00018-jrs`（`GIT_SHA=f031631`）へ安全なRAG処理順を含むPhase 2をデプロイし、100%トラフィック・`/health` HTTP 200・デプロイ後ERRORログ0件を確認
+- **ローカル最適化（本番未反映）**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを実装
+- **ローカル認証（本番未反映）**: LINE Loginの既存Firestoreユーザー再利用とRefresh TokenのFirestore保存・ローテーションを実装
+- **ローカル認証強化（本番未反映）**: Refresh TokenのHttpOnly Cookie化、Cookieによる自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を実装
+- **ローカル検証**: 拡張CI品質ゲート75件、PostgreSQL Refresh Tokenを除くunit 106件が成功。LINE Login / Firestore実環境E2Eは未確認
 - **次ステップ**:
   1. LINE実端末でのE2E検証実施
   2. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
@@ -32,7 +36,7 @@
 |---|---|---|---|---|
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
-| Phase 2.5 | パフォーマンス最適化 | Firestore | - | **[保留] 安全な方式を再設計** |
+| Phase 2.5 | パフォーマンス最適化 | Firestore | - | **ローカル実装・検証済み、本番未反映** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **コード実装完了・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
@@ -48,6 +52,7 @@
   - basic: 100件
   - pro: 500件
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
+- [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
 
 ---
@@ -221,7 +226,7 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] Firestoreだけでアプリを起動できるテストを実施
 - [ ] PostgreSQL専用auth/chatエンドポイントを維持するか、一時停止するか決定
 
-### P0-7. パフォーマンス最適化（安全性再設計）[保留]
+### P0-7. パフォーマンス最適化（安全性再設計）
 
 FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユーザー情報・プラン・回数上限が確定する前にRAGを開始すると、次の回帰が発生するためである。
 
@@ -232,7 +237,13 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] 安全な処理順へ修正（ユーザー・プラン・上限確認 → RAG → LINE返信）
 - [x] 上限到達時にRAGを呼ばない回帰テストを追加
 - [x] 確定済み `corpus_id` / `model_name` / `user_id` をRAGへ渡す回帰テストを追加
-- [保留] レイテンシ最適化は、正確性と課金制御を維持できる別方式で再設計する
+- [x] `RAGService.query()` のプラン別引数不整合を修正し、実サービス契約テストを追加（ローカル検証済み・本番未反映）
+- [x] Firestore `AsyncClient` をプロセス内で共有し、起動・終了時にライフサイクル管理（ローカル検証済み・本番未反映）
+- [x] LINEメッセージ処理で取得済みユーザーデータを再利用し、同一ユーザーの直列再読込2回を削減
+- [x] RAG権限をプラン別に60秒キャッシュし、更新・削除時に無効化
+- [x] Vertex AI分類クライアントを遅延生成後に再利用し、ADC・クライアント生成の繰り返しを削減
+- [x] ユーザー検索・権限・使用回数・分類・RAG生成の区間別レイテンシログを追加
+- [ ] Cloud Runへ反映後、実測レイテンシとエラー率を比較して次の最適化を判断
 
 ---
 
@@ -240,9 +251,13 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 ### P1-1. 認証・アカウント連携
 
-- [ ] LINE Login callbackでFirestoreユーザーを検索・作成
-- [ ] 仮UUIDの都度発行を廃止し、既存ユーザーIDを再利用
-- [ ] Refresh Tokenの保存先をFirestore対応、またはLINE Bot用途では機能停止
+- [x] LINE Login callbackでFirestoreユーザーを検索・作成（コード実装・ローカルテスト済み、本番E2E未確認）
+- [x] 仮UUIDの都度発行を廃止し、既存ユーザーIDを再利用（コード実装・ローカルテスト済み、本番E2E未確認）
+- [x] LINE Login Refresh TokenをFirestoreへ保存し、更新時にローテーション（コード実装・ローカルテスト済み、本番E2E未確認）
+- [x] Refresh TokenをHttpOnly / Secure Cookieで保持し、CookieによるAccess Token自動更新APIを実装（ローカルテスト済み・本番未反映）
+- [x] LINE LoginのS256 PKCEを正しく実装し、Refresh TokenをJSONへ露出しない（ローカルテスト済み・本番未反映）
+- [x] 再フォロー時に既存Firestoreユーザーを再有効化し、unfollow時に全Refresh Tokenを失効（ローカルテスト済み・本番未反映）
+- [ ] ログアウト・LINE unfollow時にCookie削除と全Refresh Token失効を行い、通常利用時に再ログインが表示されないことをE2E確認
 - [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
 - [ ] サブスクAPIの固定 `test_user_id` を認証ユーザーへ置換
 
@@ -258,8 +273,8 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 ### P1-3. セキュリティ
 
-- [ ] LINE Login ID TokenのRS256/JWKS署名検証を実装
-- [ ] state / nonceをインメモリからRedis等へ移行
+- [x] LINE Login ID TokenをLINE公式検証APIで署名・audience・nonce検証（ローカルテスト済み・本番未反映）
+- [x] state / nonceをインメモリからHttpOnly / Secure短期Cookieへ移行し、Cloud Runインスタンス間の不整合を解消（ローカルテスト済み・本番未反映）
 - [ ] LINE Webhookと認証APIへレート制限を追加
 - [ ] リクエストボディサイズ上限を追加
 - [ ] TrustedHostMiddlewareを設定
@@ -296,11 +311,13 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 7. [ ] プラン別コーパス切替を確認
 8. [ ] LINE実端末でfollow/message/unfollowを確認
 
-### Step 2.5: パフォーマンス最適化 [保留]
+### Step 2.5: パフォーマンス最適化（ローカル実装済み・本番未反映）
 
 - [x] 直接並列化案の正確性・課金上の問題を確認
 - [x] 安全な逐次処理と回帰テストへ戻す
-- [保留] 実測レイテンシを取得後、安全な最適化方式を再検討
+- [x] 共有Firestoreクライアント、重複読取削減、RAG権限キャッシュ、分類クライアント再利用をローカル実装
+- [x] 区間別レイテンシログと回帰テストを追加し、CI品質ゲート64件・unit 97件に成功
+- [ ] 本番デプロイ後に実測レイテンシを取得し、Cloud Run設定を含む次の最適化を判断
 
 ### Step 3: Stripeテストモード
 

@@ -39,6 +39,25 @@ async def test_user_repository_awaits_async_query() -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_repository_reactivates_existing_user() -> None:
+    """再フォロー時に同じFirestoreユーザーを有効化すること。"""
+    document = MagicMock()
+    document.update = AsyncMock()
+    collection = MagicMock()
+    collection.document.return_value = document
+    client = MagicMock()
+    client.collection.return_value = collection
+    repository = FirestoreUserRepository(client=client)
+
+    await repository.activate_user("user-1")
+
+    document.update.assert_awaited_once()
+    update_data = document.update.await_args.args[0]
+    assert update_data["is_active"] is True
+    assert update_data["deactivated_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_rag_permission_repository_awaits_async_query() -> None:
     """プラン設定検索がAsyncClientのquery.getをawaitすること。"""
     snapshot = _snapshot(
@@ -52,11 +71,15 @@ async def test_rag_permission_repository_awaits_async_query() -> None:
     client = MagicMock()
     client.collection.return_value = query
 
+    FirestoreRagPermissionRepository._cache.clear()
     repository = FirestoreRagPermissionRepository(client=client)
     result = await repository.get_by_plan("free")
+    cached_repository = FirestoreRagPermissionRepository(client=MagicMock())
+    cached_result = await cached_repository.get_by_plan("free")
 
     assert result["id"] == "free"
     assert result["rag_corpus_id"] == "corpus-free"
+    assert cached_result == result
     query.get.assert_awaited_once()
 
 

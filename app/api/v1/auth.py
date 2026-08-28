@@ -5,14 +5,20 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 
+from app.core.config import settings
+from app.core.auth_cookies import (
+    REFRESH_TOKEN_COOKIE_NAME,
+    clear_refresh_token_cookie,
+    set_refresh_token_cookie,
+)
 from app.core.security import decode_token
-from app.core.deps import get_current_user, get_current_admin
-from app.db.session import get_db
+from app.core.deps import get_current_user
+from app.db.session import get_db, get_optional_db
 from app.schemas.auth import (
     ErrorResponse,
     LoginRequest,
@@ -26,6 +32,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.auth_service import AuthService
+from app.services.firestore_auth_service import FirestoreAuthService
 
 router = APIRouter(prefix="/auth", tags=["認証"])
 
@@ -78,6 +85,7 @@ async def login(
 @router.post(
     "/refresh",
     response_model=RefreshTokenResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
     responses={
         status.HTTP_401_UNAUTHORIZED: {
@@ -87,31 +95,45 @@ async def login(
     },
 )
 async def refresh_token(
-    request: RefreshTokenRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    http_request: Request,
+    response: Response,
+    db: Annotated[AsyncSession | None, Depends(get_optional_db)],
+    request: RefreshTokenRequest | None = Body(default=None),
 ) -> RefreshTokenResponse:
     """
     リフレッシュトークンで新しいアクセストークンを取得します
 
     リフレッシュトークンは使用後に失効し、新しいリフレッシュトークンが発行されます。
     """
-    auth_service = AuthService(db)
+    cookie_token = http_request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    refresh_token_value = cookie_token or (request.refresh_token if request else None)
+    if not refresh_token_value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # トークンリフレッシュ処理
-    result = await auth_service.refresh_token(request.refresh_token)
+    payload = decode_token(refresh_token_value)
+    if payload and payload.get("provider") == "line":
+        tokens = await FirestoreAuthService().refresh(refresh_token_value)
+    elif db is not None:
+        result = await AuthService(db).refresh_token(refresh_token_value)
+        tokens = result[0] if result else None
+    else:
+        tokens = None
 
-    if not result:
+    if not tokens:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    tokens, _ = result
-
+    set_refresh_token_cookie(response, tokens["refresh_token"])
     return RefreshTokenResponse(
         access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
+        refresh_token=None if cookie_token else tokens["refresh_token"],
         token_type=tokens["token_type"],
         expires_in=tokens["expires_in"],
     )
@@ -129,18 +151,32 @@ async def refresh_token(
     },
 )
 async def logout(
-    request: LogoutRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    http_request: Request,
+    response: Response,
+    db: Annotated[AsyncSession | None, Depends(get_optional_db)],
+    request: LogoutRequest | None = Body(default=None),
 ) -> LogoutResponse:
     """
     ユーザーログアウトを行います
 
     リフレッシュトークンを失効させます。
     """
-    auth_service = AuthService(db)
+    refresh_token_value = http_request.cookies.get(REFRESH_TOKEN_COOKIE_NAME) or (
+        request.refresh_token if request else None
+    )
+    if not refresh_token_value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refresh token is required",
+        )
 
-    # ログアウト処理
-    success = await auth_service.logout(request.refresh_token)
+    payload = decode_token(refresh_token_value)
+    if payload and payload.get("provider") == "line":
+        success = await FirestoreAuthService().logout(refresh_token_value)
+    elif db is not None:
+        success = await AuthService(db).logout(refresh_token_value)
+    else:
+        success = False
 
     if not success:
         raise HTTPException(
@@ -148,6 +184,7 @@ async def logout(
             detail="Invalid refresh token",
         )
 
+    clear_refresh_token_cookie(response)
     return LogoutResponse(message="Logged out successfully")
 
 
@@ -172,7 +209,7 @@ async def logout(
 )
 async def revoke_all_tokens(
     request: RevokeAllTokensRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession | None, Depends(get_optional_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RevokeAllTokensResponse:
     """
@@ -182,14 +219,20 @@ async def revoke_all_tokens(
     本人または管理者のみ実行可能です。
     """
     import logging
-    from app.repositories.user import UserRepository
-
     logger = logging.getLogger(__name__)
-    auth_service = AuthService(db)
-    user_repo = UserRepository(db)
+    if settings.database_backend == "firestore":
+        firestore_auth = FirestoreAuthService()
+        target_user = await firestore_auth.user_repository.find_by_id(request.user_id)
+    else:
+        if db is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database session is unavailable",
+            )
+        from app.repositories.user import UserRepository
 
-    # ユーザーが存在するか確認
-    target_user = await user_repo.get(request.user_id)
+        target_user = await UserRepository(db).get(request.user_id)
+
     if not target_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -212,7 +255,12 @@ async def revoke_all_tokens(
         )
 
     # 全トークン失効処理
-    revoked_count = await auth_service.revoke_all_user_tokens(request.user_id)
+    if settings.database_backend == "firestore":
+        revoked_count = await firestore_auth.token_repository.revoke_all_user_tokens(
+            request.user_id
+        )
+    else:
+        revoked_count = await AuthService(db).revoke_all_user_tokens(request.user_id)
 
     # 監査ログ記録
     logger.info(

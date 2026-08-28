@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import vertexai
@@ -186,6 +187,7 @@ class VertexAIClient(BaseClient):
         )
         self.qwen_model_name = qwen_model_name or settings.qwen_model_name
         self.qwen_location = qwen_location or settings.qwen_location
+        self._classification_client: Optional[genai.Client] = None
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
         self.corpus_name = (
@@ -469,7 +471,9 @@ class VertexAIClient(BaseClient):
             }
 
         top_k = max(1, min(max_results, self._default_top_k))
+        classification_started = time.perf_counter()
         classification = await self._classify_query(sanitized)
+        classification_ms = (time.perf_counter() - classification_started) * 1000
         generation_prompt = self._build_generation_prompt(sanitized, classification)
 
         effective_model_name = model_name or self.model_name
@@ -490,7 +494,9 @@ class VertexAIClient(BaseClient):
             )
 
             # SDK は同期 API → asyncio.to_thread でラップ（イベントループをブロックしない）
+            generation_started = time.perf_counter()
             response = await asyncio.to_thread(model.generate_content, generation_prompt)
+            generation_ms = (time.perf_counter() - generation_started) * 1000
 
             answer, contexts, confidence = self._extract_response(response)
             answer = self._strip_markdown(answer)
@@ -499,7 +505,12 @@ class VertexAIClient(BaseClient):
                 contexts = self._filter_context_by_confidence(contexts)
 
             logger.info(
-                f"RAG query completed (contexts={len(contexts)}, confidence={confidence})"
+                "RAG query completed (contexts=%s, confidence=%s, "
+                "classification_ms=%.1f, generation_ms=%.1f)",
+                len(contexts),
+                confidence,
+                classification_ms,
+                generation_ms,
             )
             return {
                 "answer": answer,
@@ -523,12 +534,7 @@ class VertexAIClient(BaseClient):
         本体のRAG回答を止めないよう、失敗時は分類情報を使用せずに続行します。
         """
         try:
-            client = genai.Client(
-                vertexai=True,
-                project=self.project_id,
-                location=self.classification_location,
-                http_options=HttpOptions(api_version="v1"),
-            )
+            client = self._get_classification_client()
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=self.classification_model_name,
@@ -549,6 +555,17 @@ class VertexAIClient(BaseClient):
         except Exception as e:
             logger.warning(f"Query classification failed; continuing without classification: {e}")
             return DEFAULT_QUERY_CLASSIFICATION.copy()
+
+    def _get_classification_client(self) -> genai.Client:
+        """分類用クライアントを遅延生成し、後続リクエストで再利用する。"""
+        if self._classification_client is None:
+            self._classification_client = genai.Client(
+                vertexai=True,
+                project=self.project_id,
+                location=self.classification_location,
+                http_options=HttpOptions(api_version="v1"),
+            )
+        return self._classification_client
 
     def _parse_classification_response(self, raw_text: str) -> Dict[str, Any]:
         """

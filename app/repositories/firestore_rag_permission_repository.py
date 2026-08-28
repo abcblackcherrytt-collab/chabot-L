@@ -6,11 +6,13 @@ Firestore版実装で、プラン別にコーパスを切り替えるために�
 """
 
 import logging
+import time
 from typing import Optional, Dict, Any
 
 from google.cloud import firestore
 
 from app.core.config import settings
+from app.core.firestore import get_firestore_client_sync
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +25,12 @@ class FirestoreRagPermissionRepository:
     Firestore から参照します。
     """
 
+    _cache: Dict[str, tuple[float, Optional[Dict[str, Any]]]] = {}
+    _cache_ttl_seconds = 60.0
+
     def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestore クライアントを初期化します"""
-        self.db = client or firestore.AsyncClient(
-            project=settings.firestore_project_id,
-            database=settings.firestore_database_id,
-        )
+        self.db = client or get_firestore_client_sync()
         self.collection_name = 'rag_permissions'
         logger.info("Firestore RAG permission repository initialized")
 
@@ -42,6 +44,15 @@ class FirestoreRagPermissionRepository:
         Returns:
             RAG 権限データの辞書、存在しない場合は None
         """
+        cache_key = (
+            f"{settings.firestore_project_id}:"
+            f"{settings.firestore_database_id}:{plan}"
+        )
+        cached = self._cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < self._cache_ttl_seconds:
+            value = cached[1]
+            return dict(value) if value is not None else None
+
         try:
             docs = await self.db.collection(self.collection_name)\
                 .where('plan', '==', plan)\
@@ -53,9 +64,11 @@ class FirestoreRagPermissionRepository:
                 perm_data = doc.to_dict()
                 perm_data['id'] = doc.id
                 logger.debug(f"RAG permission found for plan: {plan}")
+                self._cache[cache_key] = (time.monotonic(), dict(perm_data))
                 return perm_data
 
             logger.debug(f"RAG permission not found for plan: {plan}")
+            self._cache[cache_key] = (time.monotonic(), None)
             return None
 
         except Exception as e:
@@ -134,6 +147,8 @@ class FirestoreRagPermissionRepository:
 
             await self.db.collection(self.collection_name).document(perm_id).set(perm_data)
 
+            self._invalidate_plan_cache(plan)
+
             logger.info(f"Created RAG permission for plan: {plan}")
             return perm_data
 
@@ -173,6 +188,8 @@ class FirestoreRagPermissionRepository:
 
                 await doc_ref.update(update_data)
 
+                self._invalidate_plan_cache(plan)
+
                 # 更新後のデータを取得
                 updated_doc = await doc_ref.get()
                 if not updated_doc.exists:
@@ -209,6 +226,7 @@ class FirestoreRagPermissionRepository:
 
             for doc in docs:
                 await self.db.collection(self.collection_name).document(doc.id).delete()
+                self._invalidate_plan_cache(plan)
                 logger.info(f"Deleted RAG permission for plan: {plan}")
                 return True
 
@@ -218,3 +236,10 @@ class FirestoreRagPermissionRepository:
         except Exception as e:
             logger.error(f"Error deleting RAG permission: {e}")
             raise
+
+    @classmethod
+    def _invalidate_plan_cache(cls, plan: str) -> None:
+        """指定プランの全環境キャッシュを破棄する。"""
+        suffix = f":{plan}"
+        for key in [key for key in cls._cache if key.endswith(suffix)]:
+            cls._cache.pop(key, None)

@@ -4,25 +4,23 @@ LINE Login v2.1（OIDC準拠）によるユーザー認証を提供します。
 """
 
 import logging
+import base64
+import hashlib
 import secrets
 import urllib.parse
-import uuid
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.core.auth_cookies import set_refresh_token_cookie
 from app.core.config import settings
-from app.core.security import create_access_token, create_refresh_token, verify_line_id_token
+from app.core.security import verify_line_id_token
+from app.services.firestore_auth_service import FirestoreAuthService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/line", tags=["LINE Auth"])
-
-# 一時 state 保存（本番では Redis 等のセッションストアを使用）
-# TODO: Redis / Cloud Memorystore に移行
-_state_store: Dict[str, str] = {}
-_nonce_store: Dict[str, str] = {}
 
 LINE_AUTH_URL = "https://access.line.me/oauth2/v2.1/authorize"
 LINE_TOKEN_URL = "https://api.line.me/oauth2/v2.1/token"
@@ -41,14 +39,14 @@ async def line_login(request: Request) -> RedirectResponse:
     """
     # state パラメータ生成（CSRF対策）
     state = secrets.token_urlsafe(32)
-    _state_store[state] = "pending"
-
     # nonce パラメータ生成（リプレイ攻撃対策）
     nonce = secrets.token_urlsafe(32)
-    _nonce_store[state] = nonce
 
     # PKCE code_verifier / code_challenge 生成
     code_verifier = secrets.token_urlsafe(64)
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
 
     params = {
         "response_type": "code",
@@ -57,7 +55,8 @@ async def line_login(request: Request) -> RedirectResponse:
         "state": state,
         "scope": "profile openid email",
         "nonce": nonce,
-        "code_verifier": code_verifier,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
 
     auth_url = f"{LINE_AUTH_URL}?{urllib.parse.urlencode(params)}"
@@ -78,6 +77,14 @@ async def line_login(request: Request) -> RedirectResponse:
     response.set_cookie(
         key="line_code_verifier",
         value=code_verifier,
+        httponly=True,
+        secure=not settings.debug,
+        samesite="lax",
+        max_age=600,
+    )
+    response.set_cookie(
+        key="line_login_nonce",
+        value=nonce,
         httponly=True,
         secure=not settings.debug,
         samesite="lax",
@@ -134,12 +141,6 @@ async def line_login_callback(
             detail="Invalid state parameter (possible CSRF attack)",
         )
 
-    if state not in _state_store:
-        raise HTTPException(
-            status_code=401,
-            detail="Expired or invalid state parameter",
-        )
-
     # 認可コードをトークンに交換
     import httpx
 
@@ -176,9 +177,17 @@ async def line_login_callback(
     id_token = token_json.get("id_token", "")
 
     # ID トークン検証
-    id_payload = verify_line_id_token(
+    expected_nonce = request.cookies.get("line_login_nonce", "")
+    if not expected_nonce:
+        raise HTTPException(
+            status_code=401,
+            detail="Expired or invalid nonce",
+        )
+
+    id_payload = await verify_line_id_token(
         id_token=id_token,
         channel_id=settings.line_login_channel_id,
+        nonce=expected_nonce,
     )
 
     if not id_payload:
@@ -188,9 +197,8 @@ async def line_login_callback(
         )
 
     # nonce 検証（リプレイ攻撃対策）
-    expected_nonce = _nonce_store.pop(state, None)
     received_nonce = id_payload.get("nonce", "")
-    if expected_nonce and received_nonce != expected_nonce:
+    if received_nonce != expected_nonce:
         logger.warning("Nonce mismatch in ID token")
         raise HTTPException(
             status_code=401,
@@ -210,60 +218,34 @@ async def line_login_callback(
 
     logger.info(f"LINE Login successful: user={display_name}")
 
-    # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-    # 現状（Phase 1）: ユーザー永続化を行わない。下記仮 UUID で都度 JWT 発行。
-    # Phase 2 で有効化する接続ポイント:
-    #   - user_repository.find_by_line_user_id(line_user_id) で検索
-    #     → 存在しない場合は user_repository.create(...) で新規作成
-    #   - RefreshTokenRepository でリフレッシュトークンを DB 保存
-    #   - StripeService.create_customer で顧客作成し user.stripe_customer_id に紐付け
-    # 関連: repositories/user.py [Phase 2 マーカー H1]、
-    #       line_service._handle_follow_event [Phase 2 マーカー A4]
-    # ===================================================================
-    # TODO: DB でユーザー検索・作成（Phase 2 で実装）
-    # user = await user_repository.find_by_line_user_id(line_user_id)
-    # if not user:
-    #     user = await user_repository.create(
-    #         id=str(uuid.uuid4()),
-    #         email=email,
-    #         hashed_password=get_password_hash(secrets.token_urlsafe(32)),
-    #         line_user_id=line_user_id,
-    #     )
+    auth_service = FirestoreAuthService()
+    user = await auth_service.user_repository.find_by_line_user_id(line_user_id)
+    if user is None:
+        user = await auth_service.user_repository.create_line_user(
+            line_user_id=line_user_id,
+            display_name=display_name,
+            email=email,
+        )
+    elif not user.get("is_active", False):
+        raise HTTPException(status_code=403, detail="User account is inactive")
 
-    # [Phase 2] 現状は発行ごとに異なる非永続 UUID。Phase 2 で DB 検索し既存 ID を再利用。
-    # 仮のユーザー情報（DB実装後に置き換え）
-    user_id = str(uuid.uuid4())
+    tokens = await auth_service.issue_tokens(user, line_user_id)
 
-    # JWT 発行
-    jti = str(uuid.uuid4())
-    access_token, access_expires = create_access_token(
-        user_id=user_id,
-        email=email,
-        jti=jti,
-        additional_claims={"line_user_id": line_user_id},
+    response = JSONResponse(
+        content={
+            "access_token": tokens["access_token"],
+            "token_type": tokens["token_type"],
+            "expires_in": tokens["expires_in"],
+            "user": {
+                "id": user["id"],
+                "line_user_id": line_user_id,
+                "display_name": user.get("display_name", display_name),
+                "email": user.get("email", email),
+            },
+        }
     )
-
-    refresh_jti = str(uuid.uuid4())
-    refresh_token, refresh_expires = create_refresh_token(
-        user_id=user_id,
-        email=email,
-        jti=refresh_jti,
-    )
-
-    # クリーンアップ
-    _state_store.pop(state, None)
-
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "expires_in": int(
-            (access_expires - __import__("datetime").datetime.now(__import__("datetime").timezone.utc)).total_seconds()
-        ),
-        "user": {
-            "id": user_id,
-            "line_user_id": line_user_id,
-            "display_name": display_name,
-            "email": email,
-        },
-    }
+    set_refresh_token_cookie(response, tokens["refresh_token"])
+    response.delete_cookie("line_login_state", path="/")
+    response.delete_cookie("line_code_verifier", path="/")
+    response.delete_cookie("line_login_nonce", path="/")
+    return response

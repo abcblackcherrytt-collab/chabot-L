@@ -4,7 +4,7 @@
 """
 
 import uuid
-from typing import List, Optional, TYPE_CHECKING
+from typing import ClassVar, List, Optional, TYPE_CHECKING
 
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,6 +27,10 @@ class User(Base, TimestampMixin):
     """
 
     __tablename__ = "users"
+
+    # Firestore認証経路で取得済みのプランを追加I/OなしでAPI層へ渡す。
+    # PostgreSQLの永続カラムではないためClassVarとして扱う。
+    subscription_plan: ClassVar[Optional[str]] = None
 
     # 主キー（UUID）
     id: Mapped[str] = mapped_column(

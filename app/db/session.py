@@ -3,7 +3,7 @@
 非同期データベースセッションの管理を行います。
 """
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import text
@@ -50,6 +50,23 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         非同期データベースセッション
     """
+    async with async_session_maker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def get_optional_db() -> AsyncGenerator[Optional[AsyncSession], None]:
+    """PostgreSQL使用時だけセッションを生成する依存関係。"""
+    if settings.database_backend != "postgresql":
+        yield None
+        return
+
     async with async_session_maker() as session:
         try:
             yield session

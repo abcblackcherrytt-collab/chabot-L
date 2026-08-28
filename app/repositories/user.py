@@ -309,6 +309,21 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
             logger.error(f"Error deactivating user: {e}")
             raise
 
+    async def activate_user(self, user_id: str) -> None:
+        """再フォローした既存ユーザーを有効化する。"""
+        try:
+            from datetime import datetime
+
+            user = await self.get(user_id)
+            if user:
+                user.is_active = True
+                user.updated_at = datetime.utcnow()
+                await self.db.commit()
+                logger.info(f"Activated user: {user_id}")
+        except Exception as e:
+            logger.error(f"Error activating user: {e}")
+            raise
+
     async def find_by_line_user_id_dict(self, line_user_id: str) -> Optional[Dict[str, Any]]:
         """
         LINEユーザーIDでユーザーを検索し、辞書形式で返します（BaseUserRepository互換）

@@ -127,7 +127,7 @@ class TestRefreshTokenRepository:
             "token_type": "refresh",
             "expires_at": datetime.utcnow() + timedelta(days=7),
         })
-        await repo.revoke(revoked_token)
+        await repo.revoke_token(revoked_token.id)
 
         # 有効なトークンを取得
         valid_tokens = await repo.get_valid_tokens_by_user_id(user.id)
@@ -146,16 +146,16 @@ class TestRefreshTokenRepository:
         repo = RefreshTokenRepository(db_session)
 
         # トークンを作成
-        token = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_123",
-            jti="jti_123",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        token = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_123",
+            "jti": "jti_123",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
         # トークンを失効
-        await repo.revoke(token)
+        await repo.revoke_token(token.id)
 
         # 失効を確認
         revoked_token = await repo.get_by_id(token.id)
@@ -209,30 +209,30 @@ class TestRefreshTokenRepository:
         repo = RefreshTokenRepository(db_session)
 
         # 有効なトークンを作成
-        valid_token = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_valid",
-            jti="jti_valid",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        valid_token = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_valid",
+            "jti": "jti_valid",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
         # 有効期限切れのトークンを作成
-        expired_token_1 = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_expired1",
-            jti="jti_expired1",
-            token_type="refresh",
-            expires_at=datetime.utcnow() - timedelta(days=1),
-        )
+        expired_token_1 = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_expired1",
+            "jti": "jti_expired1",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() - timedelta(days=1),
+        })
 
-        expired_token_2 = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_expired2",
-            jti="jti_expired2",
-            token_type="refresh",
-            expires_at=datetime.utcnow() - timedelta(days=2),
-        )
+        expired_token_2 = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_expired2",
+            "jti": "jti_expired2",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() - timedelta(days=2),
+        })
 
         # 有効期限切れのトークンを削除
         deleted_count = await repo.delete_expired_tokens()
@@ -260,33 +260,33 @@ class TestRefreshTokenRepository:
         repo = RefreshTokenRepository(db_session)
 
         # 有効なトークンを作成
-        valid_token = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_valid",
-            jti="jti_valid",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        valid_token = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_valid",
+            "jti": "jti_valid",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
         # 30日前に失効したトークンを作成
-        old_revoked_token = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_old_revoked",
-            jti="jti_old_revoked",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        old_revoked_token = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_old_revoked",
+            "jti": "jti_old_revoked",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
         old_revoked_token.revoked_at = datetime.utcnow() - timedelta(days=30)
         await db_session.commit()
 
         # 1日前に失効したトークンを作成
-        recent_revoked_token = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_recent_revoked",
-            jti="jti_recent_revoked",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        recent_revoked_token = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_recent_revoked",
+            "jti": "jti_recent_revoked",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
         recent_revoked_token.revoked_at = datetime.utcnow() - timedelta(days=1)
         await db_session.commit()
 
@@ -313,29 +313,29 @@ class TestRefreshTokenRepository:
         repo = RefreshTokenRepository(db_session)
 
         # 複数のトークンを作成
-        token_1 = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_1",
-            jti="jti_1",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        token_1 = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_1",
+            "jti": "jti_1",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
-        token_2 = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_2",
-            jti="jti_2",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        token_2 = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_2",
+            "jti": "jti_2",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
-        token_3 = await repo.create(
-            user_id=user.id,
-            token_hash="hashed_token_3",
-            jti="jti_3",
-            token_type="refresh",
-            expires_at=datetime.utcnow() + timedelta(days=7),
-        )
+        token_3 = await repo.create({
+            "user_id": user.id,
+            "token_hash": "hashed_token_3",
+            "jti": "jti_3",
+            "token_type": "refresh",
+            "expires_at": datetime.utcnow() + timedelta(days=7),
+        })
 
         # 全トークンを失効
         revoked_count = await repo.revoke_all_user_tokens(user.id)
