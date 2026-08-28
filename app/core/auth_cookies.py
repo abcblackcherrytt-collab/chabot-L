@@ -9,8 +9,8 @@ REFRESH_TOKEN_COOKIE_NAME = "chabot_refresh_token"
 
 
 def _cookie_path() -> str:
-    """認証エンドポイントだけへ送信するCookieパスを返す。"""
-    return f"/api/{settings.api_version}/auth"
+    """認証済みAPI導線へ送信するCookieパスを返す。"""
+    return f"/api/{settings.api_version}"
 
 
 def set_refresh_token_cookie(response: Response, refresh_token: str) -> None:

@@ -5,12 +5,21 @@ Stripe Checkoutとサブスクリプション管理のAPIエンドポイント�
 """
 
 import logging
+import urllib.parse
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from app.core.auth_cookies import (
+    REFRESH_TOKEN_COOKIE_NAME,
+    set_refresh_token_cookie,
+)
+from app.core.config import settings
 from app.core.pricing import PLANS, get_plan_config, validate_plan_availability
+from app.core.security import decode_token
+from app.services.firestore_auth_service import FirestoreAuthService
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -57,6 +66,105 @@ class PlanInfoResponse(BaseModel):
 
 
 # ========== エンドポイント ==========
+
+
+def _checkout_login_url(plan: str) -> str:
+    """Checkoutへ戻る相対URLを付けたLINE Login URLを返す。"""
+    return_to = f"/api/{settings.api_version}/subscription/checkout/{plan}"
+    query = urllib.parse.urlencode({"return_to": return_to})
+    return f"/api/{settings.api_version}/auth/line?{query}"
+
+
+@router.get("/checkout/{plan}", response_model=None)
+async def redirect_to_checkout(
+    plan: str,
+    request: Request,
+    subscription_service: Annotated[SubscriptionService, Depends(get_subscription_service)],
+) -> RedirectResponse | HTMLResponse:
+    """LINEの登録リンクから認証済みStripe Checkoutへリダイレクトする。"""
+    if plan not in {"basic", "pro"}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unknown subscription plan",
+        )
+
+    plan_config = get_plan_config(plan)
+    if not plan_config.get("price_id"):
+        return HTMLResponse(
+            content=(
+                "<!doctype html><html lang='ja'><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>決済準備中</title>"
+                "<body style='font-family:sans-serif;max-width:36rem;margin:4rem auto;padding:1rem'>"
+                "<h1>決済ページを準備中です</h1>"
+                "<p>プラン登録の受付開始まで、もうしばらくお待ちください。</p>"
+                "</body></html>"
+            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    if not refresh_token:
+        return RedirectResponse(url=_checkout_login_url(plan), status_code=303)
+
+    tokens = await FirestoreAuthService().refresh(refresh_token)
+    if not tokens:
+        return RedirectResponse(url=_checkout_login_url(plan), status_code=303)
+
+    access_payload = decode_token(tokens["access_token"])
+    user_id = access_payload.get("sub") if access_payload else None
+    if not user_id:
+        return RedirectResponse(url=_checkout_login_url(plan), status_code=303)
+
+    try:
+        checkout_url = await subscription_service.create_checkout_session(
+            user_id=user_id,
+            plan=plan,
+        )
+    except ValueError as exc:
+        logger.warning("Checkout configuration unavailable for plan=%s: %s", plan, exc)
+        return HTMLResponse(
+            content="決済ページを準備中です。しばらくしてからもう一度お試しください。",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    parsed_checkout_url = urllib.parse.urlparse(checkout_url)
+    if parsed_checkout_url.scheme != "https" or parsed_checkout_url.hostname != "checkout.stripe.com":
+        logger.error("Rejected unexpected Checkout URL host")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid checkout destination",
+        )
+
+    response = RedirectResponse(url=checkout_url, status_code=303)
+    set_refresh_token_cookie(response, tokens["refresh_token"])
+    return response
+
+
+@router.get("/success", response_class=HTMLResponse)
+async def checkout_success() -> HTMLResponse:
+    """Stripe Checkout完了後の案内を表示する。"""
+    return HTMLResponse(
+        "<!doctype html><html lang='ja'><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>登録完了</title><body style='font-family:sans-serif;max-width:36rem;"
+        "margin:4rem auto;padding:1rem'><h1>プラン登録を受け付けました</h1>"
+        "<p>LINEに戻って、そのままChabotをご利用ください。</p></body></html>"
+    )
+
+
+@router.get("/cancel", response_class=HTMLResponse)
+async def checkout_cancel() -> HTMLResponse:
+    """Stripe Checkoutキャンセル後の案内を表示する。"""
+    return HTMLResponse(
+        "<!doctype html><html lang='ja'><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>登録キャンセル</title><body style='font-family:sans-serif;max-width:36rem;"
+        "margin:4rem auto;padding:1rem'><h1>プラン登録をキャンセルしました</h1>"
+        "<p>決済は行われていません。LINEへ戻ってください。</p></body></html>"
+    )
 
 @router.post("/checkout/create", response_model=CheckoutResponse)
 async def create_checkout_session(

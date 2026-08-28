@@ -31,6 +31,22 @@ async def test_line_login_uses_s256_pkce_and_temporary_cookies() -> None:
 
 
 @pytest.mark.asyncio
+async def test_line_login_preserves_safe_checkout_return_path() -> None:
+    """Checkoutからログインした場合に安全な復帰先を短期Cookieへ保存すること。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/auth/line",
+            params={"return_to": "/api/v1/subscription/checkout/basic"},
+            follow_redirects=False,
+        )
+
+    set_cookies = "\n".join(response.headers.get_list("set-cookie")).lower()
+    assert "line_login_return_to=" in set_cookies
+    assert "/api/v1/auth" in set_cookies
+
+
+@pytest.mark.asyncio
 async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> None:
     """Cookieだけで更新でき、新Refresh TokenをJSONへ露出しないこと。"""
     service = MagicMock()
@@ -54,7 +70,7 @@ async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> No
         client.cookies.set(
             REFRESH_TOKEN_COOKIE_NAME,
             "old-refresh",
-            path="/api/v1/auth",
+            path="/api/v1",
         )
         response = await client.post("/api/v1/auth/refresh")
 
@@ -69,7 +85,7 @@ async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> No
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in set_cookie
     assert "httponly" in set_cookie
     assert "samesite=lax" in set_cookie
-    assert "path=/api/v1/auth" in set_cookie
+    assert "path=/api/v1" in set_cookie
     assert response.headers["cache-control"] == "no-store"
 
 
@@ -121,7 +137,7 @@ async def test_logout_uses_cookie_revokes_and_clears_it(monkeypatch) -> None:
         client.cookies.set(
             REFRESH_TOKEN_COOKIE_NAME,
             "saved-refresh",
-            path="/api/v1/auth",
+            path="/api/v1",
         )
         response = await client.post("/api/v1/auth/logout")
 

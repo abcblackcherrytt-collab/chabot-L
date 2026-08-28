@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-28（LINE Loginセッション永続化・認証強化をCloud Runへデプロイ・検証）
+> **更新日**: 2026-08-28（Price ID未設定のStripe登録導線をローカル実装・検証）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -25,6 +25,7 @@
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
 - **検証**: ローカルunit 106件、GitHub Actions run `33147833420` の拡張品質ゲート75件、公開LINE Login開始endpointのSecure Cookie / S256 PKCE確認に成功。実LINEアカウントでのcallback・自動更新E2Eは未確認
+- **ローカルStripe導線（本番未反映）**: LINEのBasic / Pro登録URLから、Price ID未設定中は準備中画面、設定後は保存済みセッションまたはLINE Loginを経由してStripe Checkoutへ遷移する導線を実装。品質ゲート79件・unit 110件に成功
 - **次ステップ**:
   1. LINE実端末でのE2E検証実施
   2. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
@@ -52,6 +53,7 @@
   - pro: 500件
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
+- [x] Stripe Basic / Pro Price IDの具体値はまだ設定せず、LINEの登録URLだけ先に接続する。未設定中は準備中画面を表示し、設定後に同じURLでStripe Checkoutを有効化する。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
 
 ---
@@ -134,6 +136,8 @@
 - [x] `customer.subscription.deleted` のfreeプラン更新・LINE通知
 - [x] `invoice.payment_failed` のLINE通知
 - [x] Stripe / Firestore整合性チェックサービスの土台
+- [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（ローカルテスト済み・本番未反映、Price ID未設定）
+- [x] Checkout成功・キャンセル後の案内ページ（ローカルテスト済み・本番未反映）
 - [ ] `customer.subscription.updated` のFirestore状態更新
 - [ ] `invoice.paid` のFirestore状態・請求期間更新
 - [ ] Webhook冪等性をインメモリからFirestoreへ移行
@@ -259,6 +263,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] Refresh TokenをHttpOnly / Secure Cookieで保持し、CookieによるAccess Token自動更新APIを実装（本番反映済み・実LINE E2E未確認）
 - [x] LINE LoginのS256 PKCEを正しく実装し、Refresh TokenをJSONへ露出しない（本番開始endpoint確認済み）
 - [x] 再フォロー時に既存Firestoreユーザーを再有効化し、unfollow時に全Refresh Tokenを失効（本番反映済み・実LINE E2E未確認）
+- [x] Stripe登録リンクでは保存済みRefresh Tokenを自動更新し、未認証時だけLINE Login後に元のプラン登録URLへ戻す（ローカルテスト済み・本番未反映）
 - [ ] ログアウト・LINE unfollow時にCookie削除と全Refresh Token失効を行い、通常利用時に再ログインが表示されないことをE2E確認
 - [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
 - [ ] サブスクAPIの固定 `test_user_id` を認証ユーザーへ置換

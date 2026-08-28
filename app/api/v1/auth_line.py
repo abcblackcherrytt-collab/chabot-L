@@ -24,10 +24,22 @@ router = APIRouter(prefix="/auth/line", tags=["LINE Auth"])
 
 LINE_AUTH_URL = "https://access.line.me/oauth2/v2.1/authorize"
 LINE_TOKEN_URL = "https://api.line.me/oauth2/v2.1/token"
+LOGIN_RETURN_COOKIE_NAME = "line_login_return_to"
+
+
+def _allowed_return_to(return_to: Optional[str]) -> Optional[str]:
+    """Stripe Checkout導線内の相対URLだけをログイン後遷移先として許可する。"""
+    allowed_prefix = f"/api/{settings.api_version}/subscription/checkout/"
+    if return_to and return_to.startswith(allowed_prefix):
+        return return_to
+    return None
 
 
 @router.get("")
-async def line_login(request: Request) -> RedirectResponse:
+async def line_login(
+    request: Request,
+    return_to: Optional[str] = None,
+) -> RedirectResponse:
     """
     LINE Login 認証ページにリダイレクトします
 
@@ -90,6 +102,17 @@ async def line_login(request: Request) -> RedirectResponse:
         samesite="lax",
         max_age=600,
     )
+    safe_return_to = _allowed_return_to(return_to)
+    if safe_return_to:
+        response.set_cookie(
+            key=LOGIN_RETURN_COOKIE_NAME,
+            value=safe_return_to,
+            path=f"/api/{settings.api_version}/auth",
+            httponly=True,
+            secure=not settings.debug,
+            samesite="lax",
+            max_age=600,
+        )
 
     return response
 
@@ -231,21 +254,29 @@ async def line_login_callback(
 
     tokens = await auth_service.issue_tokens(user, line_user_id)
 
-    response = JSONResponse(
-        content={
-            "access_token": tokens["access_token"],
-            "token_type": tokens["token_type"],
-            "expires_in": tokens["expires_in"],
-            "user": {
-                "id": user["id"],
-                "line_user_id": line_user_id,
-                "display_name": user.get("display_name", display_name),
-                "email": user.get("email", email),
-            },
-        }
-    )
+    return_to = _allowed_return_to(request.cookies.get(LOGIN_RETURN_COOKIE_NAME))
+    if return_to:
+        response = RedirectResponse(url=return_to, status_code=303)
+    else:
+        response = JSONResponse(
+            content={
+                "access_token": tokens["access_token"],
+                "token_type": tokens["token_type"],
+                "expires_in": tokens["expires_in"],
+                "user": {
+                    "id": user["id"],
+                    "line_user_id": line_user_id,
+                    "display_name": user.get("display_name", display_name),
+                    "email": user.get("email", email),
+                },
+            }
+        )
     set_refresh_token_cookie(response, tokens["refresh_token"])
     response.delete_cookie("line_login_state", path="/")
     response.delete_cookie("line_code_verifier", path="/")
     response.delete_cookie("line_login_nonce", path="/")
+    response.delete_cookie(
+        LOGIN_RETURN_COOKIE_NAME,
+        path=f"/api/{settings.api_version}/auth",
+    )
     return response
