@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-31（認証・Stripe Webhook・Vertex AI SDK対策の実装と検証）
+> **更新日**: 2026-08-31（StripeテストPrice IDの検証・Secret Manager登録）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -25,7 +25,7 @@
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
 - **検証**: ローカル対象テスト118件、GitHub Actions run `33347377056` の品質ゲート103件に成功。公開 `/health` はHTTP 200、Basic / Pro登録URLはPrice ID未設定のためHTTP 503、成功・キャンセル画面はHTTP 200、未認証APIはHTTP 401を確認。実LINEアカウントでのcallback・自動更新E2Eは未確認
-- **Stripe登録導線（本番反映済み・決済未有効）**: LINEのBasic / Pro登録URLをCloud Runへ設定済み。Price IDは意図どおり未設定で、設定後は保存済みセッションまたはLINE Loginを経由してStripe Checkoutへ遷移するコードを本番反映済み
+- **Stripe登録導線（Price IDデプロイ待ち）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Managerへ登録し、deploy.ymlへ参照を追加済み。本番反映と実LINE Checkout E2Eは未確認
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
@@ -42,7 +42,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
-| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Webhook対策まで本番反映済み・Price ID未設定・E2E未実施** |
+| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Price検証・Secret登録・デプロイ定義更新済み・本番反映待ち・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
 
@@ -58,7 +58,7 @@
   - pro: 500件
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
-- [x] Stripe Basic / Pro Price IDの具体値はまだ設定せず、LINEの登録URLだけ先に接続する。未設定中は準備中画面を表示し、設定後に同じURLでStripe Checkoutを有効化する。
+- [x] Stripe Basic / Proの商品・Price IDとCloud RunのStripe API鍵を同じアカウント・テストモードへ統一し、商品・継続課金・金額・通貨をAPIで確認する。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
 
 ---
@@ -153,6 +153,8 @@
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
 - [x] Webhook冪等性をインメモリからFirestore Transactionへ移行
+- [x] Stripeテスト商品・Price IDを現行API鍵で取得確認（Basic商品 `prod_VAjwEIYvRCJ5GI` / Price `price_1UAOSwPHtxCsCwzYT0x5dBz7`、月額499円。Pro商品 `prod_VAjxOn83it8eaA` / Price `price_1UAOT8PHtxCsCwzY1tU862Dy`、月額999円。いずれもJPY・有効・テストモード）
+- [x] 整合性確認済みのPrice IDをSecret Managerへ登録し、deploy.ymlへCloud Run Secret参照を追加（コード・ローカル検証済み、本番デプロイ待ち）
 - [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
 
 ### 2.4 サブスクリプションAPIの扱い
@@ -331,6 +333,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [ ] TrustedHostMiddlewareを設定
 - [ ] CORSを本番ドメインだけに制限
 - [x] Secret ManagerのStripeキーがテストキーであることを値を表示せず確認（2026-08-31）
+- [ ] Stripeの商品・Price・Secret Key・Publishable Key・Webhook Secretが同じアカウントおよびSandboxに属することを確認
 - [ ] 本番切替時にテストキーと本番キーを混在させない
 
 ### P1-4. Firestore運用
@@ -377,11 +380,12 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 1. [x] Webhookの失敗時非2xx、Firestore冪等性、updated / paidの状態更新を実装・本番反映
 2. [x] 固定 `test_user_id` の公開APIを実認証へ置換・本番401確認
-3. Basic / ProのテストPriceを作成し、Cloud RunへPrice IDを設定
-4. 実LINE認証ユーザーでCheckoutとログイン復帰を検証
-5. Webhookのcreated/updated/deleted/paid/payment_failedと再送を検証
-6. FirestoreとStripeの整合性を確認
-7. 解約後のユーザー状態を確認
+3. [x] Basic / Proの商品・Price IDと現行Stripe API鍵のアカウント・テストモードを統一
+4. [x] 同じAPI鍵で商品・継続課金Priceを取得確認し、Secret Manager登録とdeploy.yml更新を完了（本番デプロイ待ち）
+5. 実LINE認証ユーザーでCheckoutとログイン復帰を検証
+6. Webhookのcreated/updated/deleted/paid/payment_failedと再送を検証
+7. FirestoreとStripeの整合性を確認
+8. 解約後のユーザー状態を確認
 
 ### Step 4: 本番化判断
 
