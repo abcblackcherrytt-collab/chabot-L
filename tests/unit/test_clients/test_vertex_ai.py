@@ -58,6 +58,9 @@ class TestVertexAIClient:
             assert "要約：" in instruction
 
         assert "free用コーパス" in free_instruction
+        assert "ユーザーの質問と関連する情報" in free_instruction
+        assert "質問に直接対応する回答" in free_instruction
+        assert "一般知識や推測で補完せず" in free_instruction
         assert "結論、基礎的な理由、次に確認する所見" in free_instruction
         assert "有料用コーパス" in basic_instruction
         assert "根拠または機序、評価・介入への具体的な適用" in basic_instruction

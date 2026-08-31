@@ -18,9 +18,9 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
             "message": "肩関節を評価するには？",
             "reply_token": "reply-token",
             "user_id": "user-123",
-            "corpus_id": "paid-corpus",
+            "corpus_id": "free-corpus",
             "model_name": "gemini-test",
-            "plan": "basic",
+            "plan": "free",
         }
     )
     line_service._send_reply = AsyncMock()
@@ -36,9 +36,9 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
     rag_service.query.assert_awaited_once_with(
         text="肩関節を評価するには？",
         max_results=10,
-        corpus_id="paid-corpus",
+        corpus_id="free-corpus",
         model_name="gemini-test",
-        plan="basic",
+        plan="free",
         user_id="user-123",
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")
