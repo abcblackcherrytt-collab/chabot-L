@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import jwt as pyjwt
 import httpx
+import bcrypt
 from jwt import PyJWTError
 from passlib.context import CryptContext
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # パスワードハッシュ化のコンテキスト
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+TOKEN_HASH_PREFIX = "sha256$"
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -195,14 +197,16 @@ def hash_token(token: str) -> str:
     Returns:
         ハッシュ化されたトークン
     """
-    return pwd_context.hash(token)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"{TOKEN_HASH_PREFIX}{digest}"
 
 
 def verify_token_hash(plain_token: str, hashed_token: str) -> bool:
     """
     トークンのハッシュを検証します
 
-    bcryptの定時間算法を使用してタイミング攻撃を防ぎます。
+    高エントロピーのRefresh TokenはSHA-256ダイジェストを定時間比較します。
+    既存のbcryptハッシュも移行期間中は検証できます。
 
     Args:
         plain_token: 平文トークン
@@ -211,7 +215,17 @@ def verify_token_hash(plain_token: str, hashed_token: str) -> bool:
     Returns:
         トークンが一致すればTrue、それ以外はFalse
     """
-    return pwd_context.verify(plain_token, hashed_token)
+    if hashed_token.startswith(TOKEN_HASH_PREFIX):
+        expected = hash_token(plain_token)
+        return hmac.compare_digest(expected, hashed_token)
+
+    # 旧bcryptトークンは72バイトで暗黙に切り詰められていたため、
+    # passlibを経由せず同じ条件で検証する。新規保存には使用しない。
+    try:
+        candidate = plain_token.encode("utf-8")[:72]
+        return bcrypt.checkpw(candidate, hashed_token.encode("utf-8"))
+    except (TypeError, ValueError):
+        return False
 
 
 def verify_webhook_signature(

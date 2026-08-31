@@ -8,7 +8,20 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.v1 import auth as auth_api
 from app.core.auth_cookies import REFRESH_TOKEN_COOKIE_NAME
+from app.core.security import hash_token, verify_token_hash
 from app.server import app
+
+
+def test_long_refresh_token_hash_avoids_bcrypt_limit() -> None:
+    """72バイト超のRefresh Tokenを保存・検証できること。"""
+    token = "header.payload.signature" * 20
+
+    hashed = hash_token(token)
+
+    assert hashed.startswith("sha256$")
+    assert token not in hashed
+    assert verify_token_hash(token, hashed) is True
+    assert verify_token_hash(f"{token}x", hashed) is False
 
 
 @pytest.mark.asyncio
