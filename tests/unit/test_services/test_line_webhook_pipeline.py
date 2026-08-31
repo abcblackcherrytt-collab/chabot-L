@@ -20,6 +20,7 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
             "user_id": "user-123",
             "corpus_id": "paid-corpus",
             "model_name": "gemini-test",
+            "plan": "basic",
         }
     )
     line_service._send_reply = AsyncMock()
@@ -37,6 +38,7 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
         max_results=10,
         corpus_id="paid-corpus",
         model_name="gemini-test",
+        plan="basic",
         user_id="user-123",
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")
@@ -75,6 +77,7 @@ async def test_pipeline_uses_real_rag_service_interface() -> None:
             "user_id": "user-123",
             "corpus_id": "paid-corpus",
             "model_name": "gemini-test",
+            "plan": "pro",
         }
     )
     line_service._send_reply = AsyncMock()
@@ -96,5 +99,6 @@ async def test_pipeline_uses_real_rag_service_interface() -> None:
         include_context=True,
         corpus_id="paid-corpus",
         model_name="gemini-test",
+        plan="pro",
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")

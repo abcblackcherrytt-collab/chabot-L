@@ -43,6 +43,32 @@ class TestRAGService:
             include_context=True,
             corpus_id=None,
             model_name=None,
+            plan="free",
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_forwards_paid_plan(self, mock_vertex_ai_response):
+        """有料プラン情報を Vertex AI クライアントへ渡す。"""
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock(return_value=mock_vertex_ai_response)
+        service = RAGService(vertex_ai_client=mock_client)
+
+        await service.query(
+            text="評価方法は？",
+            corpus_id="paid-corpus",
+            model_name="gemini-test",
+            plan="basic",
+        )
+
+        mock_client.query.assert_awaited_once_with(
+            text="評価方法は？",
+            max_results=5,
+            include_context=True,
+            corpus_id="paid-corpus",
+            model_name="gemini-test",
+            plan="basic",
         )
 
     @pytest.mark.asyncio

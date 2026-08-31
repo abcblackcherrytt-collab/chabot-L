@@ -71,6 +71,7 @@ async def _process_line_events(
                         corpus_id=result.get("corpus_id"),
                         model_name=result.get("model_name"),
                         user_id=result.get("user_id"),
+                        plan=result.get("plan") or "free",
                     )
                     answer = rag_result.get(
                         "answer",

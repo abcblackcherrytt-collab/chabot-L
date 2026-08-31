@@ -41,6 +41,7 @@ class RAGService:
         metadata: Optional[Dict[str, Any]] = None,
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
+        plan: str = "free",
     ) -> Dict[str, Any]:
         """
         RAGクエリを実行します
@@ -53,6 +54,7 @@ class RAGService:
             metadata: メタデータ
             corpus_id: 使用するRAGコーパスID
             model_name: 使用する回答生成モデル名
+            plan: 回答構成を選択するプラン（free/basic/pro）
 
         Returns:
             RAGクエリ結果
@@ -74,6 +76,7 @@ class RAGService:
                     include_context=include_context,
                     corpus_id=corpus_id,
                     model_name=model_name,
+                    plan=plan,
                 )
 
             # 結果にメタデータを追加
@@ -104,6 +107,7 @@ class RAGService:
         max_results: int = 5,
         include_context: bool = True,
         user_id: Optional[str] = None,
+        plan: str = "free",
     ) -> List[Dict[str, Any]]:
         """
         複数のRAGクエリを実行します
@@ -113,6 +117,7 @@ class RAGService:
             max_results: 最大結果数
             include_context: コンテキストを含めるか
             user_id: ユーザーID
+            plan: 回答構成を選択するプラン（free/basic/pro）
 
         Returns:
             RAGクエリ結果のリスト
@@ -131,6 +136,7 @@ class RAGService:
                     max_results=max_results,
                     include_context=include_context,
                     user_id=user_id,
+                    plan=plan,
                 )
                 results.append(result)
 

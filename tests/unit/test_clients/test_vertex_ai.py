@@ -40,6 +40,30 @@ class TestVertexAIClient:
         assert "1行は必ず15文字以内" not in DEFAULT_SYSTEM_INSTRUCTION
         assert "ヘッダーは付けず" not in DEFAULT_SYSTEM_INSTRUCTION
 
+    def test_plan_instructions_change_structure_and_reference_policy_only(self):
+        """プラン別指示でも共通の文体・文字数契約を維持する。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        free_instruction = client._get_system_instruction("free")
+        basic_instruction = client._get_system_instruction("basic")
+        pro_instruction = client._get_system_instruction("pro")
+
+        for instruction in (free_instruction, basic_instruction, pro_instruction):
+            assert "です・ます" in instruction
+            assert "本文は通常100〜400字" in instruction
+            assert "全体は原則500字以内" in instruction
+            assert "辛口表現は1回答につき原則1か所" in instruction
+            assert "回答：" in instruction
+            assert "要約：" in instruction
+
+        assert "free用コーパス" in free_instruction
+        assert "結論、基礎的な理由、次に確認する所見" in free_instruction
+        assert "有料用コーパス" in basic_instruction
+        assert "根拠または機序、評価・介入への具体的な適用" in basic_instruction
+        assert basic_instruction == pro_instruction
+        assert free_instruction != basic_instruction
+
     def test_classification_client_is_reused(self):
         """分類ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
         with (
@@ -97,7 +121,9 @@ class TestVertexAIClient:
 
         call_kwargs = generation_client.models.generate_content.call_args.kwargs
         assert call_kwargs["contents"] == "ユーザーの質問:\n肩関節外転のROM制限は何を評価しますか？"
-        assert call_kwargs["config"].system_instruction == client.system_instruction
+        assert call_kwargs["config"].system_instruction == client._get_system_instruction(
+            "free"
+        )
         # 現在の実装では回答：/要約：は残る（これらはLLM出力の一部）
         # _strip_markdown()はMarkdownのみ削除
         assert "回答：" in result["answer"] or "要約：" in result["answer"]

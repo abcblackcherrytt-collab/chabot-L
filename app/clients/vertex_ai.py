@@ -47,6 +47,18 @@ DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーショ
 固有の一人称・二人称、特徴的な語尾、挨拶、相づち、謝辞、締めの言葉、追加質問の誘導は使用しません。Markdown装飾、RAGや分類処理への言及、分類名の表示は行いません。"""
 
 
+FREE_PLAN_SYSTEM_INSTRUCTION = """以下はfreeプラン専用の回答方針です。
+参照情報は、現在接続されているfree用コーパスから取得できた範囲を優先してください。取得情報が不足する場合は一般論で穴埋めして断定せず、確認が必要な所見を明示してください。
+
+「回答：」本文は、質問への結論、基礎的な理由、次に確認する所見の順で構成してください。複雑な鑑別や高度な介入案を広げすぎず、安全に使える基本事項へ絞ってください。"""
+
+
+PAID_PLAN_SYSTEM_INSTRUCTION = """以下はbasic/proプラン共通の回答方針です。
+参照情報は、現在接続されている有料用コーパスから得た解剖・バイオメカニクス・評価・介入・文献情報を質問に応じて統合してください。取得資料の事実と症例への推論を区別し、資料間で条件や結論が異なる場合は重要な差だけを示してください。
+
+「回答：」本文は、質問への結論、根拠または機序、評価・介入への具体的な適用、結論を変え得る条件または限界の順で構成してください。すべてを機械的に列挙せず、質問に不要な段階は省略してください。"""
+
+
 QUESTION_TYPES = {
     "knowledge": "解剖、運動学、用語、一般知識",
     "assessment": "評価方法、測定方法、整形外科テスト",
@@ -427,6 +439,7 @@ class VertexAIClient(BaseClient):
         include_context: bool = True,
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
+        plan: str = "free",
     ) -> Dict[str, Any]:
         """
         RAGグラウンディング応答を生成します
@@ -435,6 +448,9 @@ class VertexAIClient(BaseClient):
             text: 質問テキスト
             max_results: 最大結果数（top_k）
             include_context: コンテキストを含めるか
+            corpus_id: 使用するRAGコーパスID
+            model_name: 使用する回答生成モデル名
+            plan: 回答構成を選択するプラン（free/basic/pro）
 
         Returns:
             RAGクエリ結果 dict:
@@ -468,6 +484,7 @@ class VertexAIClient(BaseClient):
 
         effective_model_name = model_name or self.model_name
         effective_corpus_id = corpus_id or self.corpus_id
+        effective_plan = plan if plan in {"basic", "pro"} else "free"
         try:
             retrieval_tool = self._build_retrieval_tool(top_k, corpus_id=corpus_id)
             client = self._get_generation_client()
@@ -475,6 +492,7 @@ class VertexAIClient(BaseClient):
             logger.info(
                 f"Querying Vertex AI RAG (model={effective_model_name}, "
                 f"corpus={effective_corpus_id}, top_k={top_k}, "
+                f"plan={effective_plan}, "
                 f"question_type={classification.get('question_type') or 'unclassified'}, "
                 f"text={sanitized[:50]}...)"
             )
@@ -487,7 +505,7 @@ class VertexAIClient(BaseClient):
                 contents=generation_prompt,
                 config=genai_types.GenerateContentConfig(
                     tools=[retrieval_tool],
-                    system_instruction=self.system_instruction,
+                    system_instruction=self._get_system_instruction(effective_plan),
                 ),
             )
             generation_ms = (time.perf_counter() - generation_started) * 1000
@@ -512,6 +530,7 @@ class VertexAIClient(BaseClient):
                 "confidence": confidence,
                 "denied": False,
                 "classification": classification,
+                "plan": effective_plan,
             }
 
         except VertexAIError:
@@ -571,6 +590,15 @@ class VertexAIClient(BaseClient):
                 http_options=HttpOptions(api_version="v1"),
             )
         return self._classification_client
+
+    def _get_system_instruction(self, plan: str) -> str:
+        """共通の文体・文字数を維持し、プラン別の構成・参照方針を追加する。"""
+        plan_instruction = (
+            PAID_PLAN_SYSTEM_INSTRUCTION
+            if plan in {"basic", "pro"}
+            else FREE_PLAN_SYSTEM_INSTRUCTION
+        )
+        return f"{self.system_instruction}\n\n{plan_instruction}"
 
     def _parse_classification_response(self, raw_text: str) -> Dict[str, Any]:
         """
