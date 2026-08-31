@@ -183,6 +183,36 @@ class FirestoreUserRepository(BaseUserRepository):
             logger.error(f"Error updating subscription plan: {e}")
             raise
 
+    async def update_subscription_data(
+        self,
+        user_id: str,
+        updates: Dict[str, Any],
+    ) -> None:
+        """Stripe Webhookから許可されたサブスクリプション項目だけを更新する。"""
+        allowed_fields = {
+            "subscription_plan",
+            "subscription_status",
+            "stripe_subscription_id",
+            "current_period_start",
+            "current_period_end",
+            "cancel_at_period_end",
+            "last_invoice_id",
+            "last_invoice_status",
+            "last_payment_at",
+            "payment_failed_at",
+        }
+        invalid_fields = set(updates) - allowed_fields
+        if invalid_fields:
+            raise ValueError(
+                "Unsupported subscription fields: "
+                + ", ".join(sorted(invalid_fields))
+            )
+
+        update_data = dict(updates)
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await self.db.collection("users").document(user_id).update(update_data)
+        logger.info("Updated Stripe subscription state for user %s", user_id)
+
     async def is_active(self, user_id: str) -> bool:
         """
         ユーザーがアクティブかどうかを確認します

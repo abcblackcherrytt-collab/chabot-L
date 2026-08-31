@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from app.clients.stripe import StripeClient, StripeError
 from app.core.config import settings
+from app.repositories.firestore_stripe_event_repository import (
+    FirestoreStripeEventRepository,
+)
+from app.repositories.firestore_user_repository import FirestoreUserRepository
+from app.services.line_service import LineService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,9 @@ class StripeService:
     def __init__(
         self,
         stripe_client: Optional[StripeClient] = None,
+        event_repository: Optional[FirestoreStripeEventRepository] = None,
+        user_repository: Optional[FirestoreUserRepository] = None,
+        line_service: Optional[LineService] = None,
     ):
         """
         Stripeサービスを初期化します
@@ -31,7 +39,28 @@ class StripeService:
             stripe_client: Stripeクライアント（オプション）
         """
         self.client = stripe_client or StripeClient()
+        self.event_repository = event_repository
+        self.user_repository = user_repository
+        self.line_service = line_service
         logger.info("Stripe service initialized")
+
+    def _event_repository(self) -> FirestoreStripeEventRepository:
+        """Webhook処理時だけFirestoreイベントリポジトリを生成する。"""
+        if self.event_repository is None:
+            self.event_repository = FirestoreStripeEventRepository()
+        return self.event_repository
+
+    def _user_repository(self) -> FirestoreUserRepository:
+        """Webhook処理時だけFirestoreユーザーリポジトリを生成する。"""
+        if self.user_repository is None:
+            self.user_repository = FirestoreUserRepository()
+        return self.user_repository
+
+    def _line_service(self) -> LineService:
+        """通知が必要な場合だけLINEサービスを生成する。"""
+        if self.line_service is None:
+            self.line_service = LineService()
+        return self.line_service
 
     async def create_customer(
         self,
@@ -292,43 +321,56 @@ class StripeService:
         """
         event_id = event.get("id")
         event_type = event.get("type")
-
-        # イベントIDの検証
-        if not event_id:
-            logger.warning("Webhook event missing ID")
+        if not event_id or not event_type:
+            logger.warning("Webhook event missing ID or type")
             return False
 
-        # 冪等性チェック
-        if self.client.is_event_processed(event_id):
-            logger.info(f"Event {event_id} already processed, skipping")
+        event_repository = self._event_repository()
+        claim_result = await event_repository.claim(
+            event_id=event_id,
+            event_type=event_type,
+            event_created=event.get("created"),
+        )
+        if claim_result == "completed":
+            logger.info("Webhook event already completed: %s", event_id)
             return True
+        if claim_result == "in_progress":
+            logger.warning("Webhook event is already processing: %s", event_id)
+            return False
 
-        logger.info(f"Processing webhook event: {event_type} ({event_id})")
-
+        logger.info("Processing webhook event: %s (%s)", event_type, event_id)
         try:
-            # イベントタイプに応じた処理
-            if event_type == "invoice.paid":
-                return await self._handle_invoice_paid(event)
-
-            elif event_type == "invoice.payment_failed":
-                return await self._handle_invoice_payment_failed(event)
-
-            elif event_type == "customer.subscription.created":
-                return await self._handle_subscription_created(event)
-
-            elif event_type == "customer.subscription.updated":
-                return await self._handle_subscription_updated(event)
-
-            elif event_type == "customer.subscription.deleted":
-                return await self._handle_subscription_deleted(event)
-
+            handlers = {
+                "invoice.paid": self._handle_invoice_paid,
+                "invoice.payment_failed": self._handle_invoice_payment_failed,
+                "customer.subscription.created": self._handle_subscription_created,
+                "customer.subscription.updated": self._handle_subscription_updated,
+                "customer.subscription.deleted": self._handle_subscription_deleted,
+            }
+            handler = handlers.get(event_type)
+            if handler is None:
+                logger.info("Unhandled event type accepted: %s", event_type)
+                success = True
             else:
-                logger.info(f"Unhandled event type: {event_type}")
-                return True
+                success = await handler(event)
 
-        except Exception as e:
-            logger.error(f"Error processing webhook event: {e}")
-            # イベントを処理済みとしてマークしない（再試行可能にするため）
+            if not success:
+                await event_repository.mark_failed(event_id, "handler_failed")
+                return False
+
+            await event_repository.mark_completed(event_id)
+            return True
+        except Exception as exc:
+            logger.error(
+                "Webhook event processing failed: type=%s error=%s",
+                event_type,
+                type(exc).__name__,
+                exc_info=True,
+            )
+            await event_repository.mark_failed(
+                event_id,
+                f"processing_error:{type(exc).__name__}",
+            )
             return False
 
     async def _handle_invoice_paid(
@@ -346,31 +388,28 @@ class StripeService:
         """
         invoice = event.get("data", {}).get("object", {})
         subscription_id = invoice.get("subscription")
-
-        if not subscription_id:
-            logger.warning("Invoice paid event missing subscription ID")
+        customer_id = invoice.get("customer")
+        if not subscription_id or not customer_id:
+            logger.warning("Invoice paid event missing subscription or customer")
             return False
 
-        logger.info(f"Invoice paid: subscription={subscription_id}, amount={invoice.get('amount')}")
+        user = await self._user_repository().find_by_stripe_customer_id(customer_id)
+        if not user:
+            logger.warning("User not found for paid invoice customer")
+            return False
 
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB 更新なし（ログのみ）。
-        # Phase 2 で有効化する接続ポイント:
-        #   - subscription_id から該当 Subscription レコードを特定し、
-        #     status / current_period_start / current_period_end を更新
-        # 関連: models/subscription.py [Phase 2 マーカー H2]
-        # ===================================================================
-        # （簡易実装：実際にはデータベースでサブスクリプション状態を更新）
-
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
+        await self._user_repository().update_subscription_data(
+            user["id"],
             {
-                "event_type": event["type"],
-                "processed_at": event["created"],
+                "subscription_status": "active",
+                "stripe_subscription_id": subscription_id,
+                "current_period_start": invoice.get("period_start"),
+                "current_period_end": invoice.get("period_end"),
+                "last_invoice_id": invoice.get("id"),
+                "last_invoice_status": "paid",
+                "last_payment_at": event.get("created"),
             },
         )
-
         return True
 
     async def _handle_invoice_payment_failed(
@@ -395,44 +434,30 @@ class StripeService:
         customer_id = invoice.get("customer")
         attempt_count = invoice.get("attempt_count", 0)
 
-        logger.warning(
-            f"Invoice payment failed: subscription={subscription_id}, "
-            f"attempt={attempt_count}"
-        )
+        if not customer_id:
+            logger.warning("Payment failed event missing customer")
+            return False
+        user = await self._user_repository().find_by_stripe_customer_id(customer_id)
+        if not user:
+            logger.warning("User not found for failed invoice customer")
+            return False
 
-        try:
-            # Firestore連携とLINE通知
-            from app.repositories.firestore_user_repository import FirestoreUserRepository
-            from app.services.line_service import LineService
-
-            user_repo = FirestoreUserRepository()
-            line_service = LineService()
-
-            # Stripe顧客IDからユーザーを検索
-            user = await user_repo.find_by_stripe_customer_id(customer_id)
-            if user:
-                # LINE通知（既存メソッド活用）
-                await line_service.send_subscription_notification(
-                    user["line_user_id"],
-                    f"❌ お支払いに失敗しました（{attempt_count}回目）。\n\n"
-                    "お支払い方法を確認してください。\n"
-                    "支払いが完了するまでサービスが制限される可能性があります。"
-                )
-
-                logger.info(f"Sent payment failure notification to user {user['id']}")
-
-        except Exception as e:
-            logger.error(f"Error in payment failed handler: {e}")
-
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
+        await self._user_repository().update_subscription_data(
+            user["id"],
             {
-                "event_type": event["type"],
-                "processed_at": event["created"],
+                "subscription_status": "past_due",
+                "stripe_subscription_id": subscription_id,
+                "last_invoice_id": invoice.get("id"),
+                "last_invoice_status": "payment_failed",
+                "payment_failed_at": event.get("created"),
             },
         )
-
+        await self._line_service().send_subscription_notification(
+            user["line_user_id"],
+            f"❌ お支払いに失敗しました（{attempt_count}回目）。\n\n"
+            "お支払い方法を確認してください。\n"
+            "支払いが完了するまでサービスが制限される可能性があります。",
+        )
         return True
 
     async def _handle_subscription_created(
@@ -454,73 +479,28 @@ class StripeService:
         customer_id = subscription.get("customer")
         subscription_id = subscription.get("id")
 
-        logger.info(f"Subscription created: {subscription_id}, customer={customer_id}")
-
-        try:
-            # Firestore連携
-            from app.repositories.firestore_user_repository import FirestoreUserRepository
-            from app.core.pricing import get_plan_from_price_id
-            from app.services.line_service import LineService
-
-            user_repo = FirestoreUserRepository()
-            line_service = LineService()
-
-            # Stripe顧客IDからユーザーを検索（既存メソッド活用）
-            user = await user_repo.find_by_stripe_customer_id(customer_id)
-            if not user:
-                logger.warning(f"User not found for customer: {customer_id}")
-                return False
-
-            # 価格IDからプランを特定
-            price_id = subscription.get("items", {}).get("data", [{}])[0].get("price", {}).get("id")
-            if not price_id:
-                logger.warning(f"Price ID not found in subscription: {subscription_id}")
-                return False
-
-            try:
-                plan = get_plan_from_price_id(price_id)
-
-                # Firestoreでプラン更新（既存メソッド活用）
-                await user_repo.update_subscription_plan(user["id"], plan)
-
-                logger.info(
-                    f"Updated user {user['id']} to plan {plan} after subscription created"
-                )
-
-                # LINE通知（既存メソッド活用）
-                await line_service.send_subscription_notification(
-                    user["line_user_id"],
-                    f"🎉 有料プランへのご登録が完了しました！\n\n"
-                    f"プラン: {plan.upper()}\n"
-                    f"サブスクリプションID: {subscription_id}"
-                )
-
-            except ValueError as e:
-                logger.error(f"Invalid price ID: {price_id}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Error in subscription created handler: {e}")
-            # エラーがあってもイベントを処理済みとしてマークしない（再試行可能にするため）
-            self.client.mark_event_processed(
-                event["id"],
-                {
-                    "event_type": event["type"],
-                    "processed_at": event["created"],
-                    "error": str(e),
-                },
-            )
+        if not customer_id or not subscription_id:
+            return False
+        user = await self._user_repository().find_by_stripe_customer_id(customer_id)
+        if not user:
+            logger.warning("User not found for created subscription customer")
             return False
 
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
-            {
-                "event_type": event["type"],
-                "processed_at": event["created"],
-            },
-        )
+        price_id = self._subscription_price_id(subscription)
+        if not price_id:
+            return False
+        from app.core.pricing import get_plan_from_price_id
 
+        plan = get_plan_from_price_id(price_id)
+        await self._user_repository().update_subscription_data(
+            user["id"],
+            self._subscription_updates(subscription, plan=plan),
+        )
+        await self._line_service().send_subscription_notification(
+            user["line_user_id"],
+            "🎉 有料プランへのご登録が完了しました！\n\n"
+            f"プラン: {plan.upper()}",
+        )
         return True
 
     async def _handle_subscription_updated(
@@ -537,33 +517,24 @@ class StripeService:
             処理が成功すればTrue
         """
         subscription = event.get("data", {}).get("object", {})
-        previous_attributes = event.get("data", {}).get("previous_attributes", {})
+        customer_id = subscription.get("customer")
+        if not customer_id or not subscription.get("id"):
+            return False
+        user = await self._user_repository().find_by_stripe_customer_id(customer_id)
+        if not user:
+            logger.warning("User not found for updated subscription customer")
+            return False
 
-        logger.info(
-            f"Subscription updated: {subscription.get('id')}, "
-            f"status={subscription.get('status')}"
+        plan = None
+        price_id = self._subscription_price_id(subscription)
+        if price_id:
+            from app.core.pricing import get_plan_from_price_id
+
+            plan = get_plan_from_price_id(price_id)
+        await self._user_repository().update_subscription_data(
+            user["id"],
+            self._subscription_updates(subscription, plan=plan),
         )
-
-        # ===== [Phase 2: Stripe + SQL 顧客/サブスクリプション管理] =====
-        # 現状（Phase 1）: DB 更新なし（ログのみ）。
-        # Phase 2 で有効化する接続ポイント:
-        #   - previous_attributes.status と新 status の差分から
-        #     Subscription.status / plan / 請求期間を更新
-        #   - 期限切れ（past_due/unpaid/canceled）への遷移でアクセス制限を強化
-        # 関連: models/subscription.py is_restricted() [Phase 2 マーカー H2]
-        # ===================================================================
-        # （簡易実装：ステータスの変化に応じた処理を実装）
-
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
-            {
-                "event_type": event["type"],
-                "processed_at": event["created"],
-                "previous_status": previous_attributes.get("status"),
-            },
-        )
-
         return True
 
     async def _handle_subscription_deleted(
@@ -585,73 +556,57 @@ class StripeService:
         customer_id = subscription.get("customer")
         subscription_id = subscription.get("id")
 
-        logger.info(f"Subscription deleted: {subscription_id}, customer={customer_id}")
-
-        try:
-            # Firestore連携
-            from app.repositories.firestore_user_repository import FirestoreUserRepository
-            from app.services.line_service import LineService
-
-            user_repo = FirestoreUserRepository()
-            line_service = LineService()
-
-            # Stripe顧客IDからユーザーを検索
-            user = await user_repo.find_by_stripe_customer_id(customer_id)
-            if not user:
-                logger.warning(f"User not found for customer: {customer_id}")
-                return False
-
-            # freeプランに戻す（有料解約後もfreeで継続利用可能）
-            await user_repo.update_subscription_plan(user["id"], "free")
-
-            logger.info(f"Updated user {user['id']} to free plan after subscription deleted")
-
-            # ユーザーは無効化しない（freeプランとして継続利用可能）
-            # LINE unfollowや明示的退会時のみ無効化
-
-            # LINE通知（既存メソッド活用）
-            await line_service.send_subscription_notification(
-                user["line_user_id"],
-                "📱 有料プランのサブスクリプションが終了しました。\n\n"
-                "フリープラン（1日3回）として継続利用可能です。\n\n"
-                "またのご利用をお待ちしております！"
-            )
-
-        except Exception as e:
-            logger.error(f"Error in subscription deleted handler: {e}")
-            # エラーがあってもイベントを処理済みとしてマークしない
-            self.client.mark_event_processed(
-                event["id"],
-                {
-                    "event_type": event["type"],
-                    "processed_at": event["created"],
-                    "error": str(e),
-                },
-            )
+        if not customer_id or not subscription_id:
+            return False
+        user = await self._user_repository().find_by_stripe_customer_id(customer_id)
+        if not user:
+            logger.warning("User not found for deleted subscription customer")
             return False
 
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
+        await self._user_repository().update_subscription_data(
+            user["id"],
             {
-                "event_type": event["type"],
-                "processed_at": event["created"],
+                "subscription_plan": "free",
+                "subscription_status": "active",
+                "stripe_subscription_id": None,
+                "current_period_start": None,
+                "current_period_end": None,
+                "cancel_at_period_end": False,
             },
         )
-
-        return True
-        #        )
-
-        # イベントを処理済みとしてマーク
-        self.client.mark_event_processed(
-            event["id"],
-            {
-                "event_type": event["type"],
-                "processed_at": event["created"],
-            },
+        await self._line_service().send_subscription_notification(
+            user["line_user_id"],
+            "📱 有料プランのサブスクリプションが終了しました。\n\n"
+            "フリープラン（1日3回）として継続利用可能です。",
         )
-
         return True
+
+    @staticmethod
+    def _subscription_price_id(subscription: Dict[str, Any]) -> Optional[str]:
+        """SubscriptionオブジェクトからPrice IDを安全に取得する。"""
+        items = subscription.get("items", {}).get("data", [])
+        if not items:
+            return None
+        return items[0].get("price", {}).get("id")
+
+    @staticmethod
+    def _subscription_updates(
+        subscription: Dict[str, Any],
+        plan: Optional[str],
+    ) -> Dict[str, Any]:
+        """Firestoreへ保存するSubscription状態を組み立てる。"""
+        updates = {
+            "subscription_status": subscription.get("status", "active"),
+            "stripe_subscription_id": subscription.get("id"),
+            "current_period_start": subscription.get("current_period_start"),
+            "current_period_end": subscription.get("current_period_end"),
+            "cancel_at_period_end": bool(
+                subscription.get("cancel_at_period_end", False)
+            ),
+        }
+        if plan:
+            updates["subscription_plan"] = plan
+        return updates
 
     async def health_check(self) -> Dict[str, Any]:
         """

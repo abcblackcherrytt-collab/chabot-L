@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     jwt_secret_keys: str = "your-secret-key-here"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 15
-    jwt_refresh_token_expire_days: int = 7
+    # LINE Bot利用者が登録導線で頻繁に再ログインしないためのローリング期間。
+    jwt_refresh_token_expire_days: int = 30
     jwt_key_rotation_days: int = 90
 
     # LINE Messaging API設定
@@ -89,7 +90,7 @@ class Settings(BaseSettings):
     qwen_location: str = "us-central1"
 
     # 分類用モデル設定（前段クエリ分類）
-    google_classification_model_name: str = "gemini-1.5-flash"
+    google_classification_model_name: str = "gemini-2.5-flash"
     google_classification_location: str = "us-central1"
 
     # CORS設定（カンマ区切りの文字列またはリスト）

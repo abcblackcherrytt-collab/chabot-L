@@ -9,6 +9,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.stripe_service import StripeService
 
 
+def _webhook_service(
+    *,
+    claim_result="claimed",
+    user=None,
+):
+    """Firestore依存をモックしたWebhookサービスを返す。"""
+    event_repository = MagicMock()
+    event_repository.claim = AsyncMock(return_value=claim_result)
+    event_repository.mark_completed = AsyncMock()
+    event_repository.mark_failed = AsyncMock()
+    user_repository = MagicMock()
+    user_repository.find_by_stripe_customer_id = AsyncMock(return_value=user)
+    user_repository.update_subscription_data = AsyncMock()
+    line_service = MagicMock()
+    line_service.send_subscription_notification = AsyncMock()
+    service = StripeService(
+        stripe_client=MagicMock(),
+        event_repository=event_repository,
+        user_repository=user_repository,
+        line_service=line_service,
+    )
+    return service, event_repository, user_repository, line_service
+
+
 class TestStripeService:
     """Stripeサービスのテストクラス"""
 
@@ -174,266 +198,152 @@ class TestStripeService:
         mock_client.list_prices.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_invoice_paid(self):
-        """
-        invoice.paid イベントが正しく処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
+    async def test_process_webhook_event_invoice_paid_updates_firestore(self):
+        """invoice.paidをFirestoreへ反映して完了マークすること。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, events, users, _ = _webhook_service(user=user)
         event = {
-            "id": "evt_test123",
+            "id": "evt_paid",
             "type": "invoice.paid",
             "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "in_test123",
-                    "subscription": "sub_test123",
-                    "amount": 1000,
-                }
-            },
+            "data": {"object": {
+                "id": "in_test123",
+                "customer": "cus_test123",
+                "subscription": "sub_test123",
+                "period_start": 100,
+                "period_end": 200,
+            }},
         }
 
-        result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_called_once()
+        assert await service.process_webhook_event(event) is True
+        updates = users.update_subscription_data.await_args.args[1]
+        assert updates["subscription_status"] == "active"
+        assert updates["last_invoice_status"] == "paid"
+        events.mark_completed.assert_awaited_once_with("evt_paid")
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_invoice_payment_failed(self):
-        """
-        invoice.payment_failed イベントが正しく処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
+    async def test_process_webhook_event_payment_failed_updates_and_notifies(self):
+        """支払い失敗を保存してLINE通知すること。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, events, users, line = _webhook_service(user=user)
         event = {
-            "id": "evt_test123",
+            "id": "evt_failed",
             "type": "invoice.payment_failed",
             "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "in_test123",
-                    "subscription": "sub_test123",
-                }
-            },
+            "data": {"object": {
+                "id": "in_test123",
+                "customer": "cus_test123",
+                "subscription": "sub_test123",
+                "attempt_count": 2,
+            }},
         }
 
-        with (
-            patch(
-                "app.repositories.firestore_user_repository.FirestoreUserRepository"
-            ) as user_repo_class,
-            patch("app.services.line_service.LineService") as line_service_class,
-        ):
-            user_repo_class.return_value.find_by_stripe_customer_id = AsyncMock(
-                return_value=None
-            )
-            line_service_class.return_value.send_subscription_notification = AsyncMock()
-            result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_called_once()
+        assert await service.process_webhook_event(event) is True
+        updates = users.update_subscription_data.await_args.args[1]
+        assert updates["subscription_status"] == "past_due"
+        line.send_subscription_notification.assert_awaited_once()
+        events.mark_completed.assert_awaited_once_with("evt_failed")
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_subscription_created(self):
-        """
-        customer.subscription.created イベントが正しく処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
-        event = {
-            "id": "evt_test123",
-            "type": "customer.subscription.created",
-            "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "sub_test123",
-                    "customer": "cus_test123",
-                    "items": {
-                        "data": [{"price": {"id": "price_test_basic"}}]
-                    },
-                }
-            },
+    async def test_subscription_created_and_updated_persist_full_state(self):
+        """created/updatedでプラン・状態・請求期間を保存すること。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, events, users, line = _webhook_service(user=user)
+        subscription = {
+            "id": "sub_test123",
+            "customer": "cus_test123",
+            "status": "active",
+            "current_period_start": 100,
+            "current_period_end": 200,
+            "items": {"data": [{"price": {"id": "price_test_basic"}}]},
         }
+        with patch("app.core.pricing.get_plan_from_price_id", return_value="basic"):
+            created = {
+                "id": "evt_created",
+                "type": "customer.subscription.created",
+                "created": 1,
+                "data": {"object": subscription},
+            }
+            assert await service.process_webhook_event(created) is True
+            updated = {
+                "id": "evt_updated",
+                "type": "customer.subscription.updated",
+                "created": 2,
+                "data": {"object": {**subscription, "status": "past_due"}},
+            }
+            assert await service.process_webhook_event(updated) is True
 
-        with (
-            patch(
-                "app.repositories.firestore_user_repository.FirestoreUserRepository"
-            ) as user_repo_class,
-            patch("app.services.line_service.LineService") as line_service_class,
-            patch("app.core.pricing.get_plan_from_price_id", return_value="basic"),
-        ):
-            user_repo = user_repo_class.return_value
-            user_repo.find_by_stripe_customer_id = AsyncMock(return_value={
-                "id": "user-123",
-                "line_user_id": "U_test123",
-            })
-            user_repo.update_subscription_plan = AsyncMock()
-            line_service_class.return_value.send_subscription_notification = AsyncMock()
-            result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_process_webhook_event_subscription_updated(self):
-        """
-        customer.subscription.updated イベントが正しく処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
-        event = {
-            "id": "evt_test123",
-            "type": "customer.subscription.updated",
-            "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "sub_test123",
-                    "status": "active",
-                },
-                "previous_attributes": {
-                    "status": "trialing",
-                }
-            },
-        }
-
-        result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_called_once()
+        first_updates = users.update_subscription_data.await_args_list[0].args[1]
+        second_updates = users.update_subscription_data.await_args_list[1].args[1]
+        assert first_updates["subscription_plan"] == "basic"
+        assert second_updates["subscription_status"] == "past_due"
+        line.send_subscription_notification.assert_awaited_once()
+        assert events.mark_completed.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_subscription_deleted(self):
-        """
-        customer.subscription.deleted イベントが正しく処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
+    async def test_subscription_deleted_returns_user_to_free(self):
+        """解約イベントでfreeへ戻しサブスクリプションIDを消すこと。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, events, users, line = _webhook_service(user=user)
         event = {
-            "id": "evt_test123",
+            "id": "evt_deleted",
             "type": "customer.subscription.deleted",
-            "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "sub_test123",
-                    "customer": "cus_test123",
-                }
-            },
+            "created": 1,
+            "data": {"object": {
+                "id": "sub_test123",
+                "customer": "cus_test123",
+            }},
         }
 
-        with (
-            patch(
-                "app.repositories.firestore_user_repository.FirestoreUserRepository"
-            ) as user_repo_class,
-            patch("app.services.line_service.LineService") as line_service_class,
-        ):
-            user_repo = user_repo_class.return_value
-            user_repo.find_by_stripe_customer_id = AsyncMock(return_value={
-                "id": "user-123",
-                "line_user_id": "U_test123",
-            })
-            user_repo.update_subscription_plan = AsyncMock()
-            line_service_class.return_value.send_subscription_notification = AsyncMock()
-            result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_called_once()
+        assert await service.process_webhook_event(event) is True
+        updates = users.update_subscription_data.await_args.args[1]
+        assert updates["subscription_plan"] == "free"
+        assert updates["stripe_subscription_id"] is None
+        line.send_subscription_notification.assert_awaited_once()
+        events.mark_completed.assert_awaited_once_with("evt_deleted")
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_already_processed(self):
-        """
-        既に処理済みのイベントがスキップされることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=True)
-        mock_client.mark_event_processed = MagicMock()
-
-        service = StripeService(stripe_client=mock_client)
-
+    async def test_webhook_failure_is_retryable(self):
+        """業務処理失敗時はfailedにして完了扱いしないこと。"""
+        service, events, _, _ = _webhook_service(user=None)
         event = {
-            "id": "evt_test123",
-            "type": "invoice.paid",
-            "created": 1234567890,
-            "data": {
-                "object": {
-                    "id": "in_test123",
-                    "subscription": "sub_test123",
-                }
-            },
+            "id": "evt_retry",
+            "type": "customer.subscription.deleted",
+            "created": 1,
+            "data": {"object": {"id": "sub_1", "customer": "cus_1"}},
         }
 
-        result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_not_called()
+        assert await service.process_webhook_event(event) is False
+        events.mark_failed.assert_awaited_once_with("evt_retry", "handler_failed")
+        events.mark_completed.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_missing_id(self):
-        """
-        IDがないイベントが適切に処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
+    async def test_completed_webhook_is_skipped(self):
+        """Firestoreで完了済みなら副作用を再実行しないこと。"""
+        service, events, users, _ = _webhook_service(claim_result="completed")
+        event = {"id": "evt_done", "type": "invoice.paid", "created": 1}
 
-        service = StripeService(stripe_client=mock_client)
-
-        event = {
-            "type": "invoice.paid",
-            "data": {
-                "object": {
-                    "id": "in_test123",
-                }
-            },
-        }
-
-        result = await service.process_webhook_event(event)
-
-        assert result is False
-        mock_client.is_event_processed.assert_not_called()
+        assert await service.process_webhook_event(event) is True
+        users.update_subscription_data.assert_not_awaited()
+        events.mark_completed.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_process_webhook_event_unhandled_type(self):
-        """
-        不明なイベントタイプが適切に処理されることをテスト
-        """
-        mock_client = MagicMock()
-        mock_client.is_event_processed = MagicMock(return_value=False)
-        mock_client.mark_event_processed = MagicMock()
+    async def test_in_progress_webhook_returns_retryable_failure(self):
+        """同時処理中の重複配信は非成功として再送させること。"""
+        service, events, _, _ = _webhook_service(claim_result="in_progress")
+        event = {"id": "evt_busy", "type": "invoice.paid", "created": 1}
 
-        service = StripeService(stripe_client=mock_client)
+        assert await service.process_webhook_event(event) is False
+        events.mark_completed.assert_not_awaited()
 
-        event = {
-            "id": "evt_test123",
-            "type": "unhandled.event",
-            "created": 1234567890,
-            "data": {
-                "object": {}
-            },
-        }
+    @pytest.mark.asyncio
+    async def test_unhandled_webhook_is_recorded_completed(self):
+        """未対応イベントも永続的に完了記録して再処理しないこと。"""
+        service, events, _, _ = _webhook_service()
+        event = {"id": "evt_unknown", "type": "unhandled.event", "created": 1}
 
-        result = await service.process_webhook_event(event)
-
-        assert result is True
-        mock_client.mark_event_processed.assert_not_called()
+        assert await service.process_webhook_event(event) is True
+        events.mark_completed.assert_awaited_once_with("evt_unknown")
 
     @pytest.mark.asyncio
     async def test_health_check_success(self):

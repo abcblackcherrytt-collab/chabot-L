@@ -8,7 +8,7 @@ import logging
 import urllib.parse
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -55,7 +55,7 @@ class SubscriptionStatusResponse(BaseModel):
     status: str = Field(..., description="サブスクリプションステータス")
     plan: str | None = Field(None, description="プラン名")
     subscription_id: str | None = Field(None, description="StripeサブスクリプションID")
-    current_period_end: str | None = Field(None, description="現在の期間終了日")
+    current_period_end: int | str | None = Field(None, description="現在の期間終了日")
     monthly_limit: int | None = Field(None, description="月次メッセージ制限")
 
 
@@ -73,6 +73,40 @@ def _checkout_login_url(plan: str) -> str:
     return_to = f"/api/{settings.api_version}/subscription/checkout/{plan}"
     query = urllib.parse.urlencode({"return_to": return_to})
     return f"/api/{settings.api_version}/auth/line?{query}"
+
+
+async def _authenticated_user(request: Request) -> tuple[str, str]:
+    """Refresh Cookieをローテーションし、認証ユーザーIDと新Tokenを返す。"""
+    refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="LINE Login is required",
+        )
+
+    tokens = await FirestoreAuthService().refresh(refresh_token)
+    access_payload = decode_token(tokens["access_token"]) if tokens else None
+    user_id = access_payload.get("sub") if access_payload else None
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="LINE Login session is invalid or expired",
+        )
+    return user_id, tokens["refresh_token"]
+
+
+def _validate_checkout_url(checkout_url: str) -> None:
+    """Stripe公式Checkoutホスト以外へのリダイレクトを拒否する。"""
+    parsed_checkout_url = urllib.parse.urlparse(checkout_url)
+    if (
+        parsed_checkout_url.scheme != "https"
+        or parsed_checkout_url.hostname != "checkout.stripe.com"
+    ):
+        logger.error("Rejected unexpected Checkout URL host")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid checkout destination",
+        )
 
 
 @router.get("/checkout/{plan}", response_model=None)
@@ -130,13 +164,7 @@ async def redirect_to_checkout(
             headers={"Cache-Control": "no-store"},
         )
 
-    parsed_checkout_url = urllib.parse.urlparse(checkout_url)
-    if parsed_checkout_url.scheme != "https" or parsed_checkout_url.hostname != "checkout.stripe.com":
-        logger.error("Rejected unexpected Checkout URL host")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid checkout destination",
-        )
+    _validate_checkout_url(checkout_url)
 
     response = RedirectResponse(url=checkout_url, status_code=303)
     set_refresh_token_cookie(response, tokens["refresh_token"])
@@ -168,7 +196,9 @@ async def checkout_cancel() -> HTMLResponse:
 
 @router.post("/checkout/create", response_model=CheckoutResponse)
 async def create_checkout_session(
-    request: CheckoutRequest,
+    payload: CheckoutRequest,
+    request: Request,
+    response: Response,
     subscription_service: Annotated[SubscriptionService, Depends(get_subscription_service)],
 ) -> CheckoutResponse:
     """
@@ -188,7 +218,8 @@ async def create_checkout_session(
         HTTPException: バリデーションエラー、Stripeエラーの場合
     """
     try:
-        plan = request.plan
+        user_id, rotated_refresh_token = await _authenticated_user(request)
+        plan = payload.plan
 
         # プランバリデーション
         if not validate_plan_availability(plan):
@@ -197,15 +228,13 @@ async def create_checkout_session(
                 detail=f"Invalid or unavailable plan: {plan}"
             )
 
-        # ユーザーID取得（認証ミドルウェアから取得する実装が必要）
-        # 仮実装としてテストユーザーIDを使用
-        user_id = "test_user_id"  # TODO: 認証ミドルウェアから取得
-
         # Checkoutセッション作成
         checkout_url = await subscription_service.create_checkout_session(
             user_id=user_id,
             plan=plan,
         )
+        _validate_checkout_url(checkout_url)
+        set_refresh_token_cookie(response, rotated_refresh_token)
 
         logger.info(f"Created checkout session for plan {plan}")
 
@@ -214,6 +243,8 @@ async def create_checkout_session(
             plan=plan,
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -265,6 +296,8 @@ async def get_available_plans() -> PlanInfoResponse:
 
 @router.get("/status", response_model=SubscriptionStatusResponse)
 async def get_subscription_status(
+    request: Request,
+    response: Response,
     subscription_service: Annotated[SubscriptionService, Depends(get_subscription_service)],
 ) -> SubscriptionStatusResponse:
     """
@@ -277,8 +310,7 @@ async def get_subscription_status(
         HTTPException: ステータス取得エラーの場合
     """
     try:
-        # ユーザーID取得（認証ミドルウェアから取得する実装が必要）
-        user_id = "test_user_id"  # TODO: 認証ミドルウェアから取得
+        user_id, rotated_refresh_token = await _authenticated_user(request)
 
         # サブスクリプションステータス取得
         status_data = await subscription_service.get_user_subscription_status(
@@ -286,9 +318,12 @@ async def get_subscription_status(
         )
 
         logger.info(f"Retrieved subscription status: {status_data.get('status')}")
+        set_refresh_token_cookie(response, rotated_refresh_token)
 
         return SubscriptionStatusResponse(**status_data)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting subscription status: {e}")
         raise HTTPException(

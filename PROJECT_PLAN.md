@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-28（Price ID未設定のStripe登録導線をローカル実装・検証）
+> **更新日**: 2026-08-31（認証・Stripe Webhook・Vertex AI SDK対策の実装と検証）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -15,20 +15,25 @@
 1. **本番版**: LINE Bot + Vertex AI RAG + FirestoreのPhase 2版がCloud Runで稼働中
 2. **次の検証**: 実LINEユーザーで回数制限・プラン別コーパス・follow/message/unfollowをE2E確認する
 
-2026-08-24 作業進捗:
+2026-08-31 現状確認:
 - **実DB確認**: Firestore Nativeデータベース `chabotline`（`nam5`）の存在を確認
 - **根本原因修正**: コードが誤って `(default)` を参照していたため、`FIRESTORE_DATABASE_ID=chabotline` を全実行経路へ追加
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
-- **テスト**: CI必須ゲート（Firestore / LINE / Vertex AI / Webhook処理順）62件、PostgreSQL Refresh Tokenを除くunit 91件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Run `chabot-service-00019-dx5`（`GIT_SHA=2d14eff`）へ性能改善とLINE Loginセッション永続化・認証強化をデプロイし、100%トラフィック・`/health` HTTP 200・デプロイ後ERRORログ0件を確認
+- **テスト**: GitHub Actions品質ゲート79件、PostgreSQL Refresh Tokenを除くローカルunit 110件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
+- **本番状態**: Cloud Run `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）へStripe登録URL導線までデプロイし、Ready・100%トラフィックを確認
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
-- **検証**: ローカルunit 106件、GitHub Actions run `33147833420` の拡張品質ゲート75件、公開LINE Login開始endpointのSecure Cookie / S256 PKCE確認に成功。実LINEアカウントでのcallback・自動更新E2Eは未確認
-- **ローカルStripe導線（本番未反映）**: LINEのBasic / Pro登録URLから、Price ID未設定中は準備中画面、設定後は保存済みセッションまたはLINE Loginを経由してStripe Checkoutへ遷移する導線を実装。品質ゲート79件・unit 110件に成功
+- **検証**: ローカルunit 110件、GitHub Actions run `33150433985` の品質ゲート79件に成功。公開 `/health` はHTTP 200、Basic / Pro登録URLはPrice ID未設定のためHTTP 503の準備中画面、成功・キャンセル画面はHTTP 200を確認。実LINEアカウントでのcallback・自動更新E2Eは未確認
+- **Stripe登録導線（本番反映済み・決済未有効）**: LINEのBasic / Pro登録URLをCloud Runへ設定済み。Price IDは意図どおり未設定で、設定後は保存済みセッションまたはLINE Loginを経由してStripe Checkoutへ遷移するコードを本番反映済み
+- **対策実装済み（本番反映待ち）**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を実装
+- **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
+- **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
 - **次ステップ**:
-  1. LINE実端末でのE2E検証実施
-  2. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
+  1. LINE実端末でfollow/message/unfollowとLINE Login復帰をE2E確認
+  2. 実装済みWebhook対策を本番反映・確認してからテストPrice IDを設定
+  3. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
+  4. Cloud Runのコールドスタート対策（min instanceまたは起動処理軽量化）を費用と比較して決定
 
 ### 0.1 フェーズ一覧
 
@@ -37,7 +42,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
-| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **コード実装完了・E2E未実施** |
+| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **登録URL本番反映済み・Price ID未設定・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
 
@@ -46,7 +51,7 @@
 - [x] 初期運用のデータストアはFirestoreとする。
 - [x] FastAPI起動時のPostgreSQL接続確認を一時停止する。
 - [保留] Cloud SQL、VPC Connector、Alembic本番適用は当面実施しない。
-- [x] サブスクリプションAPIは当面 `test_user_id` を使うテスト実装のまま残す。
+- [x] 既存のサブスクリプションPOST/status APIから固定 `test_user_id` を除去し、保存済みLINE Loginセッションによる実ユーザー認証を必須化する。
 - [x] 1日あたりの回数上限は次の値に統一する。
   - free: 3件
   - basic: 100件
@@ -60,7 +65,7 @@
 
 ## 1. 本番稼働状況
 
-### 1.1 2026-08-24確認結果と進捗
+### 1.1 2026-08-31確認結果と進捗
 
 **本番環境**:
 - [x] Cloud Runサービス `chabot-service` はReady。
@@ -72,6 +77,9 @@
 - [x] 認証永続化・性能改善をCloud Run `chabot-service-00019-dx5`（`GIT_SHA=2d14eff`）へデプロイし、100%トラフィックを確認。
 - [x] 公開LINE Login開始endpointで303、Secure / HttpOnly短期Cookie、S256 PKCEを確認。
 - [x] `chabot-service-00019-dx5` のデプロイ後ERRORログ0件を確認。
+- [x] Stripe登録導線をCloud Run `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）へデプロイし、GitHub Actions run `33150433985` の成功と100%トラフィックを確認。
+- [x] Price ID未設定を維持したまま、公開Basic / Pro登録URLのHTTP 503準備中画面と、成功・キャンセル画面のHTTP 200を確認。
+- [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
 
@@ -88,8 +96,8 @@
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud Runは認証永続化・性能改善を含むリビジョン `chabot-service-00019-dx5`（`GIT_SHA=2d14eff`）が100%稼働中。
-- Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化はmainへコミット・本番反映済み。
+- Cloud RunはStripe登録URL導線を含むリビジョン `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）が100%稼働中。
+- Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化、Price ID未設定のStripe登録URL導線はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
 
@@ -136,20 +144,20 @@
 - [x] `customer.subscription.deleted` のfreeプラン更新・LINE通知
 - [x] `invoice.payment_failed` のLINE通知
 - [x] Stripe / Firestore整合性チェックサービスの土台
-- [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（ローカルテスト済み・本番未反映、Price ID未設定）
-- [x] Checkout成功・キャンセル後の案内ページ（ローカルテスト済み・本番未反映）
-- [ ] `customer.subscription.updated` のFirestore状態更新
-- [ ] `invoice.paid` のFirestore状態・請求期間更新
-- [ ] Webhook冪等性をインメモリからFirestoreへ移行
+- [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
+- [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
+- [x] `customer.subscription.updated` のFirestore状態更新
+- [x] `invoice.paid` のFirestore状態・請求期間更新
+- [x] Webhook冪等性をインメモリからFirestore Transactionへ移行
 - [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
 
 ### 2.4 サブスクリプションAPIの扱い
 
-現在は意図的にテスト実装とする。
+旧テストAPIも本番公開を前提に認証必須へ統一した。
 
-- [x] Checkout作成とstatus取得は固定の `test_user_id` を使用
-- [ ] テストAPIを本番公開する場合、第三者が呼べないアクセス制御を追加
-- [ ] 実ユーザー課金へ進む段階で `get_current_user` に置換
+- [x] Checkout作成とstatus取得から固定の `test_user_id` を除去
+- [x] 保存済みRefresh Cookieを検証・ローテーションし、実ユーザーIDだけをサービスへ渡す
+- [x] Stripe公式 `checkout.stripe.com` 以外のCheckout URLを拒否
 - [ ] APIレスポンスの `monthly_limit` という名前を、実態に合わせて `daily_message_limit` へ移行
 
 ### 2.5 PROJECT_PLAN進捗管理スキル
@@ -171,7 +179,7 @@
 
 - [x] Python 3.14でのSQLAlchemy/FastAPI互換性を確認
 - [x] `google-cloud-firestore` をvenvへインストール
-- [x] 現行品質ゲート対象の自動テストに成功（Firestore / LINE / Vertex AI / Webhook処理順 62件、PostgreSQL Refresh Tokenを除くunit 91件）
+- [x] 現行品質ゲート対象の自動テスト103件に成功。全unitは既知のPostgreSQL Refresh Token 9件を除く118件が成功
 - [保留] PostgreSQL認証のunit / integration / E2Eテスト（現在のFirestore運用とCI品質ゲートの対象外）
 - [x] Firestore非同期I/O・Transaction・障害時案内の自動テストを追加
 - [x] 2026-08-24のテスト結果を本ファイルへ記録
@@ -179,10 +187,12 @@
 ### P0-2. CIを正式な品質ゲートにする
 
 - [ ] CIのPythonバージョン方針を確定（deploy.ymlは3.11、ローカルは3.14）
-- [ ] Firestore-only app startupテストをCIに追加
+- [x] Firestore-only app startupテストをCIに追加
 - [x] テスト環境変数にDATABASE_BACKEND=firestoreを追加
 - [x] CI必須ゲートをFirestore / LINE / Vertex AIに限定し、PostgreSQL認証テストと `continue-on-error` ステップを除外
-- [x] Vertex AIテストを現行の生成プロンプトとMarkdown除去仕様へ追従し、10件成功
+- [x] Vertex AIテストを現行Google Gen AI SDK、生成プロンプト、Markdown除去仕様へ追従し、12件成功
+- [x] デプロイ後smoke testへBasic / Pro準備中画面または認証リダイレクトと成功・キャンセル画面を追加
+- [x] checkout / setup-python / Google認証 / Buildx / github-scriptをNode.js 24対応版へ更新
 - [ ] FirestoreエミュレーターまたはモックをCIへ導入（将来対応）
 
 ### P0-3. Cloud Run環境変数をFirestore版へ更新
@@ -192,7 +202,8 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] `DATABASE_BACKEND=firestore` (.env.exampleとdeploy.ymlに追加済み)
 - [x] `FIRESTORE_PROJECT_ID=takahashi-451312` (.env.example更新済み)
 - [x] `FIRESTORE_DATABASE_ID=chabotline` を設定・deploy.yml・全Firestoreクライアントへ追加
-- [x] free用 `GOOGLE_CORPUS_ID=6942545116196241408` (.env.example更新済み)
+- [x] free用コーパスIDを `.env.example` とFirestore `rag_permissions` に設定し、実ドキュメントに値があることを読み取り確認
+- [x] deploy.ymlへ直接 `GOOGLE_CORPUS_ID` のSecret参照を追加し、既定値フォールバック時の設定ドリフトを解消
 - [x] 有料用 `GOOGLE_CORPUS_ID_PLAN1=1495705249682292736` (.env.example更新済み)
 - [x] GitHub Actionsのdeploy.ymlにFirestore用環境変数を追加
 - [x] Secret Managerにシークレット登録済み:
@@ -221,7 +232,7 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] 推奨: Stripe解約はfreeへ戻すだけにし、LINE unfollowや明示的退会時のみ無効化
 - [x] Stripe解約: freeプラン戻しのみ実装（ユーザーは無効化しない）
 - [x] LINE unfollow: アカウント全体を停止を実装
-- [ ] Firestore更新、LINE通知、テストを統合
+- [x] Firestore更新、LINE通知、テストを統合
 
 ### P0-6. Firestore経路からPostgreSQL依存を分離
 
@@ -248,8 +259,29 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] LINEメッセージ処理で取得済みユーザーデータを再利用し、同一ユーザーの直列再読込2回を削減
 - [x] RAG権限をプラン別に60秒キャッシュし、更新・削除時に無効化
 - [x] Vertex AI分類クライアントを遅延生成後に再利用し、ADC・クライアント生成の繰り返しを削減
+- [x] Vertex AI生成クライアントも遅延生成・再利用し、Cloud Run起動時のグローバルSDK初期化を除去
 - [x] ユーザー検索・権限・使用回数・分類・RAG生成の区間別レイテンシログを追加
 - [ ] Cloud Runへ反映後、実測レイテンシとエラー率を比較して次の最適化を判断
+
+### P0-8. Cloud Runのコールドスタート耐性
+
+2026-08-31のscale-to-zero状態への5件同時疎通では、`max-instances=3` の3インスタンスが起動する間に2件が「利用可能インスタンスなし」でHTTP 500となった。起動後は全endpointが期待どおり応答した。
+
+- [ ] `min-instances=1` の費用と、RAG / LINE初期化の遅延・遅延初期化による起動軽量化を比較する
+- [ ] `max-instances=3` の妥当性とGCP上限を確認する
+- [ ] デプロイ後に直列疎通だけでなく、scale-to-zeroからの小規模burst testを追加する
+- [ ] LINE Webhookの再送を前提に、コールドスタート時のユーザー影響を実端末で確認する
+
+### P0-9. Vertex AIモデル・SDKの移行
+
+本番とFirestore `rag_permissions` は `gemini-2.5-flash` を使用している。Google Cloud公式ライフサイクルでは2026-10-16が退役日で、`Gemini 3.5 Flash-Lite` または `Gemini 3.1 Flash-Lite` が移行候補とされている。また現行テストでは `vertexai.rag` の非推奨警告が出ている。
+
+- [ ] 移行候補モデルをRAG精度・応答時間・費用で比較する
+- [ ] 選定モデルへコード既定値とFirestoreのfree/basic/pro設定を同時更新し、回帰テストと実質問評価を行う
+- [ ] 2026-10-16より十分前にCloud Runへ反映し、旧モデル依存が残っていないことを確認する
+- [x] 回答生成を `vertexai.generative_models` / `vertexai.rag` からGoogle Gen AI SDKの `VertexRagStore` へ移行し、実コーパスで応答確認
+- [x] 分類モデルの旧 `gemini-1.5-flash` 既定値を現行 `gemini-2.5-flash` へ統一
+- [ ] RAGコーパス管理スクリプトの `vertexai.rag` をAgent Platformクライアントへ移行する
 
 ---
 
@@ -263,18 +295,21 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] Refresh TokenをHttpOnly / Secure Cookieで保持し、CookieによるAccess Token自動更新APIを実装（本番反映済み・実LINE E2E未確認）
 - [x] LINE LoginのS256 PKCEを正しく実装し、Refresh TokenをJSONへ露出しない（本番開始endpoint確認済み）
 - [x] 再フォロー時に既存Firestoreユーザーを再有効化し、unfollow時に全Refresh Tokenを失効（本番反映済み・実LINE E2E未確認）
-- [x] Stripe登録リンクでは保存済みRefresh Tokenを自動更新し、未認証時だけLINE Login後に元のプラン登録URLへ戻す（ローカルテスト済み・本番未反映）
+- [x] Stripe登録リンクでは保存済みRefresh Tokenを自動更新し、未認証時だけLINE Login後に元のプラン登録URLへ戻す（本番反映済み・Price ID未設定のため実LINE復帰E2Eは未確認）
+- [x] Refresh Token / Cookieを7日から30日のローリング期間へ延長し、登録URL・Checkout/status APIアクセス時に更新する
 - [ ] ログアウト・LINE unfollow時にCookie削除と全Refresh Token失効を行い、通常利用時に再ログインが表示されないことをE2E確認
 - [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
-- [ ] サブスクAPIの固定 `test_user_id` を認証ユーザーへ置換
+- [x] 公開POST `/subscription/checkout/create` とGET `/subscription/status` の固定 `test_user_id` を実認証へ置換
 
 ### P1-2. Stripe Webhookの信頼性
 
 - [ ] Webhook署名検証をテストモードで実確認
-- [ ] `subscription.created/updated/deleted` をすべてFirestoreへ反映
-- [ ] `invoice.paid/payment_failed` をFirestoreへ反映
-- [ ] イベントIDをFirestoreに保存し、重複処理を防止
-- [ ] 失敗時にイベントを処理済み扱いしないことを確認
+- [x] ビジネス処理失敗時にHTTP 500を返し、Stripeが再送できるレスポンスへ修正
+- [x] `subscription.created/updated/deleted` をすべてFirestoreへ反映
+- [x] `invoice.paid/payment_failed` をFirestoreへ反映
+- [x] イベントIDをFirestore Transactionで確保し、Cloud Runの複数インスタンス・再起動をまたぐ重複処理を防止
+- [x] ハンドラ例外時はfailed状態へ戻し、5分超過したprocessingイベントも再確保可能にする
+- [ ] LINE通知失敗をイベント全体の再試行対象にするか、通知outboxへ分離するか決定する
 - [ ] Stripe再送時のE2Eテスト
 - [ ] ログへStripe payloadや個人情報を過剰出力しないことを確認
 
@@ -283,10 +318,10 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] LINE Login ID TokenをLINE公式検証APIで署名・audience・nonce検証（本番反映済み・実LINE callback E2E未確認）
 - [x] state / nonceをインメモリからHttpOnly / Secure短期Cookieへ移行し、Cloud Runインスタンス間の不整合を解消（本番開始endpoint確認済み）
 - [ ] LINE Webhookと認証APIへレート制限を追加
-- [ ] リクエストボディサイズ上限を追加
+- [x] Stripe Webhookへ1MiBのリクエストボディサイズ上限を追加
 - [ ] TrustedHostMiddlewareを設定
 - [ ] CORSを本番ドメインだけに制限
-- [ ] Secret ManagerのStripeキーがテストキーであることを確認
+- [x] Secret ManagerのStripeキーがテストキーであることを値を表示せず確認（2026-08-31）
 - [ ] 本番切替時にテストキーと本番キーを混在させない
 
 ### P1-4. Firestore運用
@@ -326,14 +361,17 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] 区間別レイテンシログと回帰テストを追加し、CI品質ゲート64件・unit 97件に成功
 - [x] 認証永続化とともにCloud Run `chabot-service-00019-dx5` へ反映し、Ready・HTTP 200・ERRORログ0件を確認
 - [ ] 本番デプロイ後に実測レイテンシを取得し、Cloud Run設定を含む次の最適化を判断
+- [ ] scale-to-zeroからの同時アクセスで確認した一時HTTP 500について、min instance・起動軽量化・最大インスタンス数を比較して対策する
 
 ### Step 3: Stripeテストモード
 
-1. Basic / ProのテストPriceを作成
-2. 固定 `test_user_id` でCheckoutを検証
-3. Webhookのcreated/updated/deleted/paid/payment_failedを検証
-4. FirestoreとStripeの整合性を確認
-5. 解約後のユーザー状態を確認
+1. [x] Webhookの失敗時非2xx、Firestore冪等性、updated / paidの状態更新を実装
+2. [x] 固定 `test_user_id` の公開APIを実認証へ置換
+3. Basic / ProのテストPriceを作成し、Cloud RunへPrice IDを設定
+4. 実LINE認証ユーザーでCheckoutとログイン復帰を検証
+5. Webhookのcreated/updated/deleted/paid/payment_failedと再送を検証
+6. FirestoreとStripeの整合性を確認
+7. 解約後のユーザー状態を確認
 
 ### Step 4: 本番化判断
 
@@ -404,12 +442,16 @@ git diff --check
 
 # CI品質ゲート（Python 3.11）
 pytest \
+  tests/unit/test_auth_session.py \
+  tests/unit/test_subscription_checkout.py \
+  tests/unit/test_core/test_line_id_token.py \
   tests/unit/test_clients/test_line.py \
   tests/unit/test_clients/test_vertex_ai.py \
   tests/unit/test_repositories/test_firestore_repositories.py \
   tests/unit/test_services/test_line_webhook_pipeline.py \
   tests/unit/test_services/test_line_service.py \
   tests/unit/test_services/test_rag_service.py \
+  tests/unit/test_services/test_firestore_auth_service.py \
   -v --tb=short
 
 # 現行unit全体（保留中のPostgreSQL Refresh Tokenを除外）

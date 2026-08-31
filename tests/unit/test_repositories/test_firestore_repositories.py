@@ -8,6 +8,9 @@ from app.repositories import firestore_usage_repository as usage_module
 from app.repositories.firestore_rag_permission_repository import (
     FirestoreRagPermissionRepository,
 )
+from app.repositories.firestore_stripe_event_repository import (
+    FirestoreStripeEventRepository,
+)
 from app.repositories.firestore_usage_repository import FirestoreUsageRepository
 from app.repositories.firestore_user_repository import FirestoreUserRepository
 
@@ -164,3 +167,52 @@ def test_usage_date_uses_japan_timezone(monkeypatch) -> None:
     assert len(date_text) == 10
     assert date_text[4] == "-"
     assert date_text[7] == "-"
+
+
+@pytest.mark.asyncio
+async def test_stripe_event_claim_is_atomic(monkeypatch) -> None:
+    """未処理WebhookをTransaction内でprocessingとして確保すること。"""
+    import app.repositories.firestore_stripe_event_repository as event_module
+
+    monkeypatch.setattr(event_module.firestore, "async_transactional", lambda fn: fn)
+    snapshot = _snapshot("evt_1", {}, exists=False)
+    document = MagicMock()
+    document.get = AsyncMock(return_value=snapshot)
+    collection = MagicMock()
+    collection.document.return_value = document
+    transaction = MagicMock()
+    client = MagicMock()
+    client.collection.return_value = collection
+    client.transaction.return_value = transaction
+
+    repository = FirestoreStripeEventRepository(client=client)
+    result = await repository.claim("evt_1", "invoice.paid", 123)
+
+    assert result == "claimed"
+    transaction.set.assert_called_once()
+    written = transaction.set.call_args.args[1]
+    assert written["status"] == "processing"
+    assert written["attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stripe_event_claim_skips_completed(monkeypatch) -> None:
+    """完了済みWebhookを再確保しないこと。"""
+    import app.repositories.firestore_stripe_event_repository as event_module
+
+    monkeypatch.setattr(event_module.firestore, "async_transactional", lambda fn: fn)
+    snapshot = _snapshot("evt_1", {"status": "completed", "attempts": 1})
+    document = MagicMock()
+    document.get = AsyncMock(return_value=snapshot)
+    collection = MagicMock()
+    collection.document.return_value = document
+    transaction = MagicMock()
+    client = MagicMock()
+    client.collection.return_value = collection
+    client.transaction.return_value = transaction
+
+    repository = FirestoreStripeEventRepository(client=client)
+    result = await repository.claim("evt_1", "invoice.paid", 123)
+
+    assert result == "completed"
+    transaction.set.assert_not_called()

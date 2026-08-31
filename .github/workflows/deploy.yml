@@ -35,11 +35,11 @@ jobs:
     steps:
       # Checkout repository
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Set up Python
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -56,6 +56,7 @@ jobs:
           pytest \
             tests/unit/test_auth_session.py \
             tests/unit/test_subscription_checkout.py \
+            tests/unit/test_stripe_webhook.py \
             tests/unit/test_core/test_line_id_token.py \
             tests/unit/test_clients/test_line.py \
             tests/unit/test_clients/test_vertex_ai.py \
@@ -64,7 +65,9 @@ jobs:
             tests/unit/test_services/test_line_service.py \
             tests/unit/test_services/test_rag_service.py \
             tests/unit/test_services/test_firestore_auth_service.py \
+            tests/unit/test_services/test_stripe_service.py \
             -v --tb=short
+          python -c "from app.server import app; assert app is not None"
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           TEST_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
@@ -75,7 +78,7 @@ jobs:
       # Authenticate with Google Cloud using Workload Identity Federation
       - name: Authenticate to Google Cloud
         id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           token_format: access_token
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -83,7 +86,7 @@ jobs:
 
       # Set up Docker Buildx
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Configure Docker for Cloud Build
       - name: Configure Docker for Cloud Build
@@ -130,8 +133,8 @@ jobs:
             --timeout=60s \
             --concurrency=80 \
             --service-account=$SERVICE_ACCOUNT \
-            --set-env-vars="APP_ENV=$APP_ENV,DEBUG=False,GIT_SHA=$CURRENT_SHA_SHORT,DATABASE_BACKEND=firestore,FIRESTORE_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=chabotline,LINE_LOGIN_CALLBACK_URL=$SERVICE_URL/api/v1/auth/line/callback,SUBSCRIPTION_BASIC_URL=$SERVICE_URL/api/v1/subscription/checkout/basic,SUBSCRIPTION_PRO_URL=$SERVICE_URL/api/v1/subscription/checkout/pro,STRIPE_CHECKOUT_SUCCESS_URL=$SERVICE_URL/api/v1/subscription/success,STRIPE_CHECKOUT_CANCEL_URL=$SERVICE_URL/api/v1/subscription/cancel" \
-            --set-secrets=LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,LINE_LOGIN_CHANNEL_ID=line-login-channel-id:latest,LINE_LOGIN_CHANNEL_SECRET=line-login-channel-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=JWT_SECRET_KEYS:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID_PLAN1=GOOGLE_CORPUS_ID_PLAN1:latest \
+            --set-env-vars="APP_ENV=$APP_ENV,DEBUG=False,GIT_SHA=$CURRENT_SHA_SHORT,DATABASE_BACKEND=firestore,FIRESTORE_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=chabotline,JWT_REFRESH_TOKEN_EXPIRE_DAYS=30,LINE_LOGIN_CALLBACK_URL=$SERVICE_URL/api/v1/auth/line/callback,SUBSCRIPTION_BASIC_URL=$SERVICE_URL/api/v1/subscription/checkout/basic,SUBSCRIPTION_PRO_URL=$SERVICE_URL/api/v1/subscription/checkout/pro,STRIPE_CHECKOUT_SUCCESS_URL=$SERVICE_URL/api/v1/subscription/success,STRIPE_CHECKOUT_CANCEL_URL=$SERVICE_URL/api/v1/subscription/cancel" \
+            --set-secrets=LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,LINE_LOGIN_CHANNEL_ID=line-login-channel-id:latest,LINE_LOGIN_CHANNEL_SECRET=line-login-channel-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PUBLISHABLE_KEY=stripe-publishable-key:latest,JWT_SECRET_KEYS=JWT_SECRET_KEYS:latest,GOOGLE_PROJECT_ID=google-project-id:latest,GOOGLE_LOCATION=google-location:latest,GOOGLE_CORPUS_ID=google-corpus-id:latest,GOOGLE_CORPUS_ID_PLAN1=GOOGLE_CORPUS_ID_PLAN1:latest \
             --labels=commit-sha=$CURRENT_SHA_SHORT,deployed-by=github-actions,workflow-run=$GITHUB_RUN_NUMBER
             # [Phase 2: Stripe + SQL 管理] Cloud SQL 作成後に以下を有効化:
             #   1) --set-cloudsql-instances=$PROJECT_ID:$REGION:chabot-postgres を --service-account の直後に追加
@@ -159,14 +162,19 @@ jobs:
           for i in {1..30}; do
             if curl -f -s $SERVICE_URL/health > /dev/null 2>&1; then
               echo "Service is healthy!"
-              exit 0
+              break
             fi
             echo "Attempt $i/30: Waiting..."
             sleep 5
           done
 
-          echo "Service health check failed after 150 seconds"
-          exit 1
+          curl -f -s $SERVICE_URL/health > /dev/null
+          BASIC_STATUS=$(curl -s -o /dev/null -w "%{http_code}" $SERVICE_URL/api/v1/subscription/checkout/basic)
+          PRO_STATUS=$(curl -s -o /dev/null -w "%{http_code}" $SERVICE_URL/api/v1/subscription/checkout/pro)
+          test "$BASIC_STATUS" = "503" -o "$BASIC_STATUS" = "303"
+          test "$PRO_STATUS" = "503" -o "$PRO_STATUS" = "303"
+          curl -f -s $SERVICE_URL/api/v1/subscription/success > /dev/null
+          curl -f -s $SERVICE_URL/api/v1/subscription/cancel > /dev/null
 
       # Output deployment summary
       - name: Deployment summary
@@ -192,7 +200,7 @@ jobs:
       # Comment on PR (if deploying from PR)
       - name: Comment on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             github.rest.issues.createComment({
@@ -221,10 +229,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           token_format: access_token
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}

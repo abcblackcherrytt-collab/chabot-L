@@ -10,11 +10,9 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-import vertexai
 from google import genai
+from google.genai import types as genai_types
 from google.genai.types import HttpOptions
-from vertexai import rag
-from vertexai.generative_models import GenerativeModel, Tool
 
 from app.clients.base import BaseClient, BaseClientError
 from app.core.config import settings
@@ -187,6 +185,7 @@ class VertexAIClient(BaseClient):
         )
         self.qwen_model_name = qwen_model_name or settings.qwen_model_name
         self.qwen_location = qwen_location or settings.qwen_location
+        self._generation_client: Optional[genai.Client] = None
         self._classification_client: Optional[genai.Client] = None
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
@@ -237,21 +236,18 @@ class VertexAIClient(BaseClient):
 
     def _initialize_ai_platform(self):
         """
-        Vertex AI SDK を初期化します（セッション内1回）。
+        Google Gen AI SDK の遅延初期化設定をログ出力します。
 
-        vertexai.init() はグローバル状態を設定します。
-        認証はADC（Workload Identity / gcloud auth application-default login）。
-        初期化に失敗した場合は警告をログ出力し、実際のクエリ時にリトライします。
+        認証はADC（Workload Identity / gcloud auth application-default login）を
+        実クエリ時に解決し、生成したクライアントは後続リクエストで再利用します。
         """
-        try:
-            vertexai.init(project=self.project_id, location=self.location)
-            logger.info(
-                f"Vertex AI initialized: project={self.project_id}, "
-                f"location={self.location}, corpus={self.corpus_name}"
-            )
-        except Exception as e:
-            # 初期化失敗でもインスタンス生成は成功させ、クエリ時にエラー出力
-            logger.warning(f"Vertex AI initialization deferred: {e}")
+        logger.info(
+            "Vertex AI client configured for lazy initialization: "
+            "project=%s, location=%s, corpus=%s",
+            self.project_id,
+            self.location,
+            self.corpus_name,
+        )
 
     def _sanitize_input(self, text: str) -> str:
         """
@@ -361,7 +357,7 @@ class VertexAIClient(BaseClient):
         self,
         top_k: int,
         corpus_id: Optional[str] = None,
-    ) -> Tool:
+    ) -> genai_types.Tool:
         """
         RAG Retrieval Tool を構築します。
 
@@ -391,16 +387,18 @@ class VertexAIClient(BaseClient):
         )
         retrieval_config = self._build_retrieval_config(top_k)
 
-        return Tool.from_retrieval(
-            retrieval=rag.Retrieval(
-                source=rag.VertexRagStore(
-                    rag_resources=[rag.RagResource(rag_corpus=corpus_name)],
+        return genai_types.Tool(
+            retrieval=genai_types.Retrieval(
+                vertex_rag_store=genai_types.VertexRagStore(
+                    rag_resources=[
+                        genai_types.VertexRagStoreRagResource(rag_corpus=corpus_name)
+                    ],
                     rag_retrieval_config=retrieval_config,
-                ),
+                )
             )
         )
 
-    def _build_retrieval_config(self, top_k: int) -> rag.RagRetrievalConfig:
+    def _build_retrieval_config(self, top_k: int) -> genai_types.RagRetrievalConfig:
         """
         RagRetrievalConfig を構築します。
 
@@ -415,20 +413,12 @@ class VertexAIClient(BaseClient):
         """
         top_k = max(1, min(top_k, self._default_top_k))
 
-        try:
-            return rag.RagRetrievalConfig(
-                top_k=top_k,
-                filter=rag.utils.resources.Filter(
-                    vector_distance_threshold=self._vector_distance_threshold,
-                ),
-            )
-        except (AttributeError, TypeError) as e:
-            # rag.utils.resources.Filter が未サポートの SDK 版向け fallback
-            logger.warning(
-                f"vector_distance_threshold filter unavailable ({e}); "
-                f"falling back to top_k only"
-            )
-            return rag.RagRetrievalConfig(top_k=top_k)
+        return genai_types.RagRetrievalConfig(
+            top_k=top_k,
+            filter=genai_types.RagRetrievalConfigFilter(
+                vector_distance_threshold=self._vector_distance_threshold,
+            ),
+        )
 
     async def query(
         self,
@@ -480,11 +470,7 @@ class VertexAIClient(BaseClient):
         effective_corpus_id = corpus_id or self.corpus_id
         try:
             retrieval_tool = self._build_retrieval_tool(top_k, corpus_id=corpus_id)
-            model = GenerativeModel(
-                model_name=effective_model_name,
-                tools=[retrieval_tool],
-                system_instruction=self.system_instruction,
-            )
+            client = self._get_generation_client()
 
             logger.info(
                 f"Querying Vertex AI RAG (model={effective_model_name}, "
@@ -495,7 +481,15 @@ class VertexAIClient(BaseClient):
 
             # SDK は同期 API → asyncio.to_thread でラップ（イベントループをブロックしない）
             generation_started = time.perf_counter()
-            response = await asyncio.to_thread(model.generate_content, generation_prompt)
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=effective_model_name,
+                contents=generation_prompt,
+                config=genai_types.GenerateContentConfig(
+                    tools=[retrieval_tool],
+                    system_instruction=self.system_instruction,
+                ),
+            )
             generation_ms = (time.perf_counter() - generation_started) * 1000
 
             answer, contexts, confidence = self._extract_response(response)
@@ -556,11 +550,22 @@ class VertexAIClient(BaseClient):
             logger.warning(f"Query classification failed; continuing without classification: {e}")
             return DEFAULT_QUERY_CLASSIFICATION.copy()
 
+    def _get_generation_client(self) -> genai.Client:
+        """RAG回答生成用クライアントを遅延生成し、後続リクエストで再利用する。"""
+        if self._generation_client is None:
+            self._generation_client = genai.Client(
+                enterprise=True,
+                project=self.project_id,
+                location=self.location,
+                http_options=HttpOptions(api_version="v1"),
+            )
+        return self._generation_client
+
     def _get_classification_client(self) -> genai.Client:
         """分類用クライアントを遅延生成し、後続リクエストで再利用する。"""
         if self._classification_client is None:
             self._classification_client = genai.Client(
-                vertexai=True,
+                enterprise=True,
                 project=self.project_id,
                 location=self.classification_location,
                 http_options=HttpOptions(api_version="v1"),
@@ -649,7 +654,7 @@ class VertexAIClient(BaseClient):
         confidence: グラウンディング有無のヒューリスティック（チャンクあり=0.85 / なし=0.0）。
 
         Args:
-            response: GenerativeModel.generate_content の応答
+            response: Google Gen AI SDK generate_content の応答
 
         Returns:
             (回答テキスト, コンテキストリスト, 信頼度)
@@ -722,10 +727,10 @@ class VertexAIClient(BaseClient):
         """
         クライアントを閉じます。
 
-        vertexai SDK はグローバル状態を使用し、クローズすべきクライアント
-        チャネルを持たないため no-op です。rag_service.py の async with 構文用に残します。
+        同期 Google Gen AI SDK クライアントを再利用しており、ここでは no-op です。
+        rag_service.py の async with 構文用に残します。
         """
-        logger.debug("Vertex AI client close (no-op: SDK uses global state)")
+        logger.debug("Vertex AI client close (no-op: synchronous SDK client reused)")
 
     async def __aenter__(self):
         """非同期コンテキストマネージャーの開始"""

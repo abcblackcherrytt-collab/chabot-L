@@ -3,6 +3,7 @@ Stripe Webhookエンドポイント
 StripeからのWebhookイベントを受信・処理するエンドポイントを定義します。
 """
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -14,6 +15,7 @@ from app.clients.stripe import StripeError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
 
 
 class ErrorResponse(BaseModel):
@@ -49,15 +51,20 @@ async def handle_stripe_webhook(
 
     署名検証とイベント処理を行います。
 
-    Phase 1（現在）: Stripe 側で Webhook エンドポイント未設定のため実イベントは来ない。
-      ルータ自体は server.py で登録済み（削除しない）。
-    Phase 2: Stripe 側でエンドポイント登録後に有効化。各イベントハンドラでの
-      DB 連携は stripe_service 内の [Phase 2] マーカーを参照。
+    署名検証後にFirestoreで冪等処理し、業務処理失敗時はStripeが
+    再送できるようHTTP 500を返します。
     """
     from app.clients.stripe import StripeClient
     from app.services.stripe_service import StripeService
 
     try:
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_WEBHOOK_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Webhook payload too large",
+            )
+
         # 生のリクエストボディを取得（重要：JSONパース前）
         payload_bytes = await request.body()
 
@@ -65,6 +72,11 @@ async def handle_stripe_webhook(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Empty request body",
+            )
+        if len(payload_bytes) > MAX_WEBHOOK_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Webhook payload too large",
             )
 
         # Stripeクライアントで署名検証
@@ -75,7 +87,6 @@ async def handle_stripe_webhook(
         )
 
         # 署名が有効なため、ペイロードをパース
-        import json
         event = json.loads(payload_bytes.decode("utf-8"))
 
         logger.info(
@@ -89,8 +100,10 @@ async def handle_stripe_webhook(
 
         if not success:
             logger.warning(f"Webhook event processing failed: {event.get('id')}")
-            # 失敗しても200を返す（再試行を防ぐため）
-            # Stripeは200以外のステータスで再試行する
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Webhook event processing failed",
+            )
 
         return WebhookResponse(
             status="processed",

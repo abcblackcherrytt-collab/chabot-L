@@ -129,3 +129,71 @@ async def test_authenticated_checkout_link_redirects_to_stripe(
         plan="pro",
     )
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkout_api_requires_line_session(
+    monkeypatch,
+    checkout_service,
+) -> None:
+    """旧POST Checkout APIが固定ユーザーではなく認証を必須にすること。"""
+    monkeypatch.setattr(subscription_api, "validate_plan_availability", lambda plan: True)
+    app.dependency_overrides[subscription_api.get_subscription_service] = (
+        lambda: checkout_service
+    )
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/subscription/checkout/create",
+                json={"plan": "basic"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    checkout_service.create_checkout_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkout_api_uses_authenticated_user(
+    monkeypatch,
+    checkout_service,
+) -> None:
+    """旧POST Checkout APIも実認証ユーザーIDを使用すること。"""
+    monkeypatch.setattr(subscription_api, "validate_plan_availability", lambda plan: True)
+    auth_service = MagicMock()
+    auth_service.refresh = AsyncMock(return_value={
+        "access_token": "new-access",
+        "refresh_token": "new-refresh",
+    })
+    monkeypatch.setattr(subscription_api, "FirestoreAuthService", lambda: auth_service)
+    monkeypatch.setattr(
+        subscription_api,
+        "decode_token",
+        lambda token: {"sub": "real-user-id"},
+    )
+    app.dependency_overrides[subscription_api.get_subscription_service] = (
+        lambda: checkout_service
+    )
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(
+                REFRESH_TOKEN_COOKIE_NAME,
+                "saved-refresh",
+                path="/api/v1",
+            )
+            response = await client.post(
+                "/api/v1/subscription/checkout/create",
+                json={"plan": "basic"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    checkout_service.create_checkout_session.assert_awaited_once_with(
+        user_id="real-user-id",
+        plan="basic",
+    )
+    assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in response.headers["set-cookie"]

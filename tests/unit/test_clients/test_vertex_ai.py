@@ -55,6 +55,21 @@ class TestVertexAIClient:
         assert first is second
         client_class.assert_called_once()
 
+    def test_generation_client_is_reused(self):
+        """回答生成ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
+        with (
+            patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"),
+            patch("app.clients.vertex_ai.genai.Client") as client_class,
+        ):
+            client_class.return_value = MagicMock()
+            client = VertexAIClient()
+
+            first = client._get_generation_client()
+            second = client._get_generation_client()
+
+        assert first is second
+        client_class.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_query_passes_default_system_instruction_to_model(self):
         """RAG回答生成モデルへ既定のシステムプロンプトが渡されることを確認する。"""
@@ -67,20 +82,22 @@ class TestVertexAIClient:
             client = VertexAIClient()
 
             with patch.object(client, "_build_retrieval_tool", return_value=MagicMock()):
-                with patch("app.clients.vertex_ai.GenerativeModel") as model_class:
-                    model = MagicMock()
-                    model.generate_content.return_value = MockResponse()
-                    model_class.return_value = model
+                generation_client = MagicMock()
+                generation_client.models.generate_content.return_value = MockResponse()
+                with patch.object(
+                    client,
+                    "_get_generation_client",
+                    return_value=generation_client,
+                ):
 
                     result = await client.query(
                         text="  肩関節外転のROM制限は何を評価しますか？  ",
                         include_context=False,
                     )
 
-        assert model_class.call_args.kwargs["system_instruction"] == client.system_instruction
-        model.generate_content.assert_called_once_with(
-            "ユーザーの質問:\n肩関節外転のROM制限は何を評価しますか？"
-        )
+        call_kwargs = generation_client.models.generate_content.call_args.kwargs
+        assert call_kwargs["contents"] == "ユーザーの質問:\n肩関節外転のROM制限は何を評価しますか？"
+        assert call_kwargs["config"].system_instruction == client.system_instruction
         # 現在の実装では回答：/要約：は残る（これらはLLM出力の一部）
         # _strip_markdown()はMarkdownのみ削除
         assert "回答：" in result["answer"] or "要約：" in result["answer"]
