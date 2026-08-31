@@ -206,9 +206,9 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] deploy.ymlへ直接 `GOOGLE_CORPUS_ID` のSecret参照を追加し、既定値フォールバック時の設定ドリフトを解消
 - [x] 有料用 `GOOGLE_CORPUS_ID_PLAN1=1495705249682292736` (.env.example更新済み)
 - [x] GitHub Actionsのdeploy.ymlにFirestore用環境変数を追加
-- [x] Secret Managerにシークレット登録済み:
-  - `google-corpus-id`: 6942545116196241408 ✅
-  - `google-corpus-id-plan1`: 1495705249682292736 ✅
+- [x] Secret Managerにシークレット登録済み（実在名を2026-08-31に再確認）:
+  - `GOOGLE_CORPUS_ID` ✅
+  - `GOOGLE_CORPUS_ID_PLAN1` ✅
 - [x] Cloud RunサービスアカウントへFirestoreアクセス権を付与・確認
   - サービスアカウント: `chabot-sa@takahashi-451312.iam.gserviceaccount.com`
   - 権限: `roles/datastore.user` 付与済み ✅
