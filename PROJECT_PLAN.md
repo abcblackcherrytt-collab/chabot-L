@@ -20,18 +20,18 @@
 - **根本原因修正**: コードが誤って `(default)` を参照していたため、`FIRESTORE_DATABASE_ID=chabotline` を全実行経路へ追加
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
-- **テスト**: GitHub Actions品質ゲート79件、PostgreSQL Refresh Tokenを除くローカルunit 110件がすべて成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Run `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）へStripe登録URL導線までデプロイし、Ready・100%トラフィックを確認
+- **テスト**: GitHub Actions品質ゲート103件、全unitは既知のPostgreSQL Refresh Token 9件を除く118件が成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
+- **本番状態**: Cloud Run `chabot-service-00022-2vv`（`GIT_SHA=e8315e1`）へ認証・Stripe Webhook・Vertex AI SDK対策をデプロイし、Ready・100%トラフィックを確認
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
-- **検証**: ローカルunit 110件、GitHub Actions run `33150433985` の品質ゲート79件に成功。公開 `/health` はHTTP 200、Basic / Pro登録URLはPrice ID未設定のためHTTP 503の準備中画面、成功・キャンセル画面はHTTP 200を確認。実LINEアカウントでのcallback・自動更新E2Eは未確認
+- **検証**: ローカル対象テスト118件、GitHub Actions run `33347377056` の品質ゲート103件に成功。公開 `/health` はHTTP 200、Basic / Pro登録URLはPrice ID未設定のためHTTP 503、成功・キャンセル画面はHTTP 200、未認証APIはHTTP 401を確認。実LINEアカウントでのcallback・自動更新E2Eは未確認
 - **Stripe登録導線（本番反映済み・決済未有効）**: LINEのBasic / Pro登録URLをCloud Runへ設定済み。Price IDは意図どおり未設定で、設定後は保存済みセッションまたはLINE Loginを経由してStripe Checkoutへ遷移するコードを本番反映済み
-- **対策実装済み（本番反映待ち）**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を実装
+- **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
 - **次ステップ**:
   1. LINE実端末でfollow/message/unfollowとLINE Login復帰をE2E確認
-  2. 実装済みWebhook対策を本番反映・確認してからテストPrice IDを設定
+  2. テストPrice IDを設定し、実Stripe Webhook署名・再送をE2E確認
   3. free 3件 / basic 100件 / pro 500件とプラン別コーパス切替を確認
   4. Cloud Runのコールドスタート対策（min instanceまたは起動処理軽量化）を費用と比較して決定
 
@@ -42,7 +42,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
-| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **登録URL本番反映済み・Price ID未設定・E2E未実施** |
+| Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Webhook対策まで本番反映済み・Price ID未設定・E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
 
@@ -79,6 +79,9 @@
 - [x] `chabot-service-00019-dx5` のデプロイ後ERRORログ0件を確認。
 - [x] Stripe登録導線をCloud Run `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）へデプロイし、GitHub Actions run `33150433985` の成功と100%トラフィックを確認。
 - [x] Price ID未設定を維持したまま、公開Basic / Pro登録URLのHTTP 503準備中画面と、成功・キャンセル画面のHTTP 200を確認。
+- [x] 認証・Stripe Webhook・Vertex AI SDK対策を `chabot-service-00022-2vv`（`GIT_SHA=e8315e1`）へデプロイし、GitHub Actions run `33347377056` の成功と100%トラフィックを確認。
+- [x] 新リビジョンでRefresh Token 30日、free/paidコーパスSecret参照、Price ID未設定を確認。freeコーパス3ファイル・paidコーパス16ファイルの存在も読み取り確認。
+- [x] 新リビジョンで `/health` 200、Basic/Pro 503、成功/キャンセル200、未認証status/POST Checkout 401を確認。意図した503リクエストログを除くアプリ内部ERRORログ0件。
 - [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
@@ -90,14 +93,15 @@
 - [x] Firestore回数制御Transaction化実装（increment_with_limit_check）
 - [x] Stripe解約フロー矛盾解消（Stripe解約→free継続、LINE unfollow→無効化）
 - [x] Cloud Run環境変数Firestore版更新（.env.example、deploy.yml修正）
+- [x] Cloud Runへ `JWT_REFRESH_TOKEN_EXPIRE_DAYS=30` とfree/paidコーパスSecret参照を反映
 - [x] CI品質ゲート更新（Firestore / LINE / Vertex AI / Webhook処理順の62件がローカル・GitHub Actionsともに成功）
 - [x] Secret Managerシークレット登録済み確認（google-corpus-id関連）
 
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud RunはStripe登録URL導線を含むリビジョン `chabot-service-00020-w2r`（`GIT_SHA=23aceae`）が100%稼働中。
-- Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化、Price ID未設定のStripe登録URL導線はmainへコミット・本番反映済み。
+- Cloud Runは認証・Webhook・Vertex AI SDK対策を含むリビジョン `chabot-service-00022-2vv`（`GIT_SHA=e8315e1`）が100%稼働中。
+- Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化、Stripe登録URL導線、Webhook信頼性対策はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
 
@@ -203,7 +207,7 @@ Firestore版に必要な設定をデプロイ設定へ追加し、本番リビ�
 - [x] `FIRESTORE_PROJECT_ID=takahashi-451312` (.env.example更新済み)
 - [x] `FIRESTORE_DATABASE_ID=chabotline` を設定・deploy.yml・全Firestoreクライアントへ追加
 - [x] free用コーパスIDを `.env.example` とFirestore `rag_permissions` に設定し、実ドキュメントに値があることを読み取り確認
-- [x] deploy.ymlへ直接 `GOOGLE_CORPUS_ID` のSecret参照を追加し、既定値フォールバック時の設定ドリフトを解消
+- [x] deploy.ymlへ直接 `GOOGLE_CORPUS_ID` のSecret参照を追加し、新リビジョンで反映確認して設定ドリフトを解消
 - [x] 有料用 `GOOGLE_CORPUS_ID_PLAN1=1495705249682292736` (.env.example更新済み)
 - [x] GitHub Actionsのdeploy.ymlにFirestore用環境変数を追加
 - [x] Secret Managerにシークレット登録済み（実在名を2026-08-31に再確認）:
@@ -272,6 +276,8 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [ ] デプロイ後に直列疎通だけでなく、scale-to-zeroからの小規模burst testを追加する
 - [ ] LINE Webhookの再送を前提に、コールドスタート時のユーザー影響を実端末で確認する
 
+常時起動は継続費用が発生するため、今回のデプロイでは `min-instances=0` を維持した。SDK・Firestoreクライアントを遅延/共有化する無償範囲の軽量化は反映済み。
+
 ### P0-9. Vertex AIモデル・SDKの移行
 
 本番とFirestore `rag_permissions` は `gemini-2.5-flash` を使用している。Google Cloud公式ライフサイクルでは2026-10-16が退役日で、`Gemini 3.5 Flash-Lite` または `Gemini 3.1 Flash-Lite` が移行候補とされている。また現行テストでは `vertexai.rag` の非推奨警告が出ている。
@@ -282,6 +288,9 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] 回答生成を `vertexai.generative_models` / `vertexai.rag` からGoogle Gen AI SDKの `VertexRagStore` へ移行し、実コーパスで応答確認
 - [x] 分類モデルの旧 `gemini-1.5-flash` 既定値を現行 `gemini-2.5-flash` へ統一
 - [ ] RAGコーパス管理スクリプトの `vertexai.rag` をAgent Platformクライアントへ移行する
+
+補足: ローカル個人用 `.env` の `GOOGLE_LOCATION` は古い `asia-northeast1` のため、ローカル実API検証では `us-central1` を明示した。本番Secretは `us-central1` であることを確認済み。
+`gemini-3.1-flash-lite` は現行RAGリージョンの実API確認で404となったため切り替えず、互換モデル確定までは `gemini-2.5-flash` を維持する。
 
 ---
 
@@ -352,6 +361,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 6. [ ] free 3件 / basic 100件 / pro 500件を確認
 7. [ ] プラン別コーパス切替を確認
 8. [ ] LINE実端末でfollow/message/unfollowを確認
+9. [x] free/paid両RAGコーパスの存在・ファイル件数を読み取り確認
 
 ### Step 2.5: パフォーマンス最適化（本番反映済み・実測比較待ち）
 
@@ -365,8 +375,8 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 ### Step 3: Stripeテストモード
 
-1. [x] Webhookの失敗時非2xx、Firestore冪等性、updated / paidの状態更新を実装
-2. [x] 固定 `test_user_id` の公開APIを実認証へ置換
+1. [x] Webhookの失敗時非2xx、Firestore冪等性、updated / paidの状態更新を実装・本番反映
+2. [x] 固定 `test_user_id` の公開APIを実認証へ置換・本番401確認
 3. Basic / ProのテストPriceを作成し、Cloud RunへPrice IDを設定
 4. 実LINE認証ユーザーでCheckoutとログイン復帰を検証
 5. Webhookのcreated/updated/deleted/paid/payment_failedと再送を検証
@@ -375,8 +385,8 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 ### Step 4: 本番化判断
 
-1. 固定テストユーザーを実認証へ置換
-2. CIのテスト失敗許容を解除
+1. [x] 固定テストユーザーを実認証へ置換
+2. [x] CIの必須品質ゲートでテスト失敗を許容しない
 3. ステージングで回帰テスト
 4. Stripe本番キー・Price・Webhookを設定
 5. 段階的に本番へ反映し、監視する
