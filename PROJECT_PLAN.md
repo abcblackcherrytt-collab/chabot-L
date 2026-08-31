@@ -21,15 +21,15 @@
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
 - **テスト**: ローカル品質ゲート111件、全unitは既知のPostgreSQL Refresh Token 9件を除く126件が成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Run `chabot-service-00026-r62`（`GIT_SHA=548619f`）へプラン別生成プロンプトとfreeコーパス根拠の回答方針をデプロイし、Ready・100%トラフィックを確認
+- **本番状態**: Cloud Run `chabot-service-00028-cvl`（`GIT_SHA=a89ac52`）へプラン別生成プロンプト、free用Secretフォールバック、LINE Login callback修正をデプロイし、Ready・100%トラフィックを確認
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
-- **検証**: 最新ローカル品質ゲート111件・対象unit 126件に成功。現行本番はGitHub Actions run `33367041573` に成功し、公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303。実LINE callbackで既存bcrypt障害を検出しローカル修正済み。本番再反映と実端末再確認が必要
+- **検証**: ローカル品質ゲート111件・対象unit 126件、GitHub Actions run `33367481704` に成功。公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303、最新リビジョンのERRORログ0件。LINE Login callbackとfree質問の実端末再確認が必要
 - **Stripe登録導線（テストPrice本番反映済み）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Manager経由でCloud Runへ反映し、準備中HTTP 503から認証導線HTTP 303へ切り替わったことを確認。実LINE Checkout E2Eは未確認
 - **既存友だち対応（本番反映済み・実端末E2E待ち）**: Phase 2導入前から友だちでFirestoreユーザーがない場合、最初のテキストメッセージでLINEプロフィールと署名検証済みuserIdからfreeアカウントを自動作成し、そのメッセージをfree枠として継続処理する。プロフィール取得失敗時もuserIdから登録し、同一LINE IDには安定したドキュメントIDを使って重複作成を抑止する
 - **プラン別生成指示（本番反映済み・実端末E2E待ち）**: 共通のです・ます調、辛口1か所、回答＋要約、原則500字以内を維持し、freeはfreeコーパスを根拠としてユーザーの質問へ直接答える「結論→基礎的根拠→確認点」、basic/proはpaidコーパスの複数資料を統合する「結論→根拠・機序→評価・介入への適用→限界」に分岐する。freeで取得情報が不足する場合は一般知識・推測で補完せず、不足範囲を明示する
-- **freeコーパス既定値（ローカル修正・本番未反映）**: 通常はFirestoreのfree権限設定からコーパスIDを渡す。ID省略時も有料用へ誤接続しないよう、Vertex AIクライアントの既定値をSecret `GOOGLE_CORPUS_ID`（free用）へ修正する
-- **LINE Login callback障害（ローカル修正・本番未反映）**: 実端末callbackで、長いRefresh Tokenをpasslib/bcryptへ渡した際の72バイト制限によりHTTP 500を確認。高エントロピーのRefresh Token保存をSHA-256ダイジェスト＋定時間比較へ変更し、旧bcryptハッシュの検証互換を維持する
+- **freeコーパス既定値（本番反映済み）**: 通常はFirestoreのfree権限設定からコーパスIDを渡す。ID省略時も有料用へ誤接続しないよう、Vertex AIクライアントの既定値をSecret `GOOGLE_CORPUS_ID`（free用）へ修正した
+- **LINE Login callback障害（本番修正済み・実端末再確認待ち）**: 実端末callbackで、長いRefresh Tokenをpasslib/bcryptへ渡した際の72バイト制限によりHTTP 500を確認。高エントロピーのRefresh Token保存をSHA-256ダイジェスト＋定時間比較へ変更し、旧bcryptハッシュの検証互換を維持した
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
@@ -89,6 +89,7 @@
 - [x] StripeテストPrice IDを `chabot-service-00023-tqm`（`GIT_SHA=fd9ecd7`）へ反映し、GitHub Actions run `33363660659` の成功、100%トラフィック、Price Secret参照、`/health` 200、Basic/Pro 303、未認証status 401、ERRORログ0件を確認。
 - [x] 既存友だちの初回トークfree自動登録を `chabot-service-00024-fb2`（`GIT_SHA=afa7960`）へ反映し、GitHub Actions run `33364734465` の品質ゲート107件成功、100%トラフィック、`/health` 200、ERRORログ0件を確認。
 - [x] プラン別生成プロンプトとfreeコーパス根拠の回答方針を `chabot-service-00026-r62`（`GIT_SHA=548619f`）へ反映し、GitHub Actions run `33366459914` の成功、100%トラフィック、`/health` 200、Basic 303、ERRORログ0件を確認。
+- [x] free用Secret `GOOGLE_CORPUS_ID` への既定フォールバックと長いRefresh Tokenのcallback修正を `chabot-service-00028-cvl`（`GIT_SHA=a89ac52`）へ反映し、GitHub Actions run `33367481704` の品質ゲート111件成功、100%トラフィック、`/health` 200、Basic 303、デプロイ後ERRORログ0件を確認。
 - [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
@@ -107,7 +108,7 @@
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud Runはプラン別生成プロンプト、freeコーパス根拠の回答方針、既存友だちの初回トークfree自動登録、StripeテストPrice ID、認証・Webhook・Vertex AI SDK対策を含むリビジョン `chabot-service-00026-r62`（`GIT_SHA=548619f`）が100%稼働中。
+- Cloud Runはプラン別生成プロンプト、free用Secretフォールバック、長いRefresh Tokenのcallback修正、既存友だちの初回トークfree自動登録、StripeテストPrice ID、認証・Webhook・Vertex AI SDK対策を含むリビジョン `chabot-service-00028-cvl`（`GIT_SHA=a89ac52`）が100%稼働中。
 - Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化、Stripe登録URL導線、Webhook信頼性対策はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
@@ -138,7 +139,7 @@
 - [x] `free/basic/pro` のプラン取得
 - [x] プラン別コーパス切替
 - [x] 共通の文体・文字数を維持したプラン別生成プロンプト（freeはfreeコーパスを根拠に質問へ直接回答、basic/proはpaidコーパスを統合）を本番反映（実端末E2E未確認）
-- [x] コーパスID省略時の既定値をfree用Secret `GOOGLE_CORPUS_ID` に修正し、有料用コーパスへの誤フォールバックを防止（ローカルテスト済み・本番未反映）
+- [x] コーパスID省略時の既定値をfree用Secret `GOOGLE_CORPUS_ID` に修正し、有料用コーパスへの誤フォールバックを防止（本番反映済み）
 - [x] 全プランの日次回数判定
 - [x] 上限超過時にRAGを実行せず案内を返信
 - [x] 回数上限のコード上の基準値を `3/100/500` に一元化
@@ -377,7 +378,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 8. [ ] LINE実端末でfollow/message/unfollowを確認
 9. [x] free/paid両RAGコーパスの存在・ファイル件数を読み取り確認
 10. [x] Phase 2導入前からの既存友だちを最初のトークでfree自動登録（本番反映済み・実端末E2E未確認）
-11. [x] free / basic・proで生成構成と参照方針を分岐し、freeコーパス根拠・質問への直接回答・共通文体・文字数を維持するテストに成功（`chabot-service-00026-r62`へ本番反映・実端末E2E未確認）
+11. [x] free / basic・proで生成構成と参照方針を分岐し、freeコーパス根拠・質問への直接回答・共通文体・文字数を維持するテストに成功（`chabot-service-00028-cvl`へ本番反映・実端末E2E未確認）
 
 ### Step 2.5: パフォーマンス最適化（本番反映済み・実測比較待ち）
 
