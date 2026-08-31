@@ -75,8 +75,13 @@ class FirestoreUserRepository(BaseUserRepository):
             作成されたユーザーデータの辞書
         """
         try:
-            now = datetime.utcnow()
-            user_id = str(uuid.uuid4())
+            # follow・message・LINE Loginが同時に到着しても同じユーザーを再利用する。
+            existing_user = await self.find_by_line_user_id(line_user_id)
+            if existing_user:
+                return existing_user
+
+            now = datetime.now(timezone.utc)
+            user_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"line:{line_user_id}"))
 
             user_data = {
                 'id': user_id,

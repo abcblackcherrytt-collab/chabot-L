@@ -212,6 +212,80 @@ class TestMessageEvent:
     """メッセージイベント詳細テスト"""
 
     @pytest.mark.asyncio
+    async def test_first_message_backfills_existing_friend_as_free_user(
+        self,
+        line_service,
+        mock_line_client,
+        db_session,
+    ):
+        """Phase 2導入前からの友だちは最初のメッセージでfree登録すること。"""
+        user_repo = line_service._get_user_repository()
+        user_repo.find_by_line_user_id.return_value = None
+        user_repo.create_line_user.return_value = {
+            "id": "backfilled-user",
+            "line_user_id": "U_test123",
+            "display_name": "テストユーザー",
+            "is_active": True,
+            "subscription_plan": "free",
+        }
+        event = {
+            "type": "message",
+            "replyToken": "test_token",
+            "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "最初の質問"},
+        }
+
+        result = await line_service._handle_message_event(event, db_session)
+
+        assert result["status"] == "processed"
+        assert result["user_id"] == "backfilled-user"
+        assert result["plan"] == "free"
+        mock_line_client.get_profile.assert_awaited_once_with("U_test123")
+        user_repo.create_line_user.assert_awaited_once_with(
+            line_user_id="U_test123",
+            display_name="テストユーザー",
+        )
+        line_service._test_usage_repo.increment_with_limit_check.assert_awaited_once_with(
+            "backfilled-user",
+            "free",
+            3,
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_message_backfills_user_when_profile_fetch_fails(
+        self,
+        line_service,
+        mock_line_client,
+        db_session,
+    ):
+        """プロフィール取得失敗でもWebhookのuserIdからfree登録を継続すること。"""
+        user_repo = line_service._get_user_repository()
+        user_repo.find_by_line_user_id.return_value = None
+        user_repo.create_line_user.return_value = {
+            "id": "backfilled-user",
+            "line_user_id": "U_test123",
+            "display_name": "User_U_test12",
+            "is_active": True,
+            "subscription_plan": "free",
+        }
+        mock_line_client.get_profile.side_effect = LINEError("profile unavailable")
+        event = {
+            "type": "message",
+            "replyToken": "test_token",
+            "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "最初の質問"},
+        }
+
+        result = await line_service._handle_message_event(event, db_session)
+
+        assert result["status"] == "processed"
+        assert result["plan"] == "free"
+        user_repo.create_line_user.assert_awaited_once_with(
+            line_user_id="U_test123",
+            display_name="",
+        )
+
+    @pytest.mark.asyncio
     async def test_empty_message(self, line_service, mock_line_client, db_session):
         """空メッセージはエラーメッセージが返ること"""
         event = {

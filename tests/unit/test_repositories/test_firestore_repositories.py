@@ -1,5 +1,6 @@
 """Firestoreリポジトリの非同期I/Oと回数制御のテスト。"""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -58,6 +59,51 @@ async def test_user_repository_reactivates_existing_user() -> None:
     update_data = document.update.await_args.args[0]
     assert update_data["is_active"] is True
     assert update_data["deactivated_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_line_user_uses_stable_id_and_free_plan() -> None:
+    """最初のトークから作るユーザーが重複しにくいfreeアカウントになること。"""
+    document = MagicMock()
+    document.set = AsyncMock()
+    collection = MagicMock()
+    collection.document.return_value = document
+    client = MagicMock()
+    client.collection.return_value = collection
+    repository = FirestoreUserRepository(client=client)
+    repository.find_by_line_user_id = AsyncMock(return_value=None)
+
+    result = await repository.create_line_user(
+        line_user_id="U123",
+        display_name="既存の友だち",
+    )
+
+    expected_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "line:U123"))
+    assert result["id"] == expected_id
+    assert result["subscription_plan"] == "free"
+    assert result["subscription_status"] == "active"
+    assert result["is_active"] is True
+    collection.document.assert_called_once_with(expected_id)
+    document.set.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_line_user_returns_existing_user_without_overwrite() -> None:
+    """同じLINE IDが既にあれば既存ユーザーを上書きしないこと。"""
+    existing = {
+        "id": "existing-user",
+        "line_user_id": "U123",
+        "subscription_plan": "basic",
+        "is_active": True,
+    }
+    client = MagicMock()
+    repository = FirestoreUserRepository(client=client)
+    repository.find_by_line_user_id = AsyncMock(return_value=existing)
+
+    result = await repository.create_line_user("U123", "既存の友だち")
+
+    assert result == existing
+    client.collection.assert_not_called()
 
 
 @pytest.mark.asyncio

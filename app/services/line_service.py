@@ -201,13 +201,40 @@ class LineService:
         user_dict = await user_repo.find_by_line_user_id(line_user_id)
         user_lookup_ms = (time.perf_counter() - user_lookup_started) * 1000
 
-        # ユーザーが見つからない場合はエラー（本来はfollowイベントで作成されているはず）
+        # Phase 2導入前から友だちのユーザーにはfollowイベントが再送されない。
+        # 署名検証済みWebhookのuserIdを使い、最初のメッセージで遅延作成する。
         if not user_dict:
-            await self._send_reply(
-                reply_token,
-                "ユーザー情報が見つかりません。友だち登録からやり直してください。"
+            display_name = ""
+            try:
+                profile = await self.client.get_profile(line_user_id)
+                display_name = profile.get("displayName", "")
+            except LINEError as exc:
+                logger.warning(
+                    "Failed to get profile while backfilling LINE user %s: %s",
+                    self._mask_user_id(line_user_id),
+                    exc,
+                )
+
+            try:
+                user_dict = await user_repo.create_line_user(
+                    line_user_id=line_user_id,
+                    display_name=display_name,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to backfill LINE user %s",
+                    self._mask_user_id(line_user_id),
+                )
+                await self._send_reply(
+                    reply_token,
+                    "ユーザー情報を登録できませんでした。しばらくしてからもう一度お試しください。",
+                )
+                return {"status": "error", "reason": "user_backfill_failed"}
+
+            logger.info(
+                "Backfilled existing LINE friend: %s",
+                self._mask_user_id(line_user_id),
             )
-            return {"status": "error", "reason": "user_not_found"}
 
         # 最初のユーザー取得結果を再利用し、同一ドキュメントの再読込を避ける。
         if not user_dict.get('is_active', False):
