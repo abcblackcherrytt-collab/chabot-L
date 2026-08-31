@@ -21,12 +21,12 @@
 - **非同期修正**: 3つのFirestoreリポジトリを `AsyncClient` に統一し、Transaction呼び出しを修正
 - **初期データ**: `chabotline/rag_permissions` にfree/basic/proの3件を投入し、`3/100/500` を読み戻し確認済み
 - **テスト**: ローカル品質ゲート107件、全unitは既知のPostgreSQL Refresh Token 9件を除く122件が成功。PostgreSQL認証のunit / integration / E2Eは現在の品質ゲート対象外
-- **本番状態**: Cloud Run `chabot-service-00023-tqm`（`GIT_SHA=fd9ecd7`）へStripeテストPrice IDを含む構成をデプロイし、Ready・100%トラフィックを確認
+- **本番状態**: Cloud Run `chabot-service-00024-fb2`（`GIT_SHA=afa7960`）へ既存友だちの初回トークfree自動登録をデプロイし、Ready・100%トラフィックを確認
 - **本番最適化**: Firestore共有AsyncClient、ユーザー重複読取削減、RAG権限60秒キャッシュ、分類クライアント再利用、区間別レイテンシログを反映
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
-- **検証**: ローカル対象テスト118件、GitHub Actions run `33363660659` の品質ゲート103件に成功。公開 `/health` はHTTP 200、Basic / Pro登録URLは認証導線へHTTP 303、成功・キャンセル画面はHTTP 200、未認証APIはHTTP 401を確認。実LINEアカウントでのcallback・Checkout E2Eは未確認
+- **検証**: ローカル品質ゲート107件・対象unit 122件、GitHub Actions run `33364734465` の品質ゲート107件に成功。公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303、最新リビジョンのERRORログ0件。実LINEアカウントでの初回トーク自動登録・callback・Checkout E2Eは未確認
 - **Stripe登録導線（テストPrice本番反映済み）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Manager経由でCloud Runへ反映し、準備中HTTP 503から認証導線HTTP 303へ切り替わったことを確認。実LINE Checkout E2Eは未確認
-- **既存友だち対応（コード・ローカル検証済み、本番未反映）**: Phase 2導入前から友だちでFirestoreユーザーがない場合、最初のテキストメッセージでLINEプロフィールと署名検証済みuserIdからfreeアカウントを自動作成し、そのメッセージをfree枠として継続処理する。プロフィール取得失敗時もuserIdから登録し、同一LINE IDには安定したドキュメントIDを使って重複作成を抑止する
+- **既存友だち対応（本番反映済み・実端末E2E待ち）**: Phase 2導入前から友だちでFirestoreユーザーがない場合、最初のテキストメッセージでLINEプロフィールと署名検証済みuserIdからfreeアカウントを自動作成し、そのメッセージをfree枠として継続処理する。プロフィール取得失敗時もuserIdから登録し、同一LINE IDには安定したドキュメントIDを使って重複作成を抑止する
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
@@ -84,6 +84,7 @@
 - [x] 新リビジョンでRefresh Token 30日、free/paidコーパスSecret参照、Price ID未設定を確認。freeコーパス3ファイル・paidコーパス16ファイルの存在も読み取り確認。
 - [x] 新リビジョンで `/health` 200、Basic/Pro 503、成功/キャンセル200、未認証status/POST Checkout 401を確認。意図した503リクエストログを除くアプリ内部ERRORログ0件。
 - [x] StripeテストPrice IDを `chabot-service-00023-tqm`（`GIT_SHA=fd9ecd7`）へ反映し、GitHub Actions run `33363660659` の成功、100%トラフィック、Price Secret参照、`/health` 200、Basic/Pro 303、未認証status 401、ERRORログ0件を確認。
+- [x] 既存友だちの初回トークfree自動登録を `chabot-service-00024-fb2`（`GIT_SHA=afa7960`）へ反映し、GitHub Actions run `33364734465` の品質ゲート107件成功、100%トラフィック、`/health` 200、ERRORログ0件を確認。
 - [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
@@ -102,7 +103,7 @@
 ### 1.2 本番とローカルの差
 
 - Phase 2実装（Firestore、日次回数制限、Stripe Checkout、Firestore連携Webhook）がmainブランチにマージ完了。
-- Cloud RunはStripeテストPrice ID、認証・Webhook・Vertex AI SDK対策を含むリビジョン `chabot-service-00023-tqm`（`GIT_SHA=fd9ecd7`）が100%稼働中。
+- Cloud Runは既存友だちの初回トークfree自動登録、StripeテストPrice ID、認証・Webhook・Vertex AI SDK対策を含むリビジョン `chabot-service-00024-fb2`（`GIT_SHA=afa7960`）が100%稼働中。
 - Phase 2コード、Firestore修正、Phase 2.5性能改善、LINE Loginセッション永続化・認証強化、Stripe登録URL導線、Webhook信頼性対策はmainへコミット・本番反映済み。
 - `phase2/local-mock-plan` ブランチはマージ後削除済み。
 - 現在はmainブランチで作業進行中。
@@ -129,7 +130,7 @@
 - [x] Firestore RAG権限リポジトリ
 - [x] Firestore日次使用回数リポジトリ
 - [x] follow時のユーザー作成
-- [x] Phase 2導入前からの既存友だちを最初のトークでfreeアカウントとして遅延作成（コード・ローカル検証済み、本番未反映）
+- [x] Phase 2導入前からの既存友だちを最初のトークでfreeアカウントとして遅延作成（本番反映済み・実端末E2E未確認）
 - [x] `free/basic/pro` のプラン取得
 - [x] プラン別コーパス切替
 - [x] 全プランの日次回数判定
@@ -314,7 +315,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [ ] ログアウト・LINE unfollow時にCookie削除と全Refresh Token失効を行い、通常利用時に再ログインが表示されないことをE2E確認
 - [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
 - [x] 公開POST `/subscription/checkout/create` とGET `/subscription/status` の固定 `test_user_id` を実認証へ置換
-- [x] 既存友だちにfollowイベントが再発しない場合、最初のトークでfreeユーザーを自動作成してLINE Login・Stripe登録へ引き継げるよう修正（コード・ローカル検証済み、本番未反映）
+- [x] 既存友だちにfollowイベントが再発しない場合、最初のトークでfreeユーザーを自動作成してLINE Login・Stripe登録へ引き継げるよう修正（本番反映済み・実端末E2E未確認）
 
 ### P1-2. Stripe Webhookの信頼性
 
@@ -369,7 +370,7 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 7. [ ] プラン別コーパス切替を確認
 8. [ ] LINE実端末でfollow/message/unfollowを確認
 9. [x] free/paid両RAGコーパスの存在・ファイル件数を読み取り確認
-10. [x] Phase 2導入前からの既存友だちを最初のトークでfree自動登録（コード・ローカル検証済み、本番未反映）
+10. [x] Phase 2導入前からの既存友だちを最初のトークでfree自動登録（本番反映済み・実端末E2E未確認）
 
 ### Step 2.5: パフォーマンス最適化（本番反映済み・実測比較待ち）
 
