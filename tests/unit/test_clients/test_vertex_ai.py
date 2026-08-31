@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.clients.vertex_ai import VertexAIClient, VertexAIError
+from app.core.config import settings
 
 
 class TestVertexAIClient:
@@ -66,6 +67,14 @@ class TestVertexAIClient:
         assert "根拠または機序、評価・介入への具体的な適用" in basic_instruction
         assert basic_instruction == pro_instruction
         assert free_instruction != basic_instruction
+
+    def test_default_corpus_is_free_plan_secret(self):
+        """コーパス未指定時はfree用GOOGLE_CORPUS_IDを使用する。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        assert client.corpus_id == settings.google_corpus_id
+        assert client.corpus_id != settings.google_corpus_id_plan1
 
     def test_classification_client_is_reused(self):
         """分類ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
