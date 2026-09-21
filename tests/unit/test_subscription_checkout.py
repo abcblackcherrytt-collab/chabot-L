@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1 import subscription as subscription_api
+from app.clients.stripe import StripeError
 from app.core.auth_cookies import REFRESH_TOKEN_COOKIE_NAME
 from app.server import app
 
@@ -129,6 +130,59 @@ async def test_authenticated_checkout_link_redirects_to_stripe(
         plan="pro",
     )
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_authenticated_checkout_link_shows_preparing_page_on_stripe_error(
+    monkeypatch,
+    checkout_service,
+) -> None:
+    """Stripe側でCheckout作成が失敗した場合も生の500ではなく案内画面を返すこと。"""
+    monkeypatch.setattr(
+        subscription_api,
+        "get_plan_config",
+        lambda plan: {"price_id": "price_later"},
+    )
+    auth_service = MagicMock()
+    auth_service.refresh = AsyncMock(
+        return_value={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+        }
+    )
+    monkeypatch.setattr(
+        subscription_api,
+        "FirestoreAuthService",
+        lambda: auth_service,
+    )
+    monkeypatch.setattr(
+        subscription_api,
+        "decode_token",
+        lambda token: {"sub": "real-user-id"},
+    )
+    checkout_service.create_checkout_session = AsyncMock(
+        side_effect=StripeError("checkout failed")
+    )
+    app.dependency_overrides[subscription_api.get_subscription_service] = (
+        lambda: checkout_service
+    )
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(
+                REFRESH_TOKEN_COOKIE_NAME,
+                "saved-refresh",
+                path="/api/v1",
+            )
+            response = await client.get(
+                "/api/v1/subscription/checkout/basic",
+                follow_redirects=False,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert "決済ページを準備中" in response.text
 
 
 @pytest.mark.asyncio

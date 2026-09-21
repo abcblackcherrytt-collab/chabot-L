@@ -11,7 +11,7 @@ import urllib.parse
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.auth_cookies import set_refresh_token_cookie
 from app.core.config import settings
@@ -142,10 +142,10 @@ async def line_login_callback(
     """
     # エラーレスポンスの処理
     if error:
-        logger.warning(f"LINE Login error: {error} - {error_description}")
+        logger.warning("LINE Login was rejected by the identity provider")
         raise HTTPException(
             status_code=400,
-            detail=f"LINE Login failed: {error_description or error}",
+            detail="LINE Login failed",
         )
 
     # 必須パラメータの確認
@@ -239,7 +239,7 @@ async def line_login_callback(
             detail="Missing LINE user ID in ID token",
         )
 
-    logger.info(f"LINE Login successful: user={display_name}")
+    logger.info("LINE Login succeeded")
 
     auth_service = FirestoreAuthService()
     user = await auth_service.user_repository.find_by_line_user_id(line_user_id)
@@ -258,18 +258,18 @@ async def line_login_callback(
     if return_to:
         response = RedirectResponse(url=return_to, status_code=303)
     else:
-        response = JSONResponse(
-            content={
-                "access_token": tokens["access_token"],
-                "token_type": tokens["token_type"],
-                "expires_in": tokens["expires_in"],
-                "user": {
-                    "id": user["id"],
-                    "line_user_id": line_user_id,
-                    "display_name": user.get("display_name", display_name),
-                    "email": user.get("email", email),
-                },
-            }
+        response = HTMLResponse(
+            content=(
+                "<!doctype html><html lang='ja'><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>ログイン完了</title>"
+                "<body style='font-family:sans-serif;max-width:36rem;"
+                "margin:4rem auto;padding:1rem'>"
+                "<h1>LINEログインが完了しました</h1>"
+                "<p>決済へ進むには、LINEのプラン登録リンクをもう一度開いてください。</p>"
+                "<p>再ログインは不要です。</p></body></html>"
+            ),
+            headers={"Cache-Control": "no-store"},
         )
     set_refresh_token_cookie(response, tokens["refresh_token"])
     response.delete_cookie("line_login_state", path="/")

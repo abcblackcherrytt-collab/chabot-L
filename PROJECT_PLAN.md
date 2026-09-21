@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-08-31（free / basic・proの生成プロンプト分岐を本番反映）
+> **更新日**: 2026-09-21（Stripe Checkout導線の耐障害性を修正、実端末E2Eは継続確認中）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -26,6 +26,7 @@
 - **本番認証**: 既存Firestoreユーザー再利用、Refresh Token保存・ローテーション、HttpOnly Cookie自動更新、S256 PKCE、LINE公式APIでのID Token検証、再フォロー時の再有効化、unfollow時の全セッション失効を反映
 - **検証**: ローカル品質ゲート111件・対象unit 126件、GitHub Actions run `33367481704` に成功。公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303、最新リビジョンのERRORログ0件。LINE Login callbackとfree質問の実端末再確認が必要
 - **Stripe登録導線（テストPrice本番反映済み）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Manager経由でCloud Runへ反映し、準備中HTTP 503から認証導線HTTP 303へ切り替わったことを確認。実LINE Checkout E2Eは未確認
+- **Stripe導線診断（2026-09-21）**: 「登録URLをクリックしてもStripeへ飛ばない」報告を受け調査。本番ではURL→LINE Login開始（303）→LINE authorize URLへの遷移と環境変数・Secret参照を確認。直近30日の本番ログに実端末からの該当リクエストは記録されておらず（8/31 smoke testと調査用リクエストのみ）、クリックが本番へ到達していない可能性が残る。認証後のStripe Checkout作成失敗時に生のHTTP 500となっていた問題と、callback復帰先Cookie喪失時にAccessToken入りJSONを画面表示していた問題を修正（品質ゲート126件成功）。実端末での再クリックとログ確認が残課題
 - **既存友だち対応（本番反映済み・実端末E2E待ち）**: Phase 2導入前から友だちでFirestoreユーザーがない場合、最初のテキストメッセージでLINEプロフィールと署名検証済みuserIdからfreeアカウントを自動作成し、そのメッセージをfree枠として継続処理する。プロフィール取得失敗時もuserIdから登録し、同一LINE IDには安定したドキュメントIDを使って重複作成を抑止する
 - **プラン別生成指示（本番反映済み・実端末E2E待ち）**: 共通のです・ます調、辛口1か所、回答＋要約、原則500字以内を維持し、freeはfreeコーパスを根拠としてユーザーの質問へ直接答える「結論→基礎的根拠→確認点」、basic/proはpaidコーパスの複数資料を統合する「結論→根拠・機序→評価・介入への適用→限界」に分岐する。freeで取得情報が不足する場合は一般知識・推測で補完せず、不足範囲を明示する
 - **freeコーパス既定値（本番反映済み）**: 通常はFirestoreのfree権限設定からコーパスIDを渡す。ID省略時も有料用へ誤接続しないよう、Vertex AIクライアントの既定値をSecret `GOOGLE_CORPUS_ID`（free用）へ修正した
@@ -38,6 +39,7 @@
   2. 実Stripe Webhook署名・再送をE2E確認
   3. free 3件 / basic 100件 / pro 500件、コーパス切替、回答構成の差を確認
   4. Cloud Runのコールドスタート対策（min instanceまたは起動処理軽量化）を費用と比較して決定
+  5. 管理UIは別ASGIサービスとしてローカル開発を進める。IAP・IAM・本番公開は別作業として保留する
 
 ### 0.1 フェーズ一覧
 
@@ -46,6 +48,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
+| Phase 2.7 | 管理UI、動的プロンプト・上限設定、1回限り登録URL、ユーザー参照 | Firestore | - | **安全基盤をローカル実装中・本番未反映** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Price検証・本番反映済み・Checkout/Webhook E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
@@ -60,6 +63,7 @@
   - free: 3件
   - basic: 100件
   - pro: 500件
+- [ ] 管理UI導入時は、公開済みFirestore設定を回数上限の運用上の正とし、`app/core/pricing.py` の `3/100/500` は設定欠損・不正時の安全な既定値へ役割を変更する。
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
 - [x] Stripe Basic / Proの商品・Price IDとCloud RunのStripe API鍵を同じアカウント・テストモードへ統一し、商品・継続課金・金額・通貨をAPIで確認する。
@@ -166,6 +170,7 @@
 - [x] Webhook冪等性をインメモリからFirestore Transactionへ移行
 - [x] Stripeテスト商品・Price IDを現行API鍵で取得確認（Basic商品 `prod_VAjwEIYvRCJ5GI` / Price `price_1UAOSwPHtxCsCwzYT0x5dBz7`、月額499円。Pro商品 `prod_VAjxOn83it8eaA` / Price `price_1UAOT8PHtxCsCwzY1tU862Dy`、月額999円。いずれもJPY・有効・テストモード）
 - [x] 整合性確認済みのPrice IDをSecret Managerへ登録し、deploy.ymlからCloud Runへ反映（本番リビジョンのSecret参照とBasic/Pro HTTP 303を確認済み）
+- [x] Checkout開始endpointでStripe APIエラー発生時に生のHTTP 500ではなく準備中案内画面（HTTP 503）を返すよう修正（2026-09-21、品質ゲート126件成功・本番反映はデプロイ後に確認）
 - [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
 
 ### 2.4 サブスクリプションAPIの扱い
@@ -185,6 +190,115 @@
 - [x] ルートの `AGENTS.md` / `CLAUDE.md` はスキル登録のために変更しない
 - [x] Codex版・Claude版のSKILL.md検証と同一性確認に成功
 - [ ] スキルを変更する場合は両配置を同時更新し、差分がないことを再確認
+
+### 2.6 Phase 2.7: Cloud Run管理UI（安全基盤をローカル実装中・本番未反映）
+
+#### 個人情報公開リスクレビュー（2026-09-04）
+
+結論: 現状の計画のまま管理UIを本番公開してはならない。以下のP0対策と否定系E2Eが完了するまで `chabot-admin` は未デプロイまたはトラフィック0とする。
+
+- **[Critical] 公開デプロイの誤流用**: 現行 `chabot-service` はLINE Webhook等のため `allUsers` Invoker・ingress `all` で稼働し、deploy workflowにも `--allow-unauthenticated` がある。管理サービスは完全に別workflowとし、`--no-allow-unauthenticated` + IAPを明示する。デプロイ後に未認証HTTP拒否、IAP有効、IAMに `allUsers` / `allAuthenticatedUsers` がないことを機械確認し、満たさなければ失敗させる。
+- **[Critical] 公開Botへの管理ルート混入**: `app.server` へ管理routerを登録しない。公開claim用endpointと管理endpointを別router・別ASGI entrypointにし、BotのOpenAPI/ルート一覧に `/admin` とユーザー一覧APIが存在しないことをCIで固定する。
+- **[Critical] Firestore権限境界の誤認**: Python server clientはFirestore Security Rulesを迂回してIAMで動作する。`roles/datastore.user` はデータベース内データへの広いread/write権限で、コレクション単位の制限とはみなさない。管理専用サービスアカウントと必要操作だけのcustom roleを検討し、データベース単位以上の分離が必要なら別Firestore database/projectを使用する。汎用ドキュメントパスを受け取るAPIは作らない。
+- **[High] 招待トークンのURL・ログ漏えい**: 生トークンをpath/queryへ置くとブラウザ履歴、共有、Cloud Run request log、Referer等へ残り得る。URL fragmentでブラウザへ渡し、専用landing pageが同一originのPOST bodyへ移した直後に履歴から消去する。claimレスポンスは `Referrer-Policy: no-referrer` / `Cache-Control: no-store` とし、アクセスログ・監査ログ・例外へトークンを出さない。短い有効期限、十分なエントロピー、rate limit、単回消費、管理者失効を必須にする。
+- **[High] 認可漏れ・IDOR**: 画面の非表示ではなく、ユーザー一覧・詳細・検索・設定変更・URL発行の全APIでIAP identityと管理者allowlistをサーバー側検証する。URLやrequest bodyで渡されたuser IDだけを信用せず、許可された操作・フィールドを固定する。書込みはCSRF tokenとOrigin検証を要求する。
+- **[High] 保存型XSS**: LINE表示名、ステータスメッセージ、プロンプト、監査表示値は外部入力として扱う。Jinja2 autoescapeを無効化せず、`safe` / `innerHTML` を使用しない。inline scriptを避けたCSP、`X-Frame-Options: DENY`、MIME sniffing防止を管理サービスにも適用する。
+- **[High] 現行ログへの相談内容・識別子露出**: 現行 `RAGService` は質問先頭50文字、回答先頭100文字、内部user IDをINFOログへ出す。Cloud Logging閲覧権限者から医療相談内容を閲覧できるため、質問・回答本文を直ちにログ対象外とし、user IDは不可逆ハッシュまたは短い相関IDへ置換する。例外文字列、Stripe/LINE応答、監査ログもallowlist形式にし、既存ログの保持期間・閲覧IAM・sinkを確認する。
+- **[High] 国外保存・外部事業者での処理**: Cloud Runは東京だが、現行Firestore `chabotline` は米国multi-region `nam5`、Vertex AI/RAGも `us-central1` である。LINEプロフィール・アカウント情報は米国Firestoreへ保存され、質問文は米国Vertex AIで処理される。これは一般公開ではないが外部クラウド事業者・国外処理の論点になるため、追加収集前にデータフロー、契約、通知、保持、Vertex AIのabuse monitoring/retention設定を確認する。日本リージョン保存が必須なら新databaseへの移行を別途計画する。
+- **[High] 患者情報の混入**: 医療専門職が質問へ患者氏名、施設名、日付等を入力すると、ログ・Vertex AI処理・障害調査経路へ第三者の情報が流れる。入力前に患者を特定できる情報を送らない旨を案内し、可能ならDLP/パターン検知で送信前警告またはマスキングを行う。管理UIへ会話本文を表示する機能は初期版に含めない。
+- **[High] 過剰収集・長期保持**: 初期画面に必要なのは表示名、プラン、状態、登録日、利用回数に限定する。LINE user ID・email・画像は詳細画面で必要時だけ表示し、status message・languageは明確な運用目的が決まるまで保存しない。検索語、閲覧履歴、招待失敗情報も保存期間を定め、退会・同意撤回時の削除または匿名化手順を用意する。
+- **[Medium] ブラウザ・中間キャッシュと画面共有**: 全管理HTML/APIへ `Cache-Control: no-store`、機密レスポンスへ適切な `Vary` を設定し、公開CDNへ載せない。Swagger/ReDoc/OpenAPIは無効化またはIAP内に限定し、一覧の初期HTMLへ全件データを埋め込まない。LINE画像を表示する場合は `referrerpolicy=no-referrer` とする。
+- **[Medium] 権限の内部不正利用**: IAPは個人別アカウントをallowlist登録し、共有アカウントを使わない。閲覧・設定変更・招待発行の分離要否を決め、アクセス権を定期棚卸しする。監査記録自体には表示名、email、LINE user ID、トークン、プロンプト本文を保存せず、内部対象ID・操作種別・revision・結果だけを残す。
+- **[Medium] バックアップ・エクスポート経由の漏えい**: ユーザーCSV一括出力は初期版へ含めない。Firestore backup、ログsink、ローカル検証データ、スクリーンショットを個人情報の複製として扱い、保存先IAM・暗号化・保持期間・削除方法を確認する。本番データを開発環境へコピーしない。
+
+P0公開ゲート:
+
+- [保留] 管理サービスのIAP・IAM・ingressをコード化し、未認証、許可外アカウント、失効済み管理者がすべて拒否されるE2Eを行う。IAP作業はユーザー指示により別作業とし、完了するまで本番公開しない。
+- [x] 公開Botに管理routeがなく、管理サービスにLINE/Stripe Webhookなど不要な公開routeがないことを自動テストする。別ASGI entrypointとOpenAPI/route回帰テストを追加し、CI品質ゲートへ組み込んだ（ローカル成功、GitHub Actions未確認）。
+- [ ] 招待トークンがURL、Cloud Run request log、application log、Referer、ブラウザ履歴へ残らないことをブラウザE2Eとログ確認で証明する。
+- [ ] ユーザーA/BのID差替え、ページ番号・検索条件改ざん、CSRF、保存型XSS、クリックジャッキング、キャッシュ再表示を否定系テストする。
+- [ ] Cloud Logging、Firestore、Secret Manager、backup、CI/CDのIAMメンバーを棚卸しし、個人情報を閲覧できる主体を台帳化する。
+- [ ] 質問・回答本文、生の識別子、外部例外本文を出すapplication logはローカル修正・回帰テスト済み。修正後の本番ログに本文・email・LINE user ID・招待トークンがないことの確認、および既存Cloud Loggingエントリの削除・保持設定確認は本番反映後に行う。
+- [ ] 収集項目ごとの利用目的、取得元、表示範囲、保持期間、削除条件をデータ台帳として確定し、プライバシー通知とLINE User Data Policy適合を確認する。
+- [ ] LINE、Google Cloud（Firestore/Logging/Vertex AI/RAG）、Stripe間のデータフローと保存リージョンを台帳化し、`nam5` / `us-central1` の利用継続可否とVertex AIの保持条件を本番公開前に承認する。
+
+#### 推奨アーキテクチャ
+
+- [ ] 既存の公開Botサービス `chabot-service` と分離するため、管理専用ASGI entrypointを実装済み。本番の `chabot-admin` 起動・デプロイは未実施。
+- [ ] 管理サービスは `app/admin_server.py` を入口として実装済み。Jinja2 + 小量のVanilla JavaScriptによる実画面は未実装。
+- [ ] Botと管理UIはFirestore `chabotline` を共有する。管理サービスは専用サービスアカウントを使い、IAMで許される最小のAPI操作へ絞るが、Firestore IAMをコレクション単位の境界とはみなさない。より強い分離が必要なら別database/projectを採用する。
+- [保留] 管理者認証とIAPの作業は別途行う。それまでは `ADMIN_UI_ENABLED=False` を既定とし、本番の管理サービスを公開しない。
+- [ ] 管理APIはブラウザから直接Firestoreへ接続させず、すべてFastAPI経由にする。書込みには認可、CSRF対策、入力検証、監査記録を必須とする。
+- [ ] 招待URLの利用者はIAP管理画面へ入れないため、URL発行は `chabot-admin`、claim landing/session/LINE callbackは公開Bot側の限定routerへ分離する。公開側から設定・ユーザー一覧・監査データを参照できる汎用APIは作らない。
+
+#### 設定データと反映方式
+
+- [ ] `prompt_configs` に `common` / `free` / `paid` の下書き・公開本文、revision、更新者、更新日時を保存する。画面ではfreeとpaidの実効プロンプトを読み込み・編集・プレビューできるようにする。
+- [ ] basic/proは現在と同じpaidプロンプトを共有する。共通プロンプトの編集は誤変更を避けるため詳細設定として分離する。
+- [ ] `plan_settings` にfree/basic/proそれぞれの公開済み `daily_message_limit` とrevisionを保存する。有料上限をbasic/pro別に維持するか共通化するかは実装前に決定する。
+- [ ] 「下書き保存」と「反映」を分け、反映時はFirestore Transactionで公開revisionを原子的に切り替える。公開履歴から直前revisionへロールバックできるようにする。
+- [ ] Botは公開済み設定だけを読み、短時間キャッシュする。管理サービスとはプロセスが別なので、反映保証は即時ではなく最大60秒を初期仕様とし、画面へ表示する。
+- [ ] Firestore設定が欠損・不正・読取不能の場合は、コード内の現行プロンプトと `3/100/500` を安全な既定値として使い、Botの停止や無制限化を防ぐ。
+- [ ] プロンプトの空文字、最大長、許可プラン、上限値の範囲をサーバー側で検証し、更新競合はrevision不一致として再読込を求める。
+
+#### 1回限りの無料登録URL
+
+- [ ] 管理画面から有効期限付きの暗号学的ランダムURLを1件ずつ発行する。Firestoreにはトークン平文ではなくSHA-256ハッシュ、状態、有効期限、作成者、使用者、使用日時だけを保存し、発行画面でも平文は初回だけ表示する。
+- [ ] 生トークンはURL fragmentで受け渡し、専用landing pageから同一origin POSTでHttpOnly Cookieの短期claim sessionへ移した直後に履歴から削除してLINE Loginを開始する。リンクプレビューや誤タップで失効しないよう、「1回のHTTPアクセス」ではなく「1回のLINE Login成功・登録完了」を消費条件とする。
+- [ ] LINE Login callbackでID Token、state、nonceを検証後、Firestore Transactionで `unused -> consumed` とfreeユーザー作成または既存ユーザー紐付けを一体で確定し、同時利用でも1人だけ成功させる。
+- [ ] 作成・再利用したユーザーには `registration_source=admin_invite` と使用した招待IDを記録し、通常のfollow/message自動登録と区別できるようにする。既存ユーザーを重複作成しない。
+- [ ] 使用済み、期限切れ、改ざん、認証中断を個別に扱い、失敗したLINE LoginではURLを消費しない。管理画面から未使用URLを失効できるようにする。
+- [ ] LINE LoginチャネルとMessaging APIチャネルが同一LINE Provider配下か確認する。異なる場合は同一人物でもuser IDが一致しないため、Botユーザーとの自動統合を行わない。
+- [ ] 同一ProviderでLINE公式アカウントをLINE Loginへリンクし、登録導線に友だち追加オプションを表示する。登録完了と友だち状態は別項目として保存・表示する。
+
+#### 登録ユーザー参照
+
+- [ ] `users` をページネーション付きで一覧・検索し、表示名、プラン、契約状態、有効状態、登録日、更新日、当日利用回数を表示する。
+- [ ] 詳細画面でLINE user ID（一覧ではマスク）、プロフィール画像、取得日時を必要な範囲だけ表示する。status message・languageは明確な利用目的が承認されるまで収集・保存しない。既存データには画像等がないため、登録時保存と明示的なプロフィール再取得を追加する。
+- [ ] Messaging APIで取得できるのは原則として友だちまたはメッセージ送信者の表示名・画像・ステータスメッセージ・言語で、ブロック後などは再取得できない前提で最終取得スナップショットを扱う。
+- [ ] メールはLINE Loginのemail権限が承認され、本人が同意した場合だけ実値として保存・表示する。現在の `line_<userId>@chabot.local` は識別用プレースホルダーと明示し、実メールとして扱わない。
+- [ ] 個人情報の利用目的、閲覧権限、保持期間、削除手順を本番公開前に決め、プロンプト本文・招待トークン・個人情報をアプリログへ出さない。
+
+#### 画面構成
+
+1. [ ] 設定: free/paidプロンプト、free/basic/pro上限、下書き保存、差分確認、反映、履歴、ロールバック
+2. [ ] 無料登録URL: 発行、有効期限、コピー、未使用/使用済み/期限切れ、失効
+3. [ ] ユーザー: 検索・絞込み・詳細、当日利用回数、LINEプロフィール最終取得状態
+4. [ ] 監査: 設定反映、ロールバック、URL発行/失効/使用、プロフィール再取得の操作履歴
+
+#### 実装順序と完了条件
+
+1. [ ] 仕様確定: 有料上限のbasic/pro別・共通、有効期限既定値、既存ユーザーがURLを使った場合の扱いを決定。管理者認証/IAPは別作業として保留
+2. [ ] 基盤: 管理サービスの別ASGI entrypoint、既定無効、docs無効、no-store/no-referrer/CSP等のヘッダー、公開Botとのroute分離テストまでローカル実装済み。Firestoreスキーマ、監査ログ、認証境界は未実装
+3. [ ] 設定管理: 読込、下書き、差分、反映、Bot側動的読込、安全なfallback、ロールバックを実装
+4. [ ] 無料登録URL: 発行、LINE Login連携、単回消費、期限切れ・失効、競合テストを実装
+5. [ ] ユーザー参照: 一覧、検索、詳細、利用回数、取得可能なLINEプロフィール項目を実装
+6. [ ] 検証: unit、Firestore Emulatorまたはモック、ローカルブラウザE2E、認証済みステージング、LINE実端末E2Eを順に行う
+7. [ ] 本番反映: 管理者認証を有効化した後だけ `chabot-admin` をデプロイし、Bot側の設定反映、監査記録、ロールバックを確認する
+
+#### ローカル実装状況（2026-09-04）
+
+- [x] `app/admin_server.py` を公開Botと分離し、管理機能を既定無効、OpenAPI/Swagger/ReDocを無効にした。
+- [x] 共通セキュリティヘッダーミドルウェアを切り出し、管理レスポンスへ `Cache-Control: no-store`、`Pragma: no-cache`、`Referrer-Policy: no-referrer`、CSP、frame拒否、MIME sniffing防止を適用した。
+- [x] 公開Botと管理サービスのroute混入回帰テストを追加し、既存のデプロイ品質ゲートへ組み込んだ。現行workflowは公開Botだけをデプロイし、管理サービスのデプロイ処理は追加していない。
+- [x] RAGの質問・回答本文、LINEメッセージ、LINE/Stripe/内部user ID等を主要なapplication logから除去し、機密値がログへ出ないことを回帰テストした。
+- [x] 公開チャットAPIへLINE経路と同じ日次上限を適用し、RAG context metadataの外部返却を拒否した。
+- [x] JWTからemail/LINE user IDを除去し、Stripe Customer/Checkout metadataからLINE user IDを除去した。
+- [x] GitHub Actions一時認証ファイル `gha-creds-*.json` をGitとDocker build contextから除外し、回帰テストを追加した。
+- [x] ログアウト時はRefresh Tokenを即時失効・Cookieを削除し、発行済みAccess Tokenは最大15分で失効後、LINE Loginを再要求する設定とテストを固定した。環境変数でも15分超へ延長できない。
+- [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。
+- [x] デプロイ品質ゲート相当124件、既知のPostgreSQL Refresh Tokenテストを除くunit 139件、Python compileallにローカル成功した。
+- [x] 外部クライアント、同期処理、休眠中のPostgreSQLリポジトリを含む例外ログを例外型中心のallowlist形式へ変更した。
+- [ ] Cloud Loggingの既存ログ削除・保持期間・閲覧IAM・sink確認は未実施（IAM/IAPはユーザー指示により別作業）。
+- [保留] IAP、管理サービス用IAM/ingress、管理者allowlist、認証E2E、`chabot-admin` のデプロイは別作業とする。
+
+完了条件:
+
+- [ ] 未認証者が画面・管理API・個人情報へアクセスできず、管理UI障害がLINE Webhook処理へ波及しない。
+- [ ] 下書き保存ではBot挙動が変わらず、反映後60秒以内に新しいプロンプトと上限が適用され、直前revisionへ戻せる。
+- [ ] 同じ登録URLへの同時アクセスでも登録完了は1件だけで、期限切れ・失効済みURLは利用できない。
+- [ ] LINEから取得できない項目を「未取得」と区別し、プレースホルダーメールを実メールとして表示しない。
+- [ ] 全管理操作に操作者、対象、時刻、結果、revisionが残り、機密本文・トークン平文・不要な個人情報はログへ残らない。
 
 ---
 
@@ -319,10 +433,11 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] 再フォロー時に既存Firestoreユーザーを再有効化し、unfollow時に全Refresh Tokenを失効（本番反映済み・実LINE E2E未確認）
 - [x] Stripe登録リンクでは保存済みRefresh Tokenを自動更新し、未認証時だけLINE Login後に元のプラン登録URLへ戻す（Price IDを本番反映し、未認証HTTP 303を確認済み・実LINE復帰E2Eは未確認）
 - [x] Refresh Token / Cookieを7日から30日のローリング期間へ延長し、登録URL・Checkout/status APIアクセス時に更新する
-- [ ] ログアウト・LINE unfollow時にCookie削除と全Refresh Token失効を行い、通常利用時に再ログインが表示されないことをE2E確認
+- [ ] ログアウト時のCookie削除・対象Refresh Token即時失効、Access Token最大15分、失効後LINE Login再要求はコード・unit test済み。LINE unfollow時の全Refresh Token失効を含む実端末E2Eは未確認
 - [ ] LINE ID → Firestore user ID → Stripe customer IDの一意性を検証
 - [x] 公開POST `/subscription/checkout/create` とGET `/subscription/status` の固定 `test_user_id` を実認証へ置換
 - [x] 既存友だちにfollowイベントが再発しない場合、最初のトークでfreeユーザーを自動作成してLINE Login・Stripe登録へ引き継げるよう修正（本番反映済み・実端末E2E未確認）
+- [x] LINE Login callbackで復帰先Cookieが失われた場合、AccessToken等を含むJSONを画面へ返さず登録リンク再案内HTMLへ変更（Refresh Cookieは設定維持）。2026-09-21修正
 
 ### P1-2. Stripe Webhookの信頼性
 
@@ -342,6 +457,10 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 - [x] state / nonceをインメモリからHttpOnly / Secure短期Cookieへ移行し、Cloud Runインスタンス間の不整合を解消（本番開始endpoint確認済み）
 - [ ] LINE Webhookと認証APIへレート制限を追加
 - [x] Stripe Webhookへ1MiBのリクエストボディサイズ上限を追加
+- [x] 公開チャットAPIへ日次上限を適用し、RAG context metadataの返却を禁止
+- [x] JWTとStripe metadataの不要なLINE/email識別子を削除
+- [x] JWT追加クレームのPII・予約クレーム上書きを拒否し、Access Token有効期限を設定上も最大15分に制限
+- [x] GitHub Actions一時認証JSONをGit/Docker build contextから除外
 - [ ] TrustedHostMiddlewareを設定
 - [ ] CORSを本番ドメインだけに制限
 - [x] Secret ManagerのStripeキーがテストキーであることを値を表示せず確認（2026-08-31）
@@ -470,8 +589,12 @@ git diff --check
 
 # CI品質ゲート（Python 3.11）
 pytest \
+  tests/unit/test_admin_app_security.py \
+  tests/unit/test_build_security.py \
+  tests/unit/test_chat_api_security.py \
   tests/unit/test_auth_session.py \
   tests/unit/test_subscription_checkout.py \
+  tests/unit/test_stripe_webhook.py \
   tests/unit/test_core/test_line_id_token.py \
   tests/unit/test_clients/test_line.py \
   tests/unit/test_clients/test_vertex_ai.py \
@@ -480,6 +603,8 @@ pytest \
   tests/unit/test_services/test_line_service.py \
   tests/unit/test_services/test_rag_service.py \
   tests/unit/test_services/test_firestore_auth_service.py \
+  tests/unit/test_services/test_stripe_service.py \
+  tests/unit/test_subscription_privacy.py \
   -v --tb=short
 
 # 現行unit全体（保留中のPostgreSQL Refresh Tokenを除外）
@@ -507,5 +632,5 @@ gcloud run services describe chabot-service \
 - 本番環境の状態とローカル作業ツリーの状態を混同しない。
 - Stripeテストモードと本番モードを明確に分ける。
 - Firestoreが現在の標準であり、Cloud SQLは保留として扱う。
-- 回数上限は `app/core/pricing.py` の `DAILY_MESSAGE_LIMITS` を正とする。
+- 管理UI実装前は `app/core/pricing.py` の `DAILY_MESSAGE_LIMITS` を正とする。管理UI実装後は公開済みFirestore設定を運用上の正とし、同定数は安全なfallbackとして維持する。
 - 仕様変更時はコード、初期データ、テスト、本ファイルを同時に更新する。

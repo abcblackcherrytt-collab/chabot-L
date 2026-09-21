@@ -19,6 +19,7 @@ from app.core.auth_cookies import (
 from app.core.config import settings
 from app.core.pricing import PLANS, get_plan_config, validate_plan_availability
 from app.core.security import decode_token
+from app.clients.stripe import StripeError
 from app.services.firestore_auth_service import FirestoreAuthService
 from app.services.subscription_service import SubscriptionService
 
@@ -156,8 +157,12 @@ async def redirect_to_checkout(
             user_id=user_id,
             plan=plan,
         )
-    except ValueError as exc:
-        logger.warning("Checkout configuration unavailable for plan=%s: %s", plan, exc)
+    except (ValueError, StripeError) as exc:
+        logger.warning(
+            "Checkout could not start for plan=%s: error_type=%s",
+            plan,
+            type(exc).__name__,
+        )
         return HTMLResponse(
             content="決済ページを準備中です。しばらくしてからもう一度お試しください。",
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -245,13 +250,16 @@ async def create_checkout_session(
 
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Invalid checkout request",
         )
-    except Exception as e:
-        logger.error(f"Error creating checkout session: {e}")
+    except Exception as exc:
+        logger.error(
+            "Error creating checkout session: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Checkout session creation failed",
@@ -286,8 +294,11 @@ async def get_available_plans() -> PlanInfoResponse:
 
         return PlanInfoResponse(plans=plans_info)
 
-    except Exception as e:
-        logger.error(f"Error getting plan info: {e}")
+    except Exception as exc:
+        logger.error(
+            "Error getting plan info: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get plan information",
@@ -324,8 +335,11 @@ async def get_subscription_status(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error getting subscription status: {e}")
+    except Exception as exc:
+        logger.error(
+            "Error getting subscription status: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get subscription status",

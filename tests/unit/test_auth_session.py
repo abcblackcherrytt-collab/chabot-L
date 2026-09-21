@@ -5,10 +5,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from app.api.v1 import auth as auth_api
+from app.api.v1 import auth_line as auth_line_api
 from app.core.auth_cookies import REFRESH_TOKEN_COOKIE_NAME
-from app.core.security import hash_token, verify_token_hash
+from app.core.config import Settings
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    hash_token,
+    verify_token_hash,
+)
 from app.server import app
 
 
@@ -22,6 +30,25 @@ def test_long_refresh_token_hash_avoids_bcrypt_limit() -> None:
     assert token not in hashed
     assert verify_token_hash(token, hashed) is True
     assert verify_token_hash(f"{token}x", hashed) is False
+
+
+@pytest.mark.parametrize("token_factory", [create_access_token, create_refresh_token])
+def test_jwt_rejects_pii_and_reserved_additional_claims(token_factory) -> None:
+    """追加クレームからPIIや署名済み予約クレームを再注入できないこと。"""
+    for protected_claim in ("email", "line_user_id", "sub", "exp", "type"):
+        with pytest.raises(ValueError, match="Protected JWT claims"):
+            token_factory(
+                user_id="user-1",
+                email="user@example.com",
+                jti="token-1",
+                additional_claims={protected_claim: "attacker-controlled"},
+            )
+
+
+def test_access_token_expiry_cannot_exceed_logout_window() -> None:
+    """環境設定でもAccess Tokenを15分超へ延長できないこと。"""
+    with pytest.raises(ValidationError, match="between 1 and 15 minutes"):
+        Settings(_env_file=None, jwt_access_token_expire_minutes=16)
 
 
 @pytest.mark.asyncio
@@ -159,3 +186,80 @@ async def test_logout_uses_cookie_revokes_and_clears_it(monkeypatch) -> None:
     set_cookie = response.headers["set-cookie"].lower()
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=" in set_cookie
     assert "max-age=0" in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_line_login_callback_without_return_path_returns_html_not_tokens(
+    monkeypatch,
+) -> None:
+    """復帰先Cookieを失った場合、トークンJSONではなく再案内HTMLを返すこと。"""
+    import httpx
+
+    class _TokenResponse:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {"id_token": "signed-id-token"}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *exc_info) -> None:
+            return None
+
+        async def post(self, *args, **kwargs) -> _TokenResponse:
+            return _TokenResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        auth_line_api,
+        "verify_line_id_token",
+        AsyncMock(
+            return_value={
+                "sub": "line-user-id",
+                "name": "表示名",
+                "nonce": "nonce",
+            }
+        ),
+    )
+    auth_service = MagicMock()
+    auth_service.user_repository.find_by_line_user_id = AsyncMock(
+        return_value={
+            "id": "user-1",
+            "is_active": True,
+            "display_name": "表示名",
+        }
+    )
+    auth_service.issue_tokens = AsyncMock(
+        return_value={
+            "access_token": "access",
+            "refresh_token": "rotated-refresh",
+            "token_type": "bearer",
+            "expires_in": 900,
+        }
+    )
+    monkeypatch.setattr(
+        auth_line_api,
+        "FirestoreAuthService",
+        lambda: auth_service,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set("line_login_state", "state123")
+        client.cookies.set("line_code_verifier", "verifier")
+        client.cookies.set("line_login_nonce", "nonce")
+        response = await client.get(
+            "/api/v1/auth/line/callback",
+            params={"code": "auth-code", "state": "state123"},
+        )
+
+    assert response.status_code == 200
+    assert "access_token" not in response.text
+    assert "rotated-refresh" not in response.text
+    assert "プラン登録リンク" in response.text
+    assert f"{REFRESH_TOKEN_COOKIE_NAME}=rotated-refresh" in response.headers["set-cookie"]
