@@ -1,5 +1,6 @@
 """Firestore版LINE Login認証サービスのテスト。"""
 
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -23,6 +24,7 @@ async def test_issue_tokens_reuses_persisted_user_id(monkeypatch) -> None:
         {
             "id": "persisted-user",
             "email": "user@example.com",
+            "line_user_id": "U123",
             "role": "user",
         },
         "U123",
@@ -33,6 +35,11 @@ async def test_issue_tokens_reuses_persisted_user_id(monkeypatch) -> None:
     assert access_payload["sub"] == "persisted-user"
     assert refresh_payload["sub"] == "persisted-user"
     assert refresh_payload["provider"] == "line"
+    assert "email" not in access_payload
+    assert "email" not in refresh_payload
+    assert "line_user_id" not in access_payload
+    assert "line_user_id" not in refresh_payload
+    assert 0 < access_payload["exp"] - int(time.time()) <= 15 * 60
     token_repository.create.assert_awaited_once()
 
 
@@ -46,6 +53,7 @@ async def test_refresh_rotates_saved_line_token(monkeypatch) -> None:
         return_value={
             "id": "persisted-user",
             "email": "user@example.com",
+            "line_user_id": "U123",
             "role": "user",
             "is_active": True,
         }
@@ -59,6 +67,7 @@ async def test_refresh_rotates_saved_line_token(monkeypatch) -> None:
         {
             "id": "persisted-user",
             "email": "user@example.com",
+            "line_user_id": "U123",
             "role": "user",
         },
         "U123",
