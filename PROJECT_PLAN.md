@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-21（Stripe Checkout導線の耐障害性を修正、実端末E2Eは継続確認中）
+> **更新日**: 2026-09-21（Jevによる前段質問分類を実装、実アカウント接続は未設定）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -27,12 +27,16 @@
 - **検証**: ローカル品質ゲート111件・対象unit 126件、GitHub Actions run `33367481704` に成功。公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303、最新リビジョンのERRORログ0件。LINE Login callbackとfree質問の実端末再確認が必要
 - **Stripe登録導線（テストPrice本番反映済み）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Manager経由でCloud Runへ反映し、準備中HTTP 503から認証導線HTTP 303へ切り替わったことを確認。実LINE Checkout E2Eは未確認
 - **Stripe導線診断（2026-09-21）**: 「登録URLをクリックしてもStripeへ飛ばない」報告を受け調査。本番ではURL→LINE Login開始（303）→LINE authorize URLへの遷移と環境変数・Secret参照を確認。直近30日の本番ログに実端末からの該当リクエストは記録されておらず（8/31 smoke testと調査用リクエストのみ）、クリックが本番へ到達していない可能性が残る。認証後のStripe Checkout作成失敗時に生のHTTP 500となっていた問題と、callback復帰先Cookie喪失時にAccessToken入りJSONを画面表示していた問題を修正（品質ゲート126件成功）。実端末での再クリックとログ確認が残課題
+- **2026-09-21本番反映**: 上記Checkout導線修正に加え、9/4ローカル実装のJWT関連対策（JWTからemail/LINE user ID除去、予約クレーム・PII追加クレーム拒否、Access Token有効期限の設定上限15分、refresh時のline_user_idクレーム廃止とユーザー文書参照化）をCloud Run `chabot-service-00029-fbh`（`GIT_SHA=ca780e8`）へデプロイ。GitHub Actions run `35591533319` 成功、/health 200・Basic/Pro 303・success/cancel 200を確認
+- **CI失敗対応（2026-09-21）**: 初回push `dd1f9e5`で9/4実装のテスト（test_auth_session.py）のみをコミットし実装（app/core/security.py・app/core/config.py・app/services/firestore_auth_service.py）が漏れ、品質ゲート3件が失敗。ローカルでPython 3.11・最新依存関係のコミットツリー再現により特定し、実装と追従テストを`47d05fa`〜`ca780e8`で順に追加して解消
+- **実端末報告（2026-09-21）**: ユーザーは「LINEメッセージ内の登録URLをクリックしたらエラー画面・文字列が出た」と回答。直近30日の本番ログに該当リクエストは確認できず、8/31以前のcallback HTTP 500（bcrypt 72バイト制約、当時修正済み）または本日修正済み経路の可能性。新リビジョンでの再試行と、再発時の画面の正確な内容確認が残課題
 - **既存友だち対応（本番反映済み・実端末E2E待ち）**: Phase 2導入前から友だちでFirestoreユーザーがない場合、最初のテキストメッセージでLINEプロフィールと署名検証済みuserIdからfreeアカウントを自動作成し、そのメッセージをfree枠として継続処理する。プロフィール取得失敗時もuserIdから登録し、同一LINE IDには安定したドキュメントIDを使って重複作成を抑止する
 - **プラン別生成指示（本番反映済み・実端末E2E待ち）**: 共通のです・ます調、辛口1か所、回答＋要約、原則500字以内を維持し、freeはfreeコーパスを根拠としてユーザーの質問へ直接答える「結論→基礎的根拠→確認点」、basic/proはpaidコーパスの複数資料を統合する「結論→根拠・機序→評価・介入への適用→限界」に分岐する。freeで取得情報が不足する場合は一般知識・推測で補完せず、不足範囲を明示する
 - **freeコーパス既定値（本番反映済み）**: 通常はFirestoreのfree権限設定からコーパスIDを渡す。ID省略時も有料用へ誤接続しないよう、Vertex AIクライアントの既定値をSecret `GOOGLE_CORPUS_ID`（free用）へ修正した
 - **LINE Login callback障害（本番修正済み・実端末再確認待ち）**: 実端末callbackで、長いRefresh Tokenをpasslib/bcryptへ渡した際の72バイト制限によりHTTP 500を確認。高エントロピーのRefresh Token保存をSHA-256ダイジェスト＋定時間比較へ変更し、旧bcryptハッシュの検証互換を維持した
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
+- **Jev前段分類（ローカル実装済み・API接続未設定）**: GeminiにJSONを生成させる分類経路を、TypeSafe Jevの1回の型付き判定へ置換。質問主目的はChoice（知識・評価・所見解釈・介入・術後・根拠・other）、回答観点は可動域・筋力など7項目の独立Noul確率として評価し、設定した閾値を超える上位3項目だけを回答生成へ渡す。`JEV_API_KEY` は未設定のため、現時点では分類なしでRAG回答を継続する。APIキーをSecret Managerから注入後、代表的な臨床質問で閾値と分類精度を検証する
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
 - **次ステップ**:
   1. LINE実端末でfollow/message/unfollowとLINE Login復帰をE2E確認
@@ -94,6 +98,7 @@
 - [x] 既存友だちの初回トークfree自動登録を `chabot-service-00024-fb2`（`GIT_SHA=afa7960`）へ反映し、GitHub Actions run `33364734465` の品質ゲート107件成功、100%トラフィック、`/health` 200、ERRORログ0件を確認。
 - [x] プラン別生成プロンプトとfreeコーパス根拠の回答方針を `chabot-service-00026-r62`（`GIT_SHA=548619f`）へ反映し、GitHub Actions run `33366459914` の成功、100%トラフィック、`/health` 200、Basic 303、ERRORログ0件を確認。
 - [x] free用Secret `GOOGLE_CORPUS_ID` への既定フォールバックと長いRefresh Tokenのcallback修正を `chabot-service-00028-cvl`（`GIT_SHA=a89ac52`）へ反映し、GitHub Actions run `33367481704` の品質ゲート111件成功、100%トラフィック、`/health` 200、Basic 303、デプロイ後ERRORログ0件を確認。
+- [x] Checkout導線の耐障害性修正（Stripeエラー時503案内、callback復帰先喪失時の再案内HTML）とJWT PII対策を `chabot-service-00029-fbh`（`GIT_SHA=ca780e8`）へ反映し、GitHub Actions run `35591533319` の成功、100%トラフィック、`/health` 200、Basic/Pro 303、success/cancel 200を確認（2026-09-21）。
 - [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
@@ -283,10 +288,10 @@ P0公開ゲート:
 - [x] 公開Botと管理サービスのroute混入回帰テストを追加し、既存のデプロイ品質ゲートへ組み込んだ。現行workflowは公開Botだけをデプロイし、管理サービスのデプロイ処理は追加していない。
 - [x] RAGの質問・回答本文、LINEメッセージ、LINE/Stripe/内部user ID等を主要なapplication logから除去し、機密値がログへ出ないことを回帰テストした。
 - [x] 公開チャットAPIへLINE経路と同じ日次上限を適用し、RAG context metadataの外部返却を拒否した。
-- [x] JWTからemail/LINE user IDを除去し、Stripe Customer/Checkout metadataからLINE user IDを除去した。
+- [x] JWTからemail/LINE user IDを除去し、Stripe Customer/Checkout metadataからLINE user IDを除去した。（JWT分は2026-09-21本番反映済み、metadata分は未コミット）
 - [x] GitHub Actions一時認証ファイル `gha-creds-*.json` をGitとDocker build contextから除外し、回帰テストを追加した。
-- [x] ログアウト時はRefresh Tokenを即時失効・Cookieを削除し、発行済みAccess Tokenは最大15分で失効後、LINE Loginを再要求する設定とテストを固定した。環境変数でも15分超へ延長できない。
-- [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。
+- [x] ログアウト時はRefresh Tokenを即時失効・Cookieを削除し、発行済みAccess Tokenは最大15分で失効後、LINE Loginを再要求する設定とテストを固定した。環境変数でも15分超へ延長できない。（2026-09-21本番反映済み）
+- [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。（2026-09-21本番反映済み）
 - [x] デプロイ品質ゲート相当124件、既知のPostgreSQL Refresh Tokenテストを除くunit 139件、Python compileallにローカル成功した。
 - [x] 外部クライアント、同期処理、休眠中のPostgreSQLリポジトリを含む例外ログを例外型中心のallowlist形式へ変更した。
 - [ ] Cloud Loggingの既存ログ削除・保持期間・閲覧IAM・sink確認は未実施（IAM/IAPはユーザー指示により別作業）。
