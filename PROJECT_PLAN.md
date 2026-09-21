@@ -36,6 +36,7 @@
 - **LINE Login callback障害（本番修正済み・実端末再確認待ち）**: 実端末callbackで、長いRefresh Tokenをpasslib/bcryptへ渡した際の72バイト制限によりHTTP 500を確認。高エントロピーのRefresh Token保存をSHA-256ダイジェスト＋定時間比較へ変更し、旧bcryptハッシュの検証互換を維持した
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
+- **回答生成モデル移行（2026-09-21本番反映）**: `gemini-2.5-flash`（2026-10-16退役予定）から `gemini-3.5-flash-lite` へ移行。Gemini 3系は `us-central1` ではモデル一覧に表示されても生成APIが404となるため、生成クライアントのみ `global`（新設定 `GOOGLE_GENERATION_LOCATION`・既定値global）へ分離し、RAGコーパス参照とFirestore設定は `us-central1` を維持。実APIで grounded contexts 2件・confidence 0.85・約5〜6秒を確認し、Firestore free/basic/pro の model_name を更新・読み戻し確認済み。精度・費用の定量比較と実LINE端末E2Eは残課題
 - **Jev前段分類（本番反映済み・実端末E2E待ち）**: GeminiにJSONを生成させる分類経路を、TypeSafe Jev（jev-1.13.0）の1回の型付き判定へ置換。質問主目的はChoice（知識・評価・所見解釈・介入・術後・根拠・other）、回答観点は可動域・筋力など7項目の独立Noul確率として評価し、閾値（主目的confidence 0.45、観点確率0.60）を超える上位3項目だけを回答生成へ渡す。Secret Manager `JEV_API_KEY`（version 1有効）を作成し、deploy.ymlへSecret参照を追加。実API検証では代表臨床質問7問の主目的が全問正答（confidence 0.77〜1.0）、「疼痛と筋力低下の評価」問で疼痛0.61が旧閾値0.65直下だったため観点閾値を0.60へ調整した。コミット `1c1dd20`（run `35593479479` 成功）として導入し、Gemini 3.5 Flash-Lite移行 `3e475e6` を含む現行リビジョン `chabot-service-00031-v5z`（run `35593692368` 成功、100%トラフィック、`JEV_API_KEY` Secret参照・`/health` 200・ERRORログ0件確認済み）で稼働中。キー未設定/障害時は分類なしでRAG回答を継続する設計。LINE実端末での質問→分類→回答導線のE2E確認が残課題
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
 - **次ステップ**:
@@ -99,6 +100,7 @@
 - [x] プラン別生成プロンプトとfreeコーパス根拠の回答方針を `chabot-service-00026-r62`（`GIT_SHA=548619f`）へ反映し、GitHub Actions run `33366459914` の成功、100%トラフィック、`/health` 200、Basic 303、ERRORログ0件を確認。
 - [x] free用Secret `GOOGLE_CORPUS_ID` への既定フォールバックと長いRefresh Tokenのcallback修正を `chabot-service-00028-cvl`（`GIT_SHA=a89ac52`）へ反映し、GitHub Actions run `33367481704` の品質ゲート111件成功、100%トラフィック、`/health` 200、Basic 303、デプロイ後ERRORログ0件を確認。
 - [x] Checkout導線の耐障害性修正（Stripeエラー時503案内、callback復帰先喪失時の再案内HTML）とJWT PII対策を `chabot-service-00029-fbh`（`GIT_SHA=ca780e8`）へ反映し、GitHub Actions run `35591533319` の成功、100%トラフィック、`/health` 200、Basic/Pro 303、success/cancel 200を確認（2026-09-21）。
+- [x] Jev前段分類と回答生成モデルgemini-3.5-flash-lite移行を `chabot-service-00030-fxh` / `chabot-service-00031-v5z`（`GIT_SHA=3e475e6`）へ反映し、GitHub Actions run `35593479479` / `35593692368` の成功、100%トラフィック、`/health` 200を確認（2026-09-21）。
 - [ ] `min-instances=0` のコールドスタート時に発生した一時的な「利用可能インスタンスなし」HTTP 500への対策を決定する（ウォーム後の全endpointは正常）。
 - [x] Firestore `chabotline` へ初期データ3件を投入し、読み戻し確認（2026-08-24）。
 - [ ] LINEの実端末で「友だち追加 → 質問 → RAG回答」を今回の更新後に再確認する。
@@ -414,15 +416,16 @@ FirestoreアクセスとRAG処理の直接並列化案は採用しない。ユ�
 
 本番とFirestore `rag_permissions` は `gemini-2.5-flash` を使用している。Google Cloud公式ライフサイクルでは2026-10-16が退役日で、`Gemini 3.5 Flash-Lite` または `Gemini 3.1 Flash-Lite` が移行候補とされている。また現行テストでは `vertexai.rag` の非推奨警告が出ている。
 
-- [ ] 移行候補モデルをRAG精度・応答時間・費用で比較する
-- [ ] 選定モデルへコード既定値とFirestoreのfree/basic/pro設定を同時更新し、回帰テストと実質問評価を行う
-- [ ] 2026-10-16より十分前にCloud Runへ反映し、旧モデル依存が残っていないことを確認する
+- [x] 移行候補モデルの利用可否を実APIで確認し `gemini-3.5-flash-lite` を選定（2026-09-21）。3系はus-central1生成で404、globalエンドポイントでは3.5/3.1とも生成可。RAG精度・応答時間・費用の定量比較は未実施で、実利用での観察が残課題
+- [x] 選定モデルへコード既定値（`settings.google_model_name`）とFirestore free/basic/pro設定を同時更新し、回帰テストと実グラウンディング生成（contexts 2件・confidence 0.85）で確認（2026-09-21）
+- [x] 2026-10-16より十分前にCloud Run `chabot-service-00031-v5z` へ反映し、旧モデル既定値依存がないことを確認（Firestore読み戻しで3プランとも新モデル）
+- [ ] 代表的な実質問で旧モデル（2.5-flash）との回答品質・レイテンシ・費用を比較し、問題あれば調整する
 - [x] 回答生成を `vertexai.generative_models` / `vertexai.rag` からGoogle Gen AI SDKの `VertexRagStore` へ移行し、実コーパスで応答確認
 - [x] 分類モデルの旧 `gemini-1.5-flash` 既定値を現行 `gemini-2.5-flash` へ統一
 - [ ] RAGコーパス管理スクリプトの `vertexai.rag` をAgent Platformクライアントへ移行する
 
-補足: ローカル個人用 `.env` の `GOOGLE_LOCATION` は古い `asia-northeast1` のため、ローカル実API検証では `us-central1` を明示した。本番Secretは `us-central1` であることを確認済み。
-`gemini-3.1-flash-lite` は現行RAGリージョンの実API確認で404となったため切り替えず、互換モデル確定までは `gemini-2.5-flash` を維持する。
+補足: ローカル個人用 `.env` の `GOOGLE_LOCATION` は2026-09-21に `us-central1` へ修正した。本番Secretも `us-central1` で、RAGコーパス参照・分類はこの地域を維持する。
+Gemini 3系（3.5/3.1 flash-lite）は `us-central1` のモデル一覧に表示されるが生成APIは404となり、`global` エンドポイント（enterprise/v1）でのみ生成可能。このため生成クライアントだけ `GOOGLE_GENERATION_LOCATION=global`（既定値）へ分離した。分類はJev前段分類へ置換済み。
 
 ---
 
