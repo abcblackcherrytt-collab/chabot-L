@@ -47,7 +47,6 @@ class FirestoreAuthService:
             jti=access_jti,
             additional_claims={
                 "provider": "line",
-                "line_user_id": line_user_id,
                 "role": user.get("role", "user"),
             },
         )
@@ -57,7 +56,6 @@ class FirestoreAuthService:
             jti=refresh_jti,
             additional_claims={
                 "provider": "line",
-                "line_user_id": line_user_id,
             },
         )
         token_hash = await asyncio.to_thread(hash_token, refresh_token)
@@ -92,8 +90,7 @@ class FirestoreAuthService:
 
         token_id = payload.get("jti")
         user_id = payload.get("sub")
-        line_user_id = payload.get("line_user_id")
-        if not token_id or not user_id or not line_user_id:
+        if not token_id or not user_id:
             return None
 
         stored = await self.token_repository.get_by_id(token_id)
@@ -115,6 +112,9 @@ class FirestoreAuthService:
 
         user = await self.user_repository.find_by_id(user_id)
         if not user or not user.get("is_active", False):
+            return None
+        line_user_id = user.get("line_user_id")
+        if not line_user_id:
             return None
 
         tokens = await self.issue_tokens(user, line_user_id)
