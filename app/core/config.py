@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     debug: bool = True
     api_version: str = "v1"
 
+    # 管理UIはIAP等の認証境界が完成するまで既定で無効にする。
+    admin_ui_enabled: bool = False
+
     # サーバー設定
     host: str = "0.0.0.0"
     port: int = 8000
@@ -110,6 +113,14 @@ class Settings(BaseSettings):
                     pass
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
+
+    @field_validator("jwt_access_token_expire_minutes")
+    @classmethod
+    def validate_access_token_expiry(cls, value: int) -> int:
+        """ログアウト後の残存セッションを最大15分に制限する。"""
+        if not 1 <= value <= 15:
+            raise ValueError("JWT access token expiry must be between 1 and 15 minutes")
+        return value
 
     @property
     def cors_allowed_origins_list(self) -> List[str]:

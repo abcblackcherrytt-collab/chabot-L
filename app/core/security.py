@@ -23,6 +23,25 @@ logger = logging.getLogger(__name__)
 # パスワードハッシュ化のコンテキスト
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 TOKEN_HASH_PREFIX = "sha256$"
+PROTECTED_JWT_CLAIMS = {
+    "sub",
+    "jti",
+    "exp",
+    "type",
+    "email",
+    "line_user_id",
+}
+
+
+def _validate_additional_claims(
+    additional_claims: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """予約クレームやPIIを追加クレーム経由でJWTへ混入させない。"""
+    claims = additional_claims or {}
+    protected = PROTECTED_JWT_CLAIMS.intersection(claims)
+    if protected:
+        raise ValueError("Protected JWT claims cannot be overridden")
+    return claims
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -63,7 +82,7 @@ def create_access_token(
 
     Args:
         user_id: ユーザーID
-        email: ユーザーメールアドレス
+        email: 後方互換用。PII保護のためJWTには格納しない
         jti: JWT ID（一意識別子）
         additional_claims: 追加のクレーム
 
@@ -75,14 +94,12 @@ def create_access_token(
 
     to_encode = {
         "sub": user_id,
-        "email": email,
         "jti": jti,
         "exp": expires_at,
         "type": "access",
     }
 
-    if additional_claims:
-        to_encode.update(additional_claims)
+    to_encode.update(_validate_additional_claims(additional_claims))
 
     encoded_jwt = pyjwt.encode(
         to_encode,
@@ -104,7 +121,7 @@ def create_refresh_token(
 
     Args:
         user_id: ユーザーID
-        email: ユーザーメールアドレス
+        email: 後方互換用。PII保護のためJWTには格納しない
         jti: JWT ID（一意識別子）
         additional_claims: 追加のクレーム
 
@@ -116,14 +133,12 @@ def create_refresh_token(
 
     to_encode = {
         "sub": user_id,
-        "email": email,
         "jti": jti,
         "exp": expires_at,
         "type": "refresh",
     }
 
-    if additional_claims:
-        to_encode.update(additional_claims)
+    to_encode.update(_validate_additional_claims(additional_claims))
 
     encoded_jwt = pyjwt.encode(
         to_encode,
@@ -317,6 +332,9 @@ async def verify_line_id_token(
             return None
         return payload
 
-    except (httpx.HTTPError, ValueError) as e:
-        logger.error(f"ID token verification failed: {e}")
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.error(
+            "ID token verification failed: error_type=%s",
+            type(exc).__name__,
+        )
         return None
