@@ -52,7 +52,7 @@ def setup_rag_permissions(db) -> None:
         {
             "plan": "free",
             "rag_corpus_id": corpus_ids["free"],
-            "model_name": "gemini-2.5-flash",
+            "model_name": "gemini-3.5-flash-lite",
             "max_input_tokens": 8000,
             "max_output_tokens": 4000,
             "daily_message_limit": DAILY_MESSAGE_LIMITS["free"],
@@ -61,7 +61,7 @@ def setup_rag_permissions(db) -> None:
         {
             "plan": "basic",
             "rag_corpus_id": corpus_ids["basic"],
-            "model_name": "gemini-2.5-flash",
+            "model_name": "gemini-3.5-flash-lite",
             "max_input_tokens": 16000,
             "max_output_tokens": 8000,
             "daily_message_limit": DAILY_MESSAGE_LIMITS["basic"],
@@ -70,7 +70,7 @@ def setup_rag_permissions(db) -> None:
         {
             "plan": "pro",
             "rag_corpus_id": corpus_ids["pro"],
-            "model_name": "gemini-2.5-flash",
+            "model_name": "gemini-3.5-flash-lite",
             "max_input_tokens": 32000,
             "max_output_tokens": 16000,
             "daily_message_limit": DAILY_MESSAGE_LIMITS["pro"],
