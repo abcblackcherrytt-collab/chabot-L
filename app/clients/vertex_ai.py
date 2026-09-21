@@ -4,7 +4,6 @@ Google Cloud Vertex AI RAG Engine との通信を管理するクライアント�
 """
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -15,6 +14,7 @@ from google.genai import types as genai_types
 from google.genai.types import HttpOptions
 
 from app.clients.base import BaseClient, BaseClientError
+from app.clients.jev import JevClient
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -60,12 +60,26 @@ PAID_PLAN_SYSTEM_INSTRUCTION = """以下はbasic/proプラン共通の回答方�
 
 
 QUESTION_TYPES = {
-    "knowledge": "解剖、運動学、用語、一般知識",
-    "assessment": "評価方法、測定方法、整形外科テスト",
-    "interpretation": "所見の解釈、病態推論、鑑別",
-    "intervention": "運動療法、徒手療法、介入方針",
-    "postoperative": "術式、組織修復、術後経過、プロトコル",
-    "evidence": "文献、効果、感度・特異度、推奨度",
+    "knowledge": (
+        "解剖、運動学、用語、または一般知識の説明を求める。測定手順、"
+        "所見の意味、介入方法を主に求める場合は選ばない。"
+    ),
+    "assessment": (
+        "可動域・筋力・動作・整形外科テストなどの評価項目、測定手順、"
+        "評価の組み立てを求める。得られた所見の意味を主に問う場合は"
+        " interpretation を選ぶ。"
+    ),
+    "interpretation": (
+        "評価所見の意味、病態の推論、鑑別、または所見間の整合性を問う。"
+        "具体的な評価手順を問う場合は assessment、介入方法を問う場合は"
+        " intervention を選ぶ。"
+    ),
+    "intervention": (
+        "運動療法、徒手療法、負荷設定、介入の選択・順序・実施方法を求める。"
+        "徒手手技はここに含める。"
+    ),
+    "postoperative": "術式、修復組織、術後の時期、プロトコル、または術後制約を主に問う。",
+    "evidence": "研究論文、効果量、感度・特異度、推奨度、または根拠の比較を主に求める。",
 }
 
 ANSWER_ASPECTS = {
@@ -77,40 +91,6 @@ ANSWER_ASPECTS = {
     "tissue_healing": "組織修復",
     "biomechanics": "バイオメカニクス",
 }
-
-DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーション専門職向けチャットボットの前段分類器です。
-ユーザーの質問を理解し、次の回答生成LLMが回答の構成を調整するための分類だけを行ってください。コーパス選択、医療安全判定、診断、回答本文の生成は行いません。
-
-question_type は必ず次のいずれか1つ、判断できない場合は null にします。
-- knowledge: 解剖、運動学、用語、一般知識
-- assessment: 評価方法、測定方法、整形外科テスト
-- interpretation: 所見の解釈、病態推論、鑑別
-- intervention: 運動療法、徒手療法、介入方針
-- postoperative: 術式、組織修復、術後経過、プロトコル
-- evidence: 文献、効果、感度・特異度、推奨度
-
-answer_aspects は回答で優先する臨床観点を0〜3個選びます。
-- pain
-- rom
-- strength
-- special_test
-- movement_adl
-- tissue_healing
-- biomechanics
-
-ルール:
-- 質問意図を question_type、臨床観点を answer_aspects として分ける。
-- 無理に分類しない。分類不能なら question_type は null、answer_aspects は空配列にする。
-- answer_focus は、回答生成LLMが優先すべき観点を日本語の短い1文で示す。分類不能なら空文字にする。
-- JSON以外の文章、Markdown、コードブロックは出力しない。
-
-出力JSON:
-{
-  "question_type": "knowledge|assessment|interpretation|intervention|postoperative|evidence|null",
-  "answer_aspects": ["pain|rom|strength|special_test|movement_adl|tissue_healing|biomechanics"],
-  "answer_focus": "回答で優先する観点"
-}
-"""
 
 DEFAULT_QUERY_CLASSIFICATION = {
     "question_type": None,
@@ -153,10 +133,8 @@ class VertexAIClient(BaseClient):
         location: Optional[str] = None,
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
-        classification_model_name: Optional[str] = None,
-        classification_location: Optional[str] = None,
         system_instruction: Optional[str] = None,
-        classification_system_instruction: Optional[str] = None,
+        jev_client: Optional[JevClient] = None,
         qwen_model_name: Optional[str] = None,
         qwen_location: Optional[str] = None,
     ):
@@ -168,39 +146,33 @@ class VertexAIClient(BaseClient):
             location: リージョン（RAG Engine の GA リージョン: us-central1）
             corpus_id: RAG コーパスID
             model_name: グラウンディング応答生成モデル名
-            classification_model_name: 前段分類モデル名
-            classification_location: 前段分類モデルのロケーション
             system_instruction: 応答生成のシステムプロンプト（未指定時は
                 DEFAULT_SYSTEM_INSTRUCTION = 肩専門職向け辛口回答）
-            classification_system_instruction: 前段分類用システムプロンプト
+            jev_client: 前段の型付き判定クライアント
             qwen_model_name: Qwenモデル名
             qwen_location: Qwenモデルのロケーション
         """
         # ベースクライアントの __init__ は呼ばない（httpx 不要・Vertex AI SDK 使用）
         self.project_id = project_id or settings.google_project_id
         self.location = location or settings.google_location
+        # Gemini 3系の応答生成はglobal、RAGコーパス参照はself.location（us-central1）を維持する。
+        self.generation_location = settings.google_generation_location
         # query() の既定プランはfree。呼び出し側からIDが渡らない場合も、
         # 有料用ではなくGOOGLE_CORPUS_ID（free用）へ安全にフォールバックする。
         self.corpus_id = corpus_id or settings.google_corpus_id
         self.model_name = model_name or settings.google_model_name
-        self.classification_model_name = (
-            classification_model_name or settings.google_classification_model_name
-        )
-        self.classification_location = (
-            classification_location or settings.google_classification_location
-        )
         self.system_instruction = (
             system_instruction if system_instruction is not None else DEFAULT_SYSTEM_INSTRUCTION
-        )
-        self.classification_system_instruction = (
-            classification_system_instruction
-            if classification_system_instruction is not None
-            else DEFAULT_CLASSIFICATION_SYSTEM_INSTRUCTION
         )
         self.qwen_model_name = qwen_model_name or settings.qwen_model_name
         self.qwen_location = qwen_location or settings.qwen_location
         self._generation_client: Optional[genai.Client] = None
-        self._classification_client: Optional[genai.Client] = None
+        self.jev_client = jev_client or JevClient(
+            api_key=settings.jev_api_key,
+            api_url=settings.jev_api_url,
+            model_name=settings.jev_model_name,
+            timeout=settings.jev_timeout_seconds,
+        )
 
         # RAG コーパス リソース名（projects/{pid}/locations/{loc}/ragCorpora/{cid}）
         self.corpus_name = (
@@ -498,11 +470,14 @@ class VertexAIClient(BaseClient):
             client = self._get_generation_client()
 
             logger.info(
-                f"Querying Vertex AI RAG (model={effective_model_name}, "
-                f"corpus={effective_corpus_id}, top_k={top_k}, "
-                f"plan={effective_plan}, "
-                f"question_type={classification.get('question_type') or 'unclassified'}, "
-                f"text={sanitized[:50]}...)"
+                "Querying Vertex AI RAG: model=%s corpus=%s top_k=%s plan=%s "
+                "question_type=%s query_length=%s",
+                effective_model_name,
+                effective_corpus_id,
+                top_k,
+                effective_plan,
+                classification.get("question_type") or "unclassified",
+                len(sanitized),
             )
 
             # SDK は同期 API → asyncio.to_thread でラップ（イベントループをブロックしない）
@@ -543,38 +518,37 @@ class VertexAIClient(BaseClient):
 
         except VertexAIError:
             raise
-        except Exception as e:
-            logger.error(f"Vertex AI RAG query error: {e}", exc_info=True)
-            raise VertexAIError(f"Vertex AI RAGクエリエラー: {e}")
+        except Exception as exc:
+            logger.error(
+                "Vertex AI RAG query failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise VertexAIError("Vertex AI RAGクエリエラー") from exc
 
     async def _classify_query(self, text: str) -> Dict[str, Any]:
         """
         回答生成前に、質問意図と回答で優先する臨床観点を分類します。
 
-        分類は回答品質を安定させるための補助情報です。分類LLMの失敗で
+        分類は回答品質を安定させるための補助情報です。Jev判定の失敗で
         本体のRAG回答を止めないよう、失敗時は分類情報を使用せずに続行します。
         """
         try:
-            client = self._get_classification_client()
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=self.classification_model_name,
-                contents=text,
-                config={
-                    "system_instruction": self.classification_system_instruction,
-                    "response_mime_type": "application/json",
-                },
-            )
-            raw_text = getattr(response, "text", "") or ""
-            classification = self._parse_classification_response(raw_text)
+            if not self.jev_client.is_configured:
+                return DEFAULT_QUERY_CLASSIFICATION.copy()
+            response = await self.jev_client.decide(text, self._build_jev_questions())
+            classification = self._parse_jev_response(response)
             logger.info(
                 "Query classified: "
                 f"question_type={classification.get('question_type') or 'unclassified'}, "
                 f"aspects={classification.get('answer_aspects', [])}"
             )
             return classification
-        except Exception as e:
-            logger.warning(f"Query classification failed; continuing without classification: {e}")
+        except Exception as exc:
+            logger.warning(
+                "Query classification failed; continuing without classification: "
+                "error_type=%s",
+                type(exc).__name__,
+            )
             return DEFAULT_QUERY_CLASSIFICATION.copy()
 
     def _get_generation_client(self) -> genai.Client:
@@ -583,21 +557,10 @@ class VertexAIClient(BaseClient):
             self._generation_client = genai.Client(
                 enterprise=True,
                 project=self.project_id,
-                location=self.location,
+                location=self.generation_location,
                 http_options=HttpOptions(api_version="v1"),
             )
         return self._generation_client
-
-    def _get_classification_client(self) -> genai.Client:
-        """分類用クライアントを遅延生成し、後続リクエストで再利用する。"""
-        if self._classification_client is None:
-            self._classification_client = genai.Client(
-                enterprise=True,
-                project=self.project_id,
-                location=self.classification_location,
-                http_options=HttpOptions(api_version="v1"),
-            )
-        return self._classification_client
 
     def _get_system_instruction(self, plan: str) -> str:
         """共通の文体・文字数を維持し、プラン別の構成・参照方針を追加する。"""
@@ -608,45 +571,84 @@ class VertexAIClient(BaseClient):
         )
         return f"{self.system_instruction}\n\n{plan_instruction}"
 
-    def _parse_classification_response(self, raw_text: str) -> Dict[str, Any]:
-        """
-        分類LLMのJSON応答を正規化します。
+    def _build_jev_questions(self) -> Dict[str, Dict[str, Any]]:
+        """肩リハビリ質問を分類する、相互に独立した Jev 判定を定義する。"""
+        questions: Dict[str, Dict[str, Any]] = {
+            "question_type": {
+                "type": "choice",
+                "instructions": (
+                    "この質問の主目的を1つ選んでください。対象は肩領域の"
+                    "リハビリテーション専門職です。質問の話題ではなく、回答者に"
+                    "何を求めているかで選びます。どれにも明確に当てはまらなければ"
+                    " other を選んでください。"
+                ),
+                "criteria": {
+                    **QUESTION_TYPES,
+                    "other": "分類対象外、または質問の主目的を特定できない。",
+                },
+            },
+        }
+        for aspect, label in ANSWER_ASPECTS.items():
+            questions[f"aspect_{aspect}"] = {
+                "type": "noul",
+                "instructions": (
+                    f"この質問へ答える際、{label}の観点を主要な回答要素として"
+                    "扱う必要がありますか。質問文に単語が含まれるだけでは yes に"
+                    "せず、回答の質を上げるために説明・評価・介入へ実質的に"
+                    "含める必要がある場合だけ yes としてください。"
+                ),
+                "criteria": {
+                    "true": f"{label}を回答の主要な観点として扱う必要がある。",
+                    "false": f"{label}は回答の主要な観点ではない。",
+                },
+            }
+        return questions
 
-        Args:
-            raw_text: 分類LLMの生テキスト
-
-        Returns:
-            正規化済み分類 dict
-        """
-        data: Dict[str, Any] = {}
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group(0))
-                except json.JSONDecodeError:
-                    data = {}
-
-        raw_question_type = data.get("question_type")
-        question_type = str(raw_question_type).strip().lower() if raw_question_type else None
-        if question_type not in QUESTION_TYPES:
+    def _parse_jev_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """JevのChoice/Noul応答を既存の回答生成用分類形式へ変換する。"""
+        answers = response.get("answers")
+        if not isinstance(answers, dict):
             return DEFAULT_QUERY_CLASSIFICATION.copy()
 
-        raw_aspects = data.get("answer_aspects", [])
-        if not isinstance(raw_aspects, list):
-            raw_aspects = []
+        type_answer = answers.get("question_type", {})
+        if not isinstance(type_answer, dict):
+            return DEFAULT_QUERY_CLASSIFICATION.copy()
+        question_type = str(type_answer.get("choice") or "").strip().lower()
+        confidence = type_answer.get("confidence", 0.0)
+        if not isinstance(confidence, (int, float)) or (
+            confidence < settings.jev_choice_confidence_threshold
+        ):
+            question_type = "other"
+        if question_type not in QUESTION_TYPES:
+            question_type = None
 
-        answer_aspects = []
-        for aspect in raw_aspects:
-            normalized = str(aspect).strip().lower()
-            if normalized in ANSWER_ASPECTS and normalized not in answer_aspects:
-                answer_aspects.append(normalized)
-            if len(answer_aspects) >= 3:
-                break
+        scored_aspects = []
+        for aspect in ANSWER_ASPECTS:
+            answer = answers.get(f"aspect_{aspect}", {})
+            if not isinstance(answer, dict):
+                continue
+            probability = answer.get("noul")
+            if isinstance(probability, (int, float)) and (
+                probability >= settings.jev_aspect_probability_threshold
+            ):
+                scored_aspects.append((aspect, probability))
+        answer_aspects = [
+            aspect
+            for aspect, _ in sorted(
+                scored_aspects,
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+        ]
 
-        answer_focus = str(data.get("answer_focus") or "").strip()
+        if not question_type and not answer_aspects:
+            return DEFAULT_QUERY_CLASSIFICATION.copy()
+        focus_labels = [ANSWER_ASPECTS[aspect] for aspect in answer_aspects]
+        answer_focus = (
+            "、".join(focus_labels) + "を優先して回答する。"
+            if focus_labels
+            else "質問の主目的に沿って回答する。"
+        )
         return {
             "question_type": question_type,
             "answer_aspects": answer_aspects,
@@ -718,7 +720,7 @@ class VertexAIClient(BaseClient):
                         "source": uri or "",
                     })
         except (IndexError, AttributeError) as e:
-            logger.debug(f"No grounding metadata: {e}")
+            logger.debug("No grounding metadata: %s", type(e).__name__)
 
         confidence = 0.85 if contexts else 0.0
         return answer, contexts, confidence

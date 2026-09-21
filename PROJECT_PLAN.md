@@ -36,7 +36,7 @@
 - **LINE Login callback障害（本番修正済み・実端末再確認待ち）**: 実端末callbackで、長いRefresh Tokenをpasslib/bcryptへ渡した際の72バイト制限によりHTTP 500を確認。高エントロピーのRefresh Token保存をSHA-256ダイジェスト＋定時間比較へ変更し、旧bcryptハッシュの検証互換を維持した
 - **対策本番反映済み**: Stripe WebhookのFirestore Transactionによる永続冪等性、失敗時HTTP 500、created/updated/deleted/paid/payment_failedの状態保存、公開Checkout/status APIの実ユーザー認証、Refresh Cookieの30日ローリング更新、1MiB Webhook上限を反映
 - **Vertex AI**: 生成経路を廃止済み `vertexai.generative_models` からGoogle Gen AI SDKへ移行し、本番同等の `us-central1` と実RAGコーパスで分類・検索・回答生成に成功。ローカル個人用 `.env` の `GOOGLE_LOCATION=asia-northeast1` は古く、修正が必要
-- **Jev前段分類（ローカル実装済み・API接続未設定）**: GeminiにJSONを生成させる分類経路を、TypeSafe Jevの1回の型付き判定へ置換。質問主目的はChoice（知識・評価・所見解釈・介入・術後・根拠・other）、回答観点は可動域・筋力など7項目の独立Noul確率として評価し、設定した閾値を超える上位3項目だけを回答生成へ渡す。`JEV_API_KEY` は未設定のため、現時点では分類なしでRAG回答を継続する。APIキーをSecret Managerから注入後、代表的な臨床質問で閾値と分類精度を検証する
+- **Jev前段分類（API検証済み・本番反映待ち）**: GeminiにJSONを生成させる分類経路を、TypeSafe Jev（jev-1.13.0）の1回の型付き判定へ置換。質問主目的はChoice（知識・評価・所見解釈・介入・術後・根拠・other）、回答観点は可動域・筋力など7項目の独立Noul確率として評価し、閾値（主目的confidence 0.45、観点確率0.60）を超える上位3項目だけを回答生成へ渡す。Secret Manager `JEV_API_KEY` を作成済みで、実API検証では代表臨床質問7問の主目的が全問正答（confidence 0.77〜1.0）。「疼痛と筋力低下の評価」問で疼痛0.61が旧閾値0.65直下だったため観点閾値を0.60へ調整した。キー未設定/障害時は分類なしでRAG回答を継続する設計。deploy.ymlのSecret参照追加と本番E2Eが残作業
 - **残存リスク**: Cloud Runは `min-instances=0` / `max-instances=3` で、scale-to-zero後の5件同時疎通では3件のコールドスタート中に2件が「利用可能インスタンスなし」HTTP 500となった。常時起動は継続費用が発生するため、明示承認まで有効化しない
 - **次ステップ**:
   1. LINE実端末でfollow/message/unfollowとLINE Login復帰をE2E確認

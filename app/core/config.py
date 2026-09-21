@@ -79,12 +79,14 @@ class Settings(BaseSettings):
     # Cloud Run（asia-northeast1）からクロスリージョン呼び出しを行う。
     google_project_id: str = "your-project-id"
     google_location: str = "us-central1"
+    # 回答生成のみGemini 3系エンドポイント（global）へ、RAGコーパスと分類はus-central1を維持する。
+    google_generation_location: str = "global"
     # 重要: google_corpus_idがfree用、google_corpus_id_plan1が有料（basic/pro）用
     google_corpus_id: str = "your-free-corpus-id"  # freeプラン用コーパスID
     google_corpus_id_plan1: str = "your-paid-corpus-id"  # 有料プラン用コーパスID
     # グラウンディング応答生成モデル（Phase 2 でプラン別切替を想定）
-    # gemini-2.0-flash-001 は 2026年時点で廃止済み（404）。2.5 Flash は 2026-10-16 廃止予定。
-    google_model_name: str = "gemini-2.5-flash"
+    # gemini-3.5-flash-lite は global エンドポイント経由（2026-09-21実API確認済み）。
+    google_model_name: str = "gemini-3.5-flash-lite"
 
     # Qwenモデル設定（Vertex AI Model Garden）
     # Qwen 2.5 72B Instructモデル
@@ -92,9 +94,13 @@ class Settings(BaseSettings):
     # Qwenモデルのロケーション（通常 us-central1）
     qwen_location: str = "us-central1"
 
-    # 分類用モデル設定（前段クエリ分類）
-    google_classification_model_name: str = "gemini-2.5-flash"
-    google_classification_location: str = "us-central1"
+    # Jev System One（前段クエリ分類）。キー未設定時は分類を行わずRAG回答を続行する。
+    jev_api_key: str = ""
+    jev_api_url: str = "https://api.typesafe.ai/v1/systemone"
+    jev_model_name: str = "jev-1.13.0"
+    jev_timeout_seconds: float = 5.0
+    jev_choice_confidence_threshold: float = 0.45
+    jev_aspect_probability_threshold: float = 0.60
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]

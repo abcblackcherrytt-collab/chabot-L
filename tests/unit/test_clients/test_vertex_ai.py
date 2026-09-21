@@ -3,6 +3,8 @@ Unit tests for Vertex AI Client
 Vertex AI クライアントのユニットテスト
 """
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -76,20 +78,53 @@ class TestVertexAIClient:
         assert client.corpus_id == settings.google_corpus_id
         assert client.corpus_id != settings.google_corpus_id_plan1
 
-    def test_classification_client_is_reused(self):
-        """分類ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
-        with (
-            patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"),
-            patch("app.clients.vertex_ai.genai.Client") as client_class,
-        ):
-            client_class.return_value = MagicMock()
+    def test_jev_questions_separate_primary_purpose_and_aspects(self):
+        """Jevには主目的をChoice、臨床観点を独立したNoulで渡す。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
             client = VertexAIClient()
 
-            first = client._get_classification_client()
-            second = client._get_classification_client()
+        questions = client._build_jev_questions()
 
-        assert first is second
-        client_class.assert_called_once()
+        assert questions["question_type"]["type"] == "choice"
+        assert "intervention" in questions["question_type"]["criteria"]
+        assert "徒手療法" in questions["question_type"]["criteria"]["intervention"]
+        assert questions["aspect_rom"]["type"] == "noul"
+        assert questions["aspect_strength"]["type"] == "noul"
+
+    def test_parse_jev_response_uses_thresholds_and_top_three_aspects(self):
+        """JevのChoice/Noul出力を回答生成用の分類へ安全に変換する。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        classification = client._parse_jev_response(
+            {
+                "answers": {
+                    "question_type": {"choice": "intervention", "confidence": 0.8},
+                    "aspect_rom": {"noul": 0.86},
+                    "aspect_strength": {"noul": 0.79},
+                    "aspect_pain": {"noul": 0.50},
+                    "aspect_biomechanics": {"noul": 0.71},
+                }
+            }
+        )
+
+        assert classification["question_type"] == "intervention"
+        assert classification["answer_aspects"] == ["rom", "strength", "biomechanics"]
+        assert classification["available"] is True
+
+    @pytest.mark.asyncio
+    async def test_query_classification_skips_jev_without_api_key(self):
+        """APIキー未設定中は外部呼び出しをせず、分類なしとして続行する。"""
+        jev_client = MagicMock()
+        jev_client.is_configured = False
+        jev_client.decide = AsyncMock()
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient(jev_client=jev_client)
+
+        classification = await client._classify_query("肩の可動域を評価したい")
+
+        assert classification["available"] is False
+        jev_client.decide.assert_not_awaited()
 
     def test_generation_client_is_reused(self):
         """回答生成ごとにADC解決とgenai.Client生成を繰り返さないこと。"""
@@ -139,6 +174,43 @@ class TestVertexAIClient:
         # 現在の実装では回答：/要約：は残る（これらはLLM出力の一部）
         # _strip_markdown()はMarkdownのみ削除
         assert "回答：" in result["answer"] or "要約：" in result["answer"]
+
+    @pytest.mark.asyncio
+    async def test_query_log_does_not_include_question_or_answer(self, caplog):
+        """Vertex AIクライアント自身のログにも相談本文を残さないこと。"""
+
+        class MockResponse:
+            text = "患者氏名を含む回答"
+            candidates = []
+
+        sensitive_question = "患者氏名は山田太郎です"
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+        generation_client = MagicMock()
+        generation_client.models.generate_content.return_value = MockResponse()
+
+        with (
+            patch.object(client, "_build_retrieval_tool", return_value=MagicMock()),
+            patch.object(client, "_get_generation_client", return_value=generation_client),
+            patch.object(
+                client,
+                "_classify_query",
+                new=AsyncMock(
+                    return_value={
+                        "question_type": None,
+                        "answer_aspects": [],
+                        "answer_focus": "",
+                        "available": False,
+                    }
+                ),
+            ),
+            caplog.at_level(logging.INFO, logger="app.clients.vertex_ai"),
+        ):
+            await client.query(text=sensitive_question, include_context=False)
+
+        assert sensitive_question not in caplog.text
+        assert "山田太郎" not in caplog.text
+        assert "query_length=" in caplog.text
 
     def test_strip_markdown_removes_markdown_formatting(self):
         """Markdown記法の除去を確認する。"""
