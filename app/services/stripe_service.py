@@ -94,14 +94,14 @@ class StripeService:
                 metadata=metadata,
             )
             return {
-                "id": customer.id,
-                "email": customer.email,
-                "name": customer.name,
-                "created": customer.created,
+                "id": customer.get("id"),
+                "email": customer.get("email"),
+                "name": customer.get("name"),
+                "created": customer.get("created"),
             }
 
         except StripeError as e:
-            logger.error(f"Failed to create customer: {e}")
+            logger.error("Failed to create customer: error_type=%s", type(e).__name__)
             raise
 
     async def create_subscription(
@@ -135,29 +135,33 @@ class StripeService:
             )
 
             # 最新の請求書情報を取得
-            invoice = subscription.latest_invoice
-            payment_intent = invoice.payment_intent if invoice else None
+            invoice = subscription.get("latest_invoice") or {}
+            payment_intent = invoice.get("payment_intent") or {}
 
             return {
-                "id": subscription.id,
-                "customer_id": subscription.customer,
-                "status": subscription.status,
-                "price_id": subscription.items.data[0].price.id,
-                "current_period_start": subscription.current_period_start,
-                "current_period_end": subscription.current_period_end,
-                "cancel_at_period_end": subscription.cancel_at_period_end,
-                "created": subscription.created,
+                "id": subscription.get("id"),
+                "customer_id": subscription.get("customer"),
+                "status": subscription.get("status"),
+                "price_id": (
+                    subscription.get("items", {}).get("data", [{}])[0]
+                    .get("price", {})
+                    .get("id")
+                ),
+                "current_period_start": subscription.get("current_period_start"),
+                "current_period_end": subscription.get("current_period_end"),
+                "cancel_at_period_end": subscription.get("cancel_at_period_end"),
+                "created": subscription.get("created"),
                 "latest_invoice": {
-                    "id": invoice.id,
-                    "amount": invoice.amount,
-                    "currency": invoice.currency,
-                    "status": invoice.status,
-                    "payment_intent_id": payment_intent.id if payment_intent else None,
+                    "id": invoice.get("id"),
+                    "amount": invoice.get("amount"),
+                    "currency": invoice.get("currency"),
+                    "status": invoice.get("status"),
+                    "payment_intent_id": payment_intent.get("id"),
                 },
             }
 
         except StripeError as e:
-            logger.error(f"Failed to create subscription: {e}")
+            logger.error("Failed to create subscription: error_type=%s", type(e).__name__)
             raise
 
     async def cancel_subscription(
@@ -180,16 +184,16 @@ class StripeService:
             subscription = await self.client.cancel_subscription(subscription_id)
 
             return {
-                "id": subscription.id,
-                "customer_id": subscription.customer,
-                "status": subscription.status,
-                "cancel_at": subscription.canceled_at,
-                "cancel_at_period_end": subscription.cancel_at_period_end,
-                "current_period_end": subscription.current_period_end,
+                "id": subscription.get("id"),
+                "customer_id": subscription.get("customer"),
+                "status": subscription.get("status"),
+                "cancel_at": subscription.get("canceled_at"),
+                "cancel_at_period_end": subscription.get("cancel_at_period_end"),
+                "current_period_end": subscription.get("current_period_end"),
             }
 
         except StripeError as e:
-            logger.error(f"Failed to cancel subscription: {e}")
+            logger.error("Failed to cancel subscription: error_type=%s", type(e).__name__)
             raise
 
     async def get_subscription(
@@ -212,19 +216,23 @@ class StripeService:
             subscription = await self.client.retrieve_subscription(subscription_id)
 
             return {
-                "id": subscription.id,
-                "customer_id": subscription.customer,
-                "status": subscription.status,
-                "price_id": subscription.items.data[0].price.id,
-                "current_period_start": subscription.current_period_start,
-                "current_period_end": subscription.current_period_end,
-                "cancel_at_period_end": subscription.cancel_at_period_end,
-                "created": subscription.created,
-                "updated_at": subscription.updated_at,
+                "id": subscription.get("id"),
+                "customer_id": subscription.get("customer"),
+                "status": subscription.get("status"),
+                "price_id": (
+                    subscription.get("items", {}).get("data", [{}])[0]
+                    .get("price", {})
+                    .get("id")
+                ),
+                "current_period_start": subscription.get("current_period_start"),
+                "current_period_end": subscription.get("current_period_end"),
+                "cancel_at_period_end": subscription.get("cancel_at_period_end"),
+                "created": subscription.get("created"),
+                "updated_at": subscription.get("updated_at"),
             }
 
         except StripeError as e:
-            logger.error(f"Failed to get subscription: {e}")
+            logger.error("Failed to get subscription: error_type=%s", type(e).__name__)
             raise
 
     async def get_customer_subscriptions(
@@ -243,26 +251,33 @@ class StripeService:
         Raises:
             StripeError: 取得エラーが発生した場合
         """
-        import stripe
-
         try:
             # 顧客のサブスクリプションを取得
             subscriptions = await self.client.list_subscriptions(customer=customer_id)
 
             return [
                 {
-                    "id": sub.id,
-                    "status": sub.status,
-                    "price_id": sub.items.data[0].price.id if sub.items.data else None,
-                    "current_period_start": sub.current_period_start,
-                    "current_period_end": sub.current_period_end,
-                    "cancel_at_period_end": sub.cancel_at_period_end,
+                    "id": sub.get("id"),
+                    "status": sub.get("status"),
+                    "price_id": (
+                        sub.get("items", {}).get("data", [{}])[0]
+                        .get("price", {})
+                        .get("id")
+                        if sub.get("items", {}).get("data")
+                        else None
+                    ),
+                    "current_period_start": sub.get("current_period_start"),
+                    "current_period_end": sub.get("current_period_end"),
+                    "cancel_at_period_end": sub.get("cancel_at_period_end"),
                 }
-                for sub in subscriptions.data
+                for sub in subscriptions.get("data", [])
             ]
 
         except StripeError as e:
-            logger.error(f"Failed to get customer subscriptions: {e}")
+            logger.error(
+                "Failed to get customer subscriptions: error_type=%s",
+                type(e).__name__,
+            )
             raise
 
     async def list_prices(
@@ -286,19 +301,21 @@ class StripeService:
 
             return [
                 {
-                    "id": price.id,
-                    "product_id": price.product,
-                    "unit_amount": price.unit_amount,
-                    "currency": price.currency,
-                    "interval": price.recurring.interval,
-                    "interval_count": price.recurring.interval_count,
-                    "nickname": price.nickname,
+                    "id": price.get("id"),
+                    "product_id": price.get("product"),
+                    "unit_amount": price.get("unit_amount"),
+                    "currency": price.get("currency"),
+                    "interval": (price.get("recurring") or {}).get("interval"),
+                    "interval_count": (
+                        (price.get("recurring") or {}).get("interval_count")
+                    ),
+                    "nickname": price.get("nickname"),
                 }
                 for price in prices
             ]
 
         except StripeError as e:
-            logger.error(f"Failed to list prices: {e}")
+            logger.error("Failed to list prices: error_type=%s", type(e).__name__)
             raise
 
     async def process_webhook_event(
@@ -332,13 +349,13 @@ class StripeService:
             event_created=event.get("created"),
         )
         if claim_result == "completed":
-            logger.info("Webhook event already completed: %s", event_id)
+            logger.info("Stripe webhook event already completed")
             return True
         if claim_result == "in_progress":
-            logger.warning("Webhook event is already processing: %s", event_id)
+            logger.warning("Stripe webhook event is already processing")
             return False
 
-        logger.info("Processing webhook event: %s (%s)", event_type, event_id)
+        logger.info("Processing Stripe webhook event: event_type=%s", event_type)
         try:
             handlers = {
                 "invoice.paid": self._handle_invoice_paid,
@@ -365,7 +382,6 @@ class StripeService:
                 "Webhook event processing failed: type=%s error=%s",
                 event_type,
                 type(exc).__name__,
-                exc_info=True,
             )
             await event_repository.mark_failed(
                 event_id,
@@ -628,10 +644,10 @@ class StripeService:
             }
 
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            logger.error("Stripe health check failed: error_type=%s", type(e).__name__)
             return {
                 "status": "unhealthy",
                 "service": "stripe",
                 "stripe_available": False,
-                "error": str(e),
+                "error": "Stripe service unavailable",
             }

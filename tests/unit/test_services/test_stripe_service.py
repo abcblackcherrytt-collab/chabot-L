@@ -85,13 +85,14 @@ class TestStripeService:
         """
         サブスクリプションキャンセルが成功することをテスト
         """
-        mock_subscription = MagicMock()
-        mock_subscription.id = "sub_test123"
-        mock_subscription.customer = "cus_test123"
-        mock_subscription.status = "canceled"
-        mock_subscription.canceled_at = 1234567890
-        mock_subscription.cancel_at_period_end = True
-        mock_subscription.current_period_end = 1234567890 + 2592000
+        mock_subscription = {
+            "id": "sub_test123",
+            "customer": "cus_test123",
+            "status": "canceled",
+            "canceled_at": 1234567890,
+            "cancel_at_period_end": True,
+            "current_period_end": 1234567890 + 2592000,
+        }
 
         mock_client = AsyncMock()
         mock_client.cancel_subscription = AsyncMock(return_value=mock_subscription)
@@ -128,25 +129,25 @@ class TestStripeService:
         顧客のサブスクリプション一覧取得が成功することをテスト
         """
         def make_subscription(sub_id, status, has_price):
-            sub = MagicMock()
-            sub.id = sub_id
-            sub.status = status
-            sub.current_period_start = 1234567890
-            sub.current_period_end = 1234567890 + 2592000
-            sub.cancel_at_period_end = False
-            if has_price:
-                item = MagicMock()
-                item.price.id = "price_test123"
-                sub.items.data = [item]
-            else:
-                sub.items.data = []
-            return sub
+            return {
+                "id": sub_id,
+                "status": status,
+                "current_period_start": 1234567890,
+                "current_period_end": 1234567890 + 2592000,
+                "cancel_at_period_end": False,
+                "items": (
+                    {"data": [{"price": {"id": "price_test123"}}]}
+                    if has_price
+                    else {"data": []}
+                ),
+            }
 
-        mock_subscriptions = MagicMock()
-        mock_subscriptions.data = [
-            make_subscription("sub_test123", "active", has_price=True),
-            make_subscription("sub_test456", "canceled", has_price=False),
-        ]
+        mock_subscriptions = {
+            "data": [
+                make_subscription("sub_test123", "active", has_price=True),
+                make_subscription("sub_test456", "canceled", has_price=False),
+            ]
+        }
 
         mock_client = AsyncMock()
         mock_client.list_subscriptions = AsyncMock(return_value=mock_subscriptions)
@@ -167,21 +168,19 @@ class TestStripeService:
         """
         価格一覧取得が成功することをテスト
         """
-        class MockPrice:
-            def __init__(self, price_id):
-                self.id = price_id
-                self.product = "prod_test123"
-                self.unit_amount = 1000
-                self.currency = "jpy"
-                self.recurring = type('obj', (object,), {
-                    'interval': 'month',
-                    'interval_count': 1,
-                })()
-                self.nickname = "Test Price"
+        def make_price(price_id):
+            return {
+                "id": price_id,
+                "product": "prod_test123",
+                "unit_amount": 1000,
+                "currency": "jpy",
+                "recurring": {"interval": "month", "interval_count": 1},
+                "nickname": "Test Price",
+            }
 
         mock_prices = [
-            MockPrice("price_test123"),
-            MockPrice("price_test456"),
+            make_price("price_test123"),
+            make_price("price_test456"),
         ]
 
         mock_client = AsyncMock()

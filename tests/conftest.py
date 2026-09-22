@@ -151,51 +151,39 @@ def mock_vertex_ai_denied_response():
 @pytest.fixture
 def mock_stripe_customer():
     """
-    Stripe顧客のモックフィクスチャ
+    Stripe顧客のモックフィクスチャ（クライアント境界と同じdict形式）
     """
-    class MockCustomer:
-        id = "cus_test123"
-        email = "test@example.com"
-        name = "Test User"
-        created = 1234567890
-
-    return MockCustomer()
+    return {
+        "id": "cus_test123",
+        "email": "test@example.com",
+        "name": "Test User",
+        "created": 1234567890,
+    }
 
 
 @pytest.fixture
 def mock_stripe_subscription():
     """
-    Stripeサブスクリプションのモックフィクスチャ
+    Stripeサブスクリプションのモックフィクスチャ（dict形式）
     """
-    class MockPaymentIntent:
-        id = "pi_test123"
-
-    class MockInvoice:
-        id = "in_test123"
-        amount = 1000
-        currency = "jpy"
-        status = "paid"
-        payment_intent = MockPaymentIntent()
-
-    class MockPrice:
-        id = "price_test123"
-
-    class MockSubscriptionItem:
-        price = MockPrice()
-
-    class MockSubscription:
-        id = "sub_test123"
-        customer = "cus_test123"
-        status = "active"
-        items = type('obj', (object,), {'data': [MockSubscriptionItem()]})()
-        current_period_start = 1234567890
-        current_period_end = 1234567890 + 2592000  # 30日後
-        cancel_at_period_end = False
-        created = 1234567890
-        updated_at = 1234567890
-        latest_invoice = MockInvoice()
-
-    return MockSubscription()
+    return {
+        "id": "sub_test123",
+        "customer": "cus_test123",
+        "status": "active",
+        "items": {"data": [{"price": {"id": "price_test123"}}]},
+        "current_period_start": 1234567890,
+        "current_period_end": 1234567890 + 2592000,  # 30日後
+        "cancel_at_period_end": False,
+        "created": 1234567890,
+        "updated_at": 1234567890,
+        "latest_invoice": {
+            "id": "in_test123",
+            "amount": 1000,
+            "currency": "jpy",
+            "status": "paid",
+            "payment_intent": {"id": "pi_test123"},
+        },
+    }
 
 
 @pytest.fixture

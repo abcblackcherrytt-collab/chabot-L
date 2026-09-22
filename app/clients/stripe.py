@@ -7,7 +7,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import stripe
 
@@ -15,6 +15,19 @@ from app.clients.base import BaseClient, BaseClientError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _to_plain(value: Any) -> Any:
+    """StripeObjectを再帰的なdict/listへ正規化する。
+
+    現行のstripe-pythonはAPIリソースでdict風の.getを提供しないため、
+    クライアント境界でplain dictへ統一しサービス層の契約を一定に保つ。
+    """
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if isinstance(value, list):
+        return [_to_plain(item) for item in value]
+    return value
 
 
 class StripeError(BaseClientError):
@@ -94,17 +107,17 @@ class StripeClient(BaseClient):
             logger.info("Webhook signature verified successfully")
             return True
 
-        except ValueError as e:
+        except ValueError:
             # JSONパースエラー
-            logger.error(f"Invalid payload in webhook: {e}")
+            logger.error("Invalid payload in Stripe webhook")
             raise StripeError(
                 "Invalid webhook payload",
                 status_code=400,
             )
 
-        except stripe.error.SignatureVerificationError as e:
+        except stripe.error.SignatureVerificationError:
             # 署名検証エラー
-            logger.error(f"Webhook signature verification failed: {e}")
+            logger.error("Stripe webhook signature verification failed")
             raise StripeError(
                 "Invalid webhook signature",
                 status_code=401,
@@ -139,7 +152,7 @@ class StripeClient(BaseClient):
             event_data: イベントデータ
         """
         self._processed_events[event_id] = event_data
-        logger.debug(f"Event {event_id} marked as processed")
+        logger.debug("Stripe event marked as processed")
 
     def clear_old_events(self, hours_old: int = 24) -> int:
         """
@@ -172,7 +185,7 @@ class StripeClient(BaseClient):
         email: str,
         name: str | None = None,
         metadata: dict[str, str] | None = None,
-    ) -> stripe.Customer:
+    ) -> Dict[str, Any]:
         """
         Stripe顧客を作成します
 
@@ -182,7 +195,7 @@ class StripeClient(BaseClient):
             metadata: メタデータ
 
         Returns:
-            作成されたStripe顧客
+            作成されたStripe顧客（plain dict）
 
         Raises:
             StripeError: 顧客作成エラーが発生した場合
@@ -199,12 +212,15 @@ class StripeClient(BaseClient):
             customer = await asyncio.to_thread(
                 stripe.Customer.create, **customer_data
             )
-            logger.info(f"Customer created: {customer.id}")
-            return customer
+            logger.info("Stripe customer created")
+            return _to_plain(customer)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Customer creation error: {e}")
-            raise StripeError(f"顧客作成エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe customer creation failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("顧客作成エラー") from exc
 
     async def create_subscription(
         self,
@@ -212,7 +228,7 @@ class StripeClient(BaseClient):
         price_id: str,
         payment_method_id: str,
         metadata: dict[str, str] | None = None,
-    ) -> stripe.Subscription:
+    ) -> Dict[str, Any]:
         """
         サブスクリプションを作成します
 
@@ -223,7 +239,7 @@ class StripeClient(BaseClient):
             metadata: メタデータ
 
         Returns:
-            作成されたサブスクリプション
+            作成されたサブスクリプション（plain dict）
 
         Raises:
             StripeError: サブスクリプション作成エラーが発生した場合
@@ -243,17 +259,20 @@ class StripeClient(BaseClient):
             subscription = await asyncio.to_thread(
                 stripe.Subscription.create, **subscription_data
             )
-            logger.info(f"Subscription created: {subscription.id}")
-            return subscription
+            logger.info("Stripe subscription created")
+            return _to_plain(subscription)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Subscription creation error: {e}")
-            raise StripeError(f"サブスクリプション作成エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe subscription creation failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("サブスクリプション作成エラー") from exc
 
     async def cancel_subscription(
         self,
         subscription_id: str,
-    ) -> stripe.Subscription:
+    ) -> Dict[str, Any]:
         """
         サブスクリプションをキャンセルします
 
@@ -261,7 +280,7 @@ class StripeClient(BaseClient):
             subscription_id: サブスクリプションID
 
         Returns:
-            キャンセルされたサブスクリプション
+            キャンセルされたサブスクリプション（plain dict）
 
         Raises:
             StripeError: サブスクリプションキャンセルエラーが発生した場合
@@ -272,17 +291,20 @@ class StripeClient(BaseClient):
                 subscription_id,
                 cancel_at_period_end=True,
             )
-            logger.info(f"Subscription canceled: {subscription_id}")
-            return subscription
+            logger.info("Stripe subscription cancellation requested")
+            return _to_plain(subscription)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Subscription cancellation error: {e}")
-            raise StripeError(f"サブスクリプションキャンセルエラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe subscription cancellation failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("サブスクリプションキャンセルエラー") from exc
 
     async def retrieve_customer(
         self,
         customer_id: str,
-    ) -> stripe.Customer:
+    ) -> Dict[str, Any]:
         """
         顧客情報を取得します
 
@@ -290,7 +312,7 @@ class StripeClient(BaseClient):
             customer_id: 顧客ID
 
         Returns:
-            Stripe顧客
+            Stripe顧客（plain dict）
 
         Raises:
             StripeError: 顧客取得エラーが発生した場合
@@ -299,16 +321,19 @@ class StripeClient(BaseClient):
             customer = await asyncio.to_thread(
                 stripe.Customer.retrieve, customer_id
             )
-            return customer
+            return _to_plain(customer)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Customer retrieval error: {e}")
-            raise StripeError(f"顧客取得エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe customer retrieval failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("顧客取得エラー") from exc
 
     async def retrieve_subscription(
         self,
         subscription_id: str,
-    ) -> stripe.Subscription:
+    ) -> Dict[str, Any]:
         """
         サブスクリプション情報を取得します
 
@@ -316,7 +341,7 @@ class StripeClient(BaseClient):
             subscription_id: サブスクリプションID
 
         Returns:
-            Stripeサブスクリプション
+            Stripeサブスクリプション（plain dict）
 
         Raises:
             StripeError: サブスクリプション取得エラーが発生した場合
@@ -325,16 +350,19 @@ class StripeClient(BaseClient):
             subscription = await asyncio.to_thread(
                 stripe.Subscription.retrieve, subscription_id
             )
-            return subscription
+            return _to_plain(subscription)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Subscription retrieval error: {e}")
-            raise StripeError(f"サブスクリプション取得エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe subscription retrieval failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("サブスクリプション取得エラー") from exc
 
     async def list_subscriptions(
         self,
         customer: str,
-    ) -> stripe.ListObject:
+    ) -> Dict[str, Any]:
         """
         顧客のサブスクリプション一覧を取得します
 
@@ -342,7 +370,7 @@ class StripeClient(BaseClient):
             customer: 顧客ID
 
         Returns:
-            サブスクリプションリスト
+            サブスクリプションリスト（plain dict）
 
         Raises:
             StripeError: サブスクリプション取得エラーが発生した場合
@@ -351,16 +379,19 @@ class StripeClient(BaseClient):
             subscriptions = await asyncio.to_thread(
                 stripe.Subscription.list, customer=customer
             )
-            return subscriptions
+            return _to_plain(subscriptions)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Subscriptions list error: {e}")
-            raise StripeError(f"サブスクリプション一覧取得エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe subscription listing failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("サブスクリプション一覧取得エラー") from exc
 
     async def list_prices(
         self,
         lookup_keys: list[str] | None = None,
-    ) -> list[stripe.Price]:
+    ) -> List[Dict[str, Any]]:
         """
         価格の一覧を取得します
 
@@ -368,7 +399,7 @@ class StripeClient(BaseClient):
             lookup_keys: 価格識別子のリスト（フィルタリング用）
 
         Returns:
-            価格のリスト
+            価格のリスト（plain dict）
 
         Raises:
             StripeError: 価格取得エラーが発生した場合
@@ -380,11 +411,14 @@ class StripeClient(BaseClient):
                 params["lookup_keys"] = lookup_keys
 
             prices = await asyncio.to_thread(stripe.Price.list, **params)
-            return prices.data
+            return [_to_plain(price) for price in prices.data]
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Price listing error: {e}")
-            raise StripeError(f"価格取得エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe price listing failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("価格取得エラー") from exc
 
     async def create_checkout_session(
         self,
@@ -393,7 +427,7 @@ class StripeClient(BaseClient):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str] | None = None,
-    ) -> stripe.checkout.Session:
+    ) -> Dict[str, Any]:
         """
         Stripe Checkoutセッションを作成
 
@@ -405,7 +439,7 @@ class StripeClient(BaseClient):
             metadata: メタデータ
 
         Returns:
-            作成されたCheckoutセッション
+            作成されたCheckoutセッション（plain dict）
 
         Raises:
             StripeError: Checkout作成エラーが発生した場合
@@ -426,17 +460,20 @@ class StripeClient(BaseClient):
             session = await asyncio.to_thread(
                 stripe.checkout.Session.create, **session_data
             )
-            logger.info(f"Checkout session created: {session.id}")
-            return session
+            logger.info("Stripe Checkout session created")
+            return _to_plain(session)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Checkout session creation error: {e}")
-            raise StripeError(f"Checkout作成エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe Checkout session creation failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("Checkout作成エラー") from exc
 
     async def get_checkout_session(
         self,
         session_id: str,
-    ) -> stripe.checkout.Session:
+    ) -> Dict[str, Any]:
         """
         Checkoutセッションを取得
 
@@ -444,7 +481,7 @@ class StripeClient(BaseClient):
             session_id: セッションID
 
         Returns:
-            Checkoutセッション
+            Checkoutセッション（plain dict）
 
         Raises:
             StripeError: セッション取得エラーが発生した場合
@@ -453,8 +490,11 @@ class StripeClient(BaseClient):
             session = await asyncio.to_thread(
                 stripe.checkout.Session.retrieve, session_id
             )
-            return session
+            return _to_plain(session)
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Checkout session retrieval error: {e}")
-            raise StripeError(f"Checkout取得エラー: {e}")
+        except stripe.error.StripeError as exc:
+            logger.error(
+                "Stripe Checkout session retrieval failed: error_type=%s",
+                type(exc).__name__,
+            )
+            raise StripeError("Checkout取得エラー") from exc

@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-21（Jevによる前段質問分類を実装、実アカウント接続は未設定）
+> **更新日**: 2026-09-22（LINEリッチメニュー用バナー素材を追加）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -27,6 +27,7 @@
 - **検証**: ローカル品質ゲート111件・対象unit 126件、GitHub Actions run `33367481704` に成功。公開 `/health` はHTTP 200、Basic登録URLは認証導線へHTTP 303、最新リビジョンのERRORログ0件。LINE Login callbackとfree質問の実端末再確認が必要
 - **Stripe登録導線（テストPrice本番反映済み）**: 現行Stripeテスト鍵（アカウント `acct_1TC6dqPHtxCsCwzY`）で、Basic商品・月額499円PriceとPro商品・月額999円Priceが有効・テストモード・継続課金であることを確認。Price IDをSecret Manager経由でCloud Runへ反映し、準備中HTTP 503から認証導線HTTP 303へ切り替わったことを確認。実LINE Checkout E2Eは未確認
 - **Stripe導線診断（2026-09-21）**: 「登録URLをクリックしてもStripeへ飛ばない」報告を受け調査。本番ではURL→LINE Login開始（303）→LINE authorize URLへの遷移と環境変数・Secret参照を確認。直近30日の本番ログに実端末からの該当リクエストは記録されておらず（8/31 smoke testと調査用リクエストのみ）、クリックが本番へ到達していない可能性が残る。認証後のStripe Checkout作成失敗時に生のHTTP 500となっていた問題と、callback復帰先Cookie喪失時にAccessToken入りJSONを画面表示していた問題を修正（品質ゲート126件成功）。実端末での再クリックとログ確認が残課題
+- **Checkout開始時500障害（2026-09-22修正）**: プラン選択画面経由で初めて認証済み導線が実行され、Stripe SDKのCustomerオブジェクトをdict扱いしたAttributeErrorでHTTP 500となる問題を確認。StripeClientの全API戻り値をplain dictへ正規化し、属性アクセスしていた箇所も辞書アクセスへ統一して修正した
 - **2026-09-21本番反映**: 上記Checkout導線修正に加え、9/4ローカル実装のJWT関連対策（JWTからemail/LINE user ID除去、予約クレーム・PII追加クレーム拒否、Access Token有効期限の設定上限15分、refresh時のline_user_idクレーム廃止とユーザー文書参照化）をCloud Run `chabot-service-00029-fbh`（`GIT_SHA=ca780e8`）へデプロイ。GitHub Actions run `35591533319` 成功、/health 200・Basic/Pro 303・success/cancel 200を確認
 - **CI失敗対応（2026-09-21）**: 初回push `dd1f9e5`で9/4実装のテスト（test_auth_session.py）のみをコミットし実装（app/core/security.py・app/core/config.py・app/services/firestore_auth_service.py）が漏れ、品質ゲート3件が失敗。ローカルでPython 3.11・最新依存関係のコミットツリー再現により特定し、実装と追従テストを`47d05fa`〜`ca780e8`で順に追加して解消
 - **実端末報告（2026-09-21）**: ユーザーは「LINEメッセージ内の登録URLをクリックしたらエラー画面・文字列が出た」と回答。直近30日の本番ログに該当リクエストは確認できず、8/31以前のcallback HTTP 500（bcrypt 72バイト制約、当時修正済み）または本日修正済み経路の可能性。新リビジョンでの再試行と、再発時の画面の正確な内容確認が残課題
@@ -161,6 +162,10 @@
 
 ### 2.3 Phase 3: Stripeテスト実装
 
+#### LINEリッチメニュー素材
+
+- [x] キャラクターシートを参照した白背景・800×270pxバナー3枚（「登録はこちら」「要望」「仮」）を `ref/` に追加（画像生成後に寸法確認済み）
+
 - [x] Stripeクライアントの非同期呼び出し
 - [x] Checkout Session作成処理
 - [x] プランとStripe Price IDの対応
@@ -179,6 +184,7 @@
 - [x] Stripeテスト商品・Price IDを現行API鍵で取得確認（Basic商品 `prod_VAjwEIYvRCJ5GI` / Price `price_1UAOSwPHtxCsCwzYT0x5dBz7`、月額499円。Pro商品 `prod_VAjxOn83it8eaA` / Price `price_1UAOT8PHtxCsCwzY1tU862Dy`、月額999円。いずれもJPY・有効・テストモード）
 - [x] 整合性確認済みのPrice IDをSecret Managerへ登録し、deploy.ymlからCloud Runへ反映（本番リビジョンのSecret参照とBasic/Pro HTTP 303を確認済み）
 - [x] Checkout開始endpointでStripe APIエラー発生時に生のHTTP 500ではなく準備中案内画面（HTTP 503）を返すよう修正（2026-09-21、品質ゲート126件成功・本番反映はデプロイ後に確認）
+- [x] StripeClientの全メソッド（Customer/Subscription/Checkout Session/Price/List）の戻り値をSDKオブジェクトから再帰的なplain dictへ正規化し、subscription_service/stripe_service両方の辞書アクセス契約へ統一。SDK実オブジェクト（construct_from）を使った回帰テストを追加（2026-09-22、テスト41件成功）
 - [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
 
 ### 2.4 サブスクリプションAPIの扱い

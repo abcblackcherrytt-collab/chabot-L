@@ -139,9 +139,10 @@ class TestStripeClient:
             metadata={"user_id": "123"},
         )
 
-        assert customer.id == "cus_test123"
-        assert customer.email == "test@example.com"
-        assert customer.name == "Test User"
+        assert customer["id"] == "cus_test123"
+        assert customer["email"] == "test@example.com"
+        assert customer["name"] == "Test User"
+        assert customer.get("id") == "cus_test123"
         mock_customer_create.assert_called_once()
 
     @patch("app.clients.stripe.stripe.Customer.create")
@@ -179,9 +180,9 @@ class TestStripeClient:
             metadata={"user_id": "123"},
         )
 
-        assert subscription.id == "sub_test123"
-        assert subscription.status == "active"
-        assert subscription.customer == "cus_test123"
+        assert subscription["id"] == "sub_test123"
+        assert subscription["status"] == "active"
+        assert subscription["customer"] == "cus_test123"
         mock_subscription_create.assert_called_once()
 
     @patch("app.clients.stripe.stripe.Subscription.modify")
@@ -194,13 +195,13 @@ class TestStripeClient:
         """
         サブスクリプションキャンセルが成功することをテスト
         """
-        mock_stripe_subscription.cancel_at_period_end = True
+        mock_stripe_subscription["cancel_at_period_end"] = True
         mock_subscription_modify.return_value = mock_stripe_subscription
 
         client = StripeClient()
         subscription = await client.cancel_subscription("sub_test123")
 
-        assert subscription.cancel_at_period_end is True
+        assert subscription["cancel_at_period_end"] is True
         mock_subscription_modify.assert_called_once_with(
             "sub_test123",
             cancel_at_period_end=True,
@@ -217,8 +218,8 @@ class TestStripeClient:
         client = StripeClient()
         customer = await client.retrieve_customer("cus_test123")
 
-        assert customer.id == "cus_test123"
-        assert customer.email == "test@example.com"
+        assert customer["id"] == "cus_test123"
+        assert customer["email"] == "test@example.com"
         mock_customer_retrieve.assert_called_once_with("cus_test123")
 
     @patch("app.clients.stripe.stripe.Subscription.retrieve")
@@ -236,8 +237,8 @@ class TestStripeClient:
         client = StripeClient()
         subscription = await client.retrieve_subscription("sub_test123")
 
-        assert subscription.id == "sub_test123"
-        assert subscription.status == "active"
+        assert subscription["id"] == "sub_test123"
+        assert subscription["status"] == "active"
         mock_subscription_retrieve.assert_called_once_with("sub_test123")
 
     @patch("app.clients.stripe.stripe.Price.list")
@@ -246,27 +247,79 @@ class TestStripeClient:
         """
         価格一覧取得が成功することをテスト
         """
-        class MockPrice:
-            def __init__(self, price_id):
-                self.id = price_id
-                self.product = "prod_test123"
-                self.unit_amount = 1000
-                self.currency = "jpy"
-                self.recurring = type('obj', (object,), {
-                    'interval': 'month',
-                    'interval_count': 1,
-                })()
-                self.nickname = "Test Price"
+        def make_price(price_id):
+            return {
+                "id": price_id,
+                "product": "prod_test123",
+                "unit_amount": 1000,
+                "currency": "jpy",
+                "recurring": {"interval": "month", "interval_count": 1},
+                "nickname": "Test Price",
+            }
 
         mock_price_list.return_value.data = [
-            MockPrice("price_test123"),
-            MockPrice("price_test456"),
+            make_price("price_test123"),
+            make_price("price_test456"),
         ]
 
         client = StripeClient()
         prices = await client.list_prices()
 
         assert len(prices) == 2
-        assert prices[0].id == "price_test123"
-        assert prices[1].id == "price_test456"
+        assert prices[0]["id"] == "price_test123"
+        assert prices[1]["id"] == "price_test456"
         mock_price_list.assert_called_once()
+
+    @patch("app.clients.stripe.stripe.Customer.create")
+    @pytest.mark.asyncio
+    async def test_create_customer_normalizes_real_sdk_object(
+        self,
+        mock_customer_create,
+    ):
+        """SDKのCustomerオブジェクトをdictへ正規化すること（本番500の回帰）。"""
+        sdk_customer = stripe.Customer.construct_from(
+            {
+                "id": "cus_sdk",
+                "email": "sdk@example.com",
+                "name": "SDK Object",
+                "created": 1234567890,
+            },
+            key="fake",
+        )
+        mock_customer_create.return_value = sdk_customer
+
+        client = StripeClient()
+        customer = await client.create_customer(email="sdk@example.com")
+
+        # 本番で発生したのはdict以外へ.getしたAttributeError。
+        # plain dictであることで契約を保証する。
+        assert isinstance(customer, dict)
+        assert customer.get("id") == "cus_sdk"
+
+    @patch("app.clients.stripe.stripe.checkout.Session.create")
+    @pytest.mark.asyncio
+    async def test_create_checkout_session_normalizes_real_sdk_object(
+        self,
+        mock_session_create,
+    ):
+        """SDKのCheckoutセッションもdictへ正規化すること。"""
+        sdk_session = stripe.checkout.Session.construct_from(
+            {
+                "id": "cs_sdk",
+                "url": "https://checkout.stripe.com/c/pay/sdk",
+                "object": "checkout.session",
+            },
+            key="fake",
+        )
+        mock_session_create.return_value = sdk_session
+
+        client = StripeClient()
+        session = await client.create_checkout_session(
+            customer_id="cus_sdk",
+            price_id="price_sdk",
+            success_url="https://example.com/success",
+            cancel_url="https://example.com/cancel",
+        )
+
+        assert isinstance(session, dict)
+        assert session.get("url") == "https://checkout.stripe.com/c/pay/sdk"
