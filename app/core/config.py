@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # メッセージ制限到達時に案内するサブスクリプション登録URL
     subscription_basic_url: str = "https://your-service.com/subscription/basic"
     subscription_pro_url: str = "https://your-service.com/subscription/pro"
+    subscription_plan_selection_url: str = "https://your-service.com/subscription/select"
 
     # Google Cloud Vertex AI設定
     # RAG Engine の GA リージョンは us-central1 / europe-west3 のみ（asia-northeast1 非対応）。

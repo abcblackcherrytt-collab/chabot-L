@@ -289,21 +289,24 @@ class LineService:
                         "plan": plan,
                     }
                 # 制限超過メッセージを作成
-                limit_message = f"📊 {limit_result['message']}"
                 if plan == "free":
-                    limit_message += (
-                        "\n\n💡 さらに利用するにはプラン登録をご検討ください。"
-                        f"\n\n📱 ベーシックプラン（1日100回まで）:\n"
-                        f"{settings.subscription_basic_url}"
-                        f"\n\n🚀 プロプラン（1日500回まで）:\n"
-                        f"{settings.subscription_pro_url}"
+                    limit_message = (
+                        "今日のメッセージ上限に達しました。"
+                        "\n\n続けるには明日まで待つか"
+                        "\nプランの登録が必要です。"
+                        f"\n\n{settings.subscription_plan_selection_url}"
+                        "\n\nサブスク継続中に限り"
+                        "\n今後の料金改定でも"
+                        "\n今の月額で使えます!"
                     )
-                elif plan == "basic":
-                    limit_message += (
-                        "\n\n🚀 プロプラン（1日500回まで）への変更はこちら:\n"
-                        f"{settings.subscription_pro_url}"
-                    )
-                limit_message += "\n\n明日になると利用回数がリセットされます。"
+                else:
+                    limit_message = f"{limit_result['message']}"
+                    if plan == "basic":
+                        limit_message += (
+                            "\n\nプロプラン（1日500回まで）への変更はこちら:\n"
+                            f"{settings.subscription_pro_url}"
+                        )
+                    limit_message += "\n\n明日になると利用回数がリセットされます。"
                 await self._send_reply(reply_token, limit_message)
                 return {
                     "status": "limit_reached",
