@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-22（freeプラン上限超過メッセージを変更、回答出力構成を要約先行へ変更）
+> **更新日**: 2026-09-22（freeプラン上限超過メッセージを変更、回答出力構成を要約先行へ変更、会話保存を実データ確認）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -48,6 +48,7 @@
   5. 管理UIは別ASGIサービスとしてローカル開発を進める。IAP・IAM・本番公開は別作業として保留する
 - **freeプラン上限超過メッセージ（本番反映済み・実端末未確認）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL（SUBSCRIPTION_PLAN_SELECTION_URL）、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した。コミット 248c7ed、Cloud Run chabot-service-00035-drg、GitHub Actions run 35690378112 成功、品質ゲート139件成功、/health・選択画面・select.css・Basic導線303を確認済み
 - **回答出力構成変更（2026-09-22、コード実装・ローカル検証済み・本番未反映）**: RAG回答の「回答：／要約：」ラベル付き2ブロックを廃止し、最重要点をまとめた要約1文を最初に置き、2行の空行を挟んで回答本文を続ける構成へ変更した。free/basic/pro別の本文構成指示（結論→理由→確認点／結論→根拠→適用→限界）と文字数制限（全体は原則500字以内）は維持。ローカルでデプロイ品質ゲート133件成功とアプリ起動確認済み。本番デプロイと実LINE端末での表示確認が残課題
+- **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧
 
@@ -312,7 +313,7 @@ P0公開ゲート:
 - [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。（2026-09-21本番反映済み）
 - [x] デプロイ品質ゲート相当124件、既知のPostgreSQL Refresh Tokenテストを除くunit 139件、Python compileallにローカル成功した。
 - [x] 外部クライアント、同期処理、休眠中のPostgreSQLリポジトリを含む例外ログを例外型中心のallowlist形式へ変更した。
-- [x] 会話保管をPostgreSQL構造からFirestore構造へ完全移行した。PostgreSQL用Conversationモデル・Userリレーション・Alembic envインポート・seedスクリプト登録を削除し、FirestoreConversationRepository（conversationsコレクション）を追加。LINE返信成功後とチャットAPI応答後に質問・回答・プラン・分類・否認・PII検知フラグを1ドキュメント保存し、日次上限拒否は本文なしメタデータのみ記録する。保存失敗は回答導線を止めない（2026-09-22、対象unit 38件成功、c4bff0e / chabot-service-00034-wfq / run 35689868959 で本番反映済み。実LINE質問での保存確認は未実施）
+- [x] 会話保管をPostgreSQL構造からFirestore構造へ完全移行した。PostgreSQL用Conversationモデル・Userリレーション・Alembic envインポート・seedスクリプト登録を削除し、FirestoreConversationRepository（conversationsコレクション）を追加。LINE返信成功後とチャットAPI応答後に質問・回答・プラン・分類・否認・PII検知フラグを1ドキュメント保存し、日次上限拒否は本文なしメタデータのみ記録する。保存失敗は回答導線を止めない（2026-09-22、対象unit 38件成功、c4bff0e / chabot-service-00034-wfq / run 35689868959 で本番反映済み。2026-09-22 15:51 JSTの実LINE質問1件がuser_id付きでusers文書へ正しく紐付いて保存されていることを本番Firestoreの読み取りで確認済み）
 - [ ] Cloud Loggingの既存ログ削除・保持期間・閲覧IAM・sink確認は未実施（IAM/IAPはユーザー指示により別作業）。
 - [保留] IAP、管理サービス用IAM/ingress、管理者allowlist、認証E2E、`chabot-admin` のデプロイは別作業とする。
 
