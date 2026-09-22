@@ -171,6 +171,7 @@
 - [x] `invoice.payment_failed` のLINE通知
 - [x] Stripe / Firestore整合性チェックサービスの土台
 - [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
+- [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、本番確認はデプロイ後）
 - [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
@@ -199,6 +200,10 @@
 - [ ] スキルを変更する場合は両配置を同時更新し、差分がないことを再確認
 
 ### 2.6 Phase 2.7: Cloud Run管理UI（安全基盤をローカル実装中・本番未反映）
+
+**2026-09-21: 機能設計を docs/admin-console-design.md に確定した（設計のみ・実装未着手）。** 対象は、クーポン発行（plan_grant / bonus_messages、Crockford Base32コード・SHA-256保存・Bot側「クーポン CODE」引き換れ）、無料アカウント作成（1回限り登録URL + LINE user ID直指定）、free/basic/pro日次回数設定（下書き→反映→ロールバック、60秒キャッシュ反映）、登録ユーザー一覧・プラン変更（plan_override、Stripe競合警告）。追加設計として監査ログ閲覧・日次ダッシュボード・設定ロールバック・引き換れレート制限を含む。管理サービスは chabot-admin として別Cloud Run URL（IAP + HTTPS LB、--no-allow-unauthenticated）とし、デプロイは専用workflowへ分離する。プラン解決優先度は Stripe契約 > plan_override > free と定義。未決定事項は設計書10節（Stripeプロモーションコード連携可否、bonus_messagesの初回含否、管理者候補、最小IAM）。
+
+**2026-09-22: 管理コンソール設計を更新した（ユーザー指示）。** ダッシュボードは作らず、個別の集計・管理項目の中にアクティブユーザー数とメッセージ数を提示する方式へ変更。全ユーザーの質問・回答ペアを conversations コレクションへ保管する設計を追加（回答成功後に非同期保存・保存失敗で回答を止めない、患者情報検知フラグ、初期版は本文非表示・件数メタデータのみ、保持期間は未決定）。LINE側の要望受付（クイックリプライ「要望を送る」→次の1通を要望として記録、TTL10分・1日5通制限）と、管理画面での要望一覧・対応ステータス管理を追加。これに伴いFirestore新規コレクションへ conversations / feedback / feedback_pending を追加し、集計は admin_daily_stats を流用する。
 
 #### 個人情報公開リスクレビュー（2026-09-04）
 

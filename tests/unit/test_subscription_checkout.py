@@ -251,3 +251,21 @@ async def test_legacy_checkout_api_uses_authenticated_user(
         plan="basic",
     )
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_page_lists_both_checkout_links() -> None:
+    """選択画面がbasic/pro両方の登録導線と注意書きを表示すること。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "/api/v1/subscription/checkout/basic" in response.text
+    assert "/api/v1/subscription/checkout/pro" in response.text
+    assert "ベーシックプラン" in response.text
+    assert "プロプラン" in response.text
+    assert "499" in response.text
+    assert "999" in response.text
+    assert "Stripe" in response.text
+    assert response.headers["cache-control"] == "no-store"

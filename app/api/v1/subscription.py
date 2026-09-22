@@ -28,6 +28,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subscription", tags=["subscription"])
 
 
+# 選択画面に表示するプラン情報。金額はStripe側のPrice設定と合わせて運用する。
+PLAN_SELECTION_PAGE = """<!doctype html><html lang='ja'><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>プラン選択</title>
+<body style='font-family:sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;color:#222'>
+<h1 style='font-size:1.3rem'>プランの登録</h1>
+<p>利用するプランを選んでください。選択後、登録ページへ進みます。</p>
+<a href='/api/v1/subscription/checkout/basic'
+   style='display:block;margin:1rem 0;padding:1rem;border:2px solid #1a73e8;
+          border-radius:0.6rem;text-decoration:none;color:#1a73e8'>
+  <strong style='font-size:1.1rem'>ベーシックプラン</strong><br>
+  月額499円・1日100問まで<br>
+  <span style='font-size:0.85rem'>有料コーパスを利用した詳しい回答</span>
+</a>
+<a href='/api/v1/subscription/checkout/pro'
+   style='display:block;margin:1rem 0;padding:1rem;border:2px solid #0b8043;
+          border-radius:0.6rem;text-decoration:none;color:#0b8043'>
+  <strong style='font-size:1.1rem'>プロプラン</strong><br>
+  月額999円・1日500問まで<br>
+  <span style='font-size:0.85rem'>有料コーパスを利用した詳しい回答</span>
+</a>
+<p style='font-size:0.8rem;color:#555'>
+  登録はStripeでの決済へ進みます。プランの変更・解約はいつでもできます。
+</p>
+</body></html>"""
+
+
 # ========== 依存性注入 ==========
 
 def get_subscription_service() -> SubscriptionService:
@@ -174,6 +201,15 @@ async def redirect_to_checkout(
     response = RedirectResponse(url=checkout_url, status_code=303)
     set_refresh_token_cookie(response, tokens["refresh_token"])
     return response
+
+
+@router.get("/select", response_class=HTMLResponse)
+async def select_plan() -> HTMLResponse:
+    """リッチメニューから遷移する、basic/proのプラン選択画面を表示する。"""
+    return HTMLResponse(
+        content=PLAN_SELECTION_PAGE,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/success", response_class=HTMLResponse)
