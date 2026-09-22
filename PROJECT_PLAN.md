@@ -46,7 +46,7 @@
   3. free 3件 / basic 100件 / pro 500件、コーパス切替、回答構成の差を確認
   4. Cloud Runのコールドスタート対策（min instanceまたは起動処理軽量化）を費用と比較して決定
   5. 管理UIは別ASGIサービスとしてローカル開発を進める。IAP・IAM・本番公開は別作業として保留する
-- **freeプラン上限超過メッセージ（コード実装済み・ローカル検証済み・本番未反映）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した
+- **freeプラン上限超過メッセージ（本番反映済み・実端末未確認）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL（SUBSCRIPTION_PLAN_SELECTION_URL）、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した。コミット 248c7ed、Cloud Run chabot-service-00035-drg、GitHub Actions run 35690378112 成功、品質ゲート139件成功、/health・選択画面・select.css・Basic導線303を確認済み
 
 ### 0.1 フェーズ一覧
 
@@ -178,8 +178,8 @@
 - [x] Stripe / Firestore整合性チェックサービスの土台
 - [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
 - [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、Cloud Run chabot-service-00032-sgh・GIT_SHA=1a16196・run 35673952459 成功で本番反映し、HTTP 200と両導線を含む本文を確認済み）
-- [x] プラン選択画面のレイアウトをスマホ優先のカードUIへ刷新。Clean/Premium/Spaciousスキルの指針（限定色、8pt余白、明確な階層、可視フォーカス、44px以上の操作性）を反映し、料金・1日上限・用途・Stripe遷移を整理。Basic/Proの導線回帰テストを追加（2026-09-22、ローカルテスト済み・本番未反映）
-- [x] 実ブラウザ確認で default-src 'self' のCSPによりインラインスタイルが無効化される問題を発見。スタイルを同一オリジン /api/v1/subscription/select.css から配信する方式へ修正し、デスクトップ・390pxモバイル・キーボードフォーカス・タップ領域（358×220px）・コンソールエラーなしを視覚検証（2026-09-22、対象テスト9件成功・本番未反映）
+- [x] プラン選択画面のレイアウトをスマホ優先のカードUIへ刷新。Clean/Premium/Spaciousスキルの指針（限定色、8pt余白、明確な階層、可視フォーカス、44px以上の操作性）を反映し、料金・1日上限・用途・Stripe遷移を整理。Basic/Proの導線回帰テストを追加（2026-09-22、c4bff0eとして本番反映済み）
+- [x] 実ブラウザ確認で default-src 'self' のCSPによりインラインスタイルが無効化される問題を発見。スタイルを同一オリジン /api/v1/subscription/select.css から配信する方式へ修正し、デスクトップ・390pxモバイル・キーボードフォーカス・タップ領域（358×220px）・コンソールエラーなしを視覚検証（2026-09-22、対象テスト9件成功、c4bff0eとして本番反映済み）
 - [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
@@ -311,7 +311,7 @@ P0公開ゲート:
 - [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。（2026-09-21本番反映済み）
 - [x] デプロイ品質ゲート相当124件、既知のPostgreSQL Refresh Tokenテストを除くunit 139件、Python compileallにローカル成功した。
 - [x] 外部クライアント、同期処理、休眠中のPostgreSQLリポジトリを含む例外ログを例外型中心のallowlist形式へ変更した。
-- [x] 会話保管をPostgreSQL構造からFirestore構造へ完全移行した。PostgreSQL用Conversationモデル・Userリレーション・Alembic envインポート・seedスクリプト登録を削除し、FirestoreConversationRepository（conversationsコレクション）を追加。LINE返信成功後とチャットAPI応答後に質問・回答・プラン・分類・否認・PII検知フラグを1ドキュメント保存し、日次上限拒否は本文なしメタデータのみ記録する。保存失敗は回答導線を止めない（2026-09-22、対象unit 38件成功・本番未反映）
+- [x] 会話保管をPostgreSQL構造からFirestore構造へ完全移行した。PostgreSQL用Conversationモデル・Userリレーション・Alembic envインポート・seedスクリプト登録を削除し、FirestoreConversationRepository（conversationsコレクション）を追加。LINE返信成功後とチャットAPI応答後に質問・回答・プラン・分類・否認・PII検知フラグを1ドキュメント保存し、日次上限拒否は本文なしメタデータのみ記録する。保存失敗は回答導線を止めない（2026-09-22、対象unit 38件成功、c4bff0e / chabot-service-00034-wfq / run 35689868959 で本番反映済み。実LINE質問での保存確認は未実施）
 - [ ] Cloud Loggingの既存ログ削除・保持期間・閲覧IAM・sink確認は未実施（IAM/IAPはユーザー指示により別作業）。
 - [保留] IAP、管理サービス用IAM/ingress、管理者allowlist、認証E2E、`chabot-admin` のデプロイは別作業とする。
 
