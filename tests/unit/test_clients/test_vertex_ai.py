@@ -16,13 +16,14 @@ class TestVertexAIClient:
     """Vertex AIクライアントのテストクラス"""
 
     def test_system_instruction_uses_concise_polite_sarcasm(self):
-        """Phase 1回答方針プロンプトが2部構成と辛口表現を保持することを確認する。"""
+        """Phase 1回答方針プロンプトが要約先行構成と辛口表現を保持することを確認する。"""
         from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
 
-        # 2部構成
-        assert "出力は必ず次の2ブロックだけにしてください" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "回答：" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "要約：" in DEFAULT_SYSTEM_INSTRUCTION
+        # 要約先行・2行空行・ラベルなし構成
+        assert "出力は必ず次の構成だけにしてください" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "2行の空行" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "回答：" not in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約：" not in DEFAULT_SYSTEM_INSTRUCTION
 
         # 文字数制限（現在の仕様）
         assert "全体は原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
@@ -57,8 +58,9 @@ class TestVertexAIClient:
             assert "本文は通常100〜400字" in instruction
             assert "全体は原則500字以内" in instruction
             assert "辛口表現は1回答につき原則1か所" in instruction
-            assert "回答：" in instruction
-            assert "要約：" in instruction
+            assert "2行の空行" in instruction
+            assert "回答：" not in instruction
+            assert "要約：" not in instruction
 
         assert "free用コーパス" in free_instruction
         assert "ユーザーの質問と関連する情報" in free_instruction
@@ -146,7 +148,7 @@ class TestVertexAIClient:
         """RAG回答生成モデルへ既定のシステムプロンプトが渡されることを確認する。"""
 
         class MockResponse:
-            text = "回答：\n評価所見を整理します。\n\n要約：\n所見を統合してください。"
+            text = "所見を統合してください。\n\n\n評価所見を整理します。"
             candidates = []
 
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -171,9 +173,8 @@ class TestVertexAIClient:
         assert call_kwargs["config"].system_instruction == client._get_system_instruction(
             "free"
         )
-        # 現在の実装では回答：/要約：は残る（これらはLLM出力の一部）
-        # _strip_markdown()はMarkdownのみ削除
-        assert "回答：" in result["answer"] or "要約：" in result["answer"]
+        # _strip_markdown()はMarkdownのみ削除し、要約先行の本文はそのまま返す
+        assert result["answer"] == "所見を統合してください。\n\n\n評価所見を整理します。"
 
     @pytest.mark.asyncio
     async def test_query_log_does_not_include_question_or_answer(self, caplog):
