@@ -177,6 +177,7 @@
 - [x] Stripe / Firestore整合性チェックサービスの土台
 - [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
 - [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、Cloud Run chabot-service-00032-sgh・GIT_SHA=1a16196・run 35673952459 成功で本番反映し、HTTP 200と両導線を含む本文を確認済み）
+- [x] プラン選択画面のレイアウトをスマホ優先のカードUIへ刷新。料金・1日上限・用途・Stripe遷移を見やすく整理し、Basic/Proの導線回帰テストを追加（2026-09-22、ローカルテスト済み・本番未反映）
 - [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
@@ -184,7 +185,7 @@
 - [x] Stripeテスト商品・Price IDを現行API鍵で取得確認（Basic商品 `prod_VAjwEIYvRCJ5GI` / Price `price_1UAOSwPHtxCsCwzYT0x5dBz7`、月額499円。Pro商品 `prod_VAjxOn83it8eaA` / Price `price_1UAOT8PHtxCsCwzY1tU862Dy`、月額999円。いずれもJPY・有効・テストモード）
 - [x] 整合性確認済みのPrice IDをSecret Managerへ登録し、deploy.ymlからCloud Runへ反映（本番リビジョンのSecret参照とBasic/Pro HTTP 303を確認済み）
 - [x] Checkout開始endpointでStripe APIエラー発生時に生のHTTP 500ではなく準備中案内画面（HTTP 503）を返すよう修正（2026-09-21、品質ゲート126件成功・本番反映はデプロイ後に確認）
-- [x] StripeClientの全メソッド（Customer/Subscription/Checkout Session/Price/List）の戻り値をSDKオブジェクトから再帰的なplain dictへ正規化し、subscription_service/stripe_service両方の辞書アクセス契約へ統一。SDK実オブジェクト（construct_from）を使った回帰テストを追加（2026-09-22、テスト41件成功）
+- [x] StripeClientの全メソッド（Customer/Subscription/Checkout Session/Price/List）の戻り値をSDKオブジェクトから再帰的なplain dictへ正規化し、subscription_service/stripe_service両方の辞書アクセス契約へ統一。SDK実オブジェクト（construct_from）を使った回帰テストを追加（2026-09-22、テスト41件成功、Cloud Run chabot-service-00033-w2j・run 35687035947 成功で本番反映、/select 200・未認証Checkout 303・反映後ERRORログ0件確認）
 - [ ] Stripeテストモードで登録・更新・支払い失敗・解約をE2E確認
 
 ### 2.4 サブスクリプションAPIの扱い
