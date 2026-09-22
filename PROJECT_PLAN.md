@@ -171,7 +171,7 @@
 - [x] `invoice.payment_failed` のLINE通知
 - [x] Stripe / Firestore整合性チェックサービスの土台
 - [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
-- [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、本番確認はデプロイ後）
+- [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、Cloud Run chabot-service-00032-sgh・GIT_SHA=1a16196・run 35673952459 成功で本番反映し、HTTP 200と両導線を含む本文を確認済み）
 - [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
