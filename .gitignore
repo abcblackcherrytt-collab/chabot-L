@@ -46,6 +46,7 @@ htmlcov/
 
 # Service account keys (CRITICAL - never commit these)
 service_account/*.json
+gha-creds-*.json
 *.key
 *.pem
 *.crt

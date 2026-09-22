@@ -90,8 +90,8 @@ async def handle_stripe_webhook(
         event = json.loads(payload_bytes.decode("utf-8"))
 
         logger.info(
-            f"Received Stripe webhook: {event.get('type')} "
-            f"(id: {event.get('id')})"
+            "Received Stripe webhook: event_type=%s",
+            event.get("type"),
         )
 
         # Stripeサービスでイベント処理
@@ -99,7 +99,7 @@ async def handle_stripe_webhook(
         success = await stripe_service.process_webhook_event(event=event)
 
         if not success:
-            logger.warning(f"Webhook event processing failed: {event.get('id')}")
+            logger.warning("Stripe webhook event processing failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Webhook event processing failed",
@@ -111,15 +111,18 @@ async def handle_stripe_webhook(
             event_type=event.get("type", ""),
         )
 
-    except StripeError as e:
-        logger.error(f"Stripe error in webhook: {e}")
+    except StripeError as exc:
+        logger.error(
+            "Stripe webhook verification failed: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
+            detail="Invalid Stripe webhook",
         )
 
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
+    except json.JSONDecodeError:
+        logger.error("Stripe webhook JSON decode failed")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload",
@@ -128,8 +131,11 @@ async def handle_stripe_webhook(
     except HTTPException:
         raise
 
-    except Exception as e:
-        logger.error(f"Error processing webhook: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error(
+            "Error processing Stripe webhook: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

@@ -63,8 +63,10 @@ class RAGService:
             VertexAIError: Vertex AIエラーが発生した場合
         """
         logger.info(
-            f"Processing RAG query: {text[:50]}... "
-            f"(user_id: {user_id}, include_context: {include_context})"
+            "Processing RAG query: query_length=%s include_context=%s plan=%s",
+            len(text),
+            include_context,
+            plan,
         )
 
         try:
@@ -87,18 +89,23 @@ class RAGService:
             if user_id:
                 result["user_id"] = user_id
 
-            # ログにはプロンプト・コンテキストを出力しない
-            # 回答の要約のみをログに記録
+            # 質問・回答・ユーザー識別子をログへ出さない。
             if not result.get("denied"):
-                answer_summary = result.get("answer", "")[:100]
-                logger.info(f"RAG query completed: {answer_summary}")
+                logger.info(
+                    "RAG query completed: answer_length=%s context_count=%s",
+                    len(result.get("answer", "")),
+                    len(result.get("contexts", [])),
+                )
             else:
                 logger.info(f"RAG query denied: {result.get('reason')}")
 
             return result
 
-        except VertexAIError as e:
-            logger.error(f"RAG query error: {e}")
+        except VertexAIError as exc:
+            logger.error(
+                "RAG query failed: error_type=%s",
+                type(exc).__name__,
+            )
             raise
 
     async def batch_query(
@@ -123,8 +130,8 @@ class RAGService:
             RAGクエリ結果のリスト
         """
         logger.info(
-            f"Processing batch RAG queries: {len(queries)} queries "
-            f"(user_id: {user_id})"
+            "Processing batch RAG queries: query_count=%s",
+            len(queries),
         )
 
         results = []
@@ -141,13 +148,15 @@ class RAGService:
                 results.append(result)
 
             except Exception as e:
-                logger.error(f"Error processing query '{query[:50]}...': {e}")
+                logger.error("Batch RAG query failed: %s", type(e).__name__)
                 # エラーが発生しても他のクエリを続行
-                results.append({
-                    "error": str(e),
-                    "query": query,
-                    "denied": False,
-                })
+                results.append(
+                    {
+                        "error": "RAG query failed",
+                        "query": query,
+                        "denied": False,
+                    }
+                )
 
         return results
 
@@ -263,13 +272,16 @@ class RAGService:
                     "denied": result.get("denied", False),
                 }
 
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
+        except Exception as exc:
+            logger.error(
+                "RAG health check failed: error_type=%s",
+                type(exc).__name__,
+            )
             return {
                 "status": "unhealthy",
                 "service": "rag",
                 "vertex_ai_available": False,
-                "error": str(e),
+                "error": "RAG service unavailable",
             }
 
     def sanitize_query(

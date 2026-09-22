@@ -159,7 +159,8 @@ async def logout(
     """
     ユーザーログアウトを行います
 
-    リフレッシュトークンを失効させます。
+    リフレッシュトークンを即時失効させます。発行済みアクセストークンは
+    最大15分で自然失効し、その後はLINE Loginによる再認証が必要です。
     """
     refresh_token_value = http_request.cookies.get(REFRESH_TOKEN_COOKIE_NAME) or (
         request.refresh_token if request else None
@@ -244,11 +245,7 @@ async def revoke_all_tokens(
     is_self = current_user.id == request.user_id
 
     if not (is_self or is_admin):
-        logger.warning(
-            "Unauthorized token revocation attempt: user_id=%s attempted to revoke tokens for user_id=%s",
-            current_user.id,
-            request.user_id,
-        )
+        logger.warning("Unauthorized token revocation attempt")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only revoke your own tokens",
@@ -264,9 +261,7 @@ async def revoke_all_tokens(
 
     # 監査ログ記録
     logger.info(
-        "All tokens revoked for user_id=%s by user_id=%s (is_admin=%s, revoked_count=%s)",
-        request.user_id,
-        current_user.id,
+        "All refresh tokens revoked: is_admin=%s revoked_count=%s",
         is_admin,
         revoked_count,
     )

@@ -6,39 +6,17 @@ FastAPIアプリケーション
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import auth_router, chat_router, stripe_webhook_router, subscription_router
 from app.api.v1.auth_line import router as line_auth_router
 from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
 from app.core.firestore import close_firestore_client, get_firestore_client
+from app.core.http_security import SecurityHeadersMiddleware
 from app.services.line_service import LineService
 from app.services.rag_service import RAGService
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """
-    HTTPセキュリティヘッダーミドルウェア
-
-    セキュリティ関連のHTTPヘッダーを追加します。
-    """
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-
-        # HTTPセキュリティヘッダーを追加
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-
-        return response
 
 
 # ロギング設定

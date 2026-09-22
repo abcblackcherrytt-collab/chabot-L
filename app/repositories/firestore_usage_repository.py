@@ -64,7 +64,7 @@ class FirestoreUsageRepository:
             return 0
 
         except Exception as e:
-            logger.error(f"Error getting daily message count: {e}")
+            logger.error("Error getting daily message count: error_type=%s", type(e).__name__)
             return 0
 
     async def increment_message_count(self, user_id: str) -> int:
@@ -106,11 +106,11 @@ class FirestoreUsageRepository:
             # ドキュメントを設定（createまたはupdate）
             await doc_ref.set(update_data)
 
-            logger.debug(f"Incremented message count for user {user_id}: {new_count}")
+            logger.debug("Incremented daily message count: count=%s", new_count)
             return new_count
 
         except Exception as e:
-            logger.error(f"Error incrementing message count: {e}")
+            logger.error("Error incrementing message count: error_type=%s", type(e).__name__)
             raise
 
     async def is_within_limit(self, user_id: str, plan: str, daily_limit: Optional[int] = None) -> bool:
@@ -135,7 +135,7 @@ class FirestoreUsageRepository:
             return current_count < daily_limit
 
         except Exception as e:
-            logger.error(f"Error checking message limit: {e}")
+            logger.error("Error checking message limit: error_type=%s", type(e).__name__)
             return False
 
     async def increment_with_limit_check(
@@ -220,11 +220,15 @@ class FirestoreUsageRepository:
 
             result = await update_in_transaction(transaction)
 
-            logger.info(f"Transaction result for user {user_id}: {result}")
+            logger.info(
+                "Daily usage transaction completed: plan=%s success=%s",
+                plan,
+                result.get("success"),
+            )
             return result
 
         except Exception as e:
-            logger.error(f"Error in increment_with_limit_check: {e}")
+            logger.error("Error checking and incrementing usage: error_type=%s", type(e).__name__)
             return {
                 'success': False,
                 'error': True,
@@ -256,7 +260,7 @@ class FirestoreUsageRepository:
             return max(0, remaining)
 
         except Exception as e:
-            logger.error(f"Error getting remaining messages: {e}")
+            logger.error("Error getting remaining messages: error_type=%s", type(e).__name__)
             return 0
 
     async def cleanup_old_records(self, days_to_keep: int = 7) -> int:
@@ -299,7 +303,7 @@ class FirestoreUsageRepository:
             return deleted_count
 
         except Exception as e:
-            logger.error(f"Error cleaning up old records: {e}")
+            logger.error("Error cleaning up old usage records: error_type=%s", type(e).__name__)
             return 0
 
     async def reset_daily_count(self, user_id: str) -> bool:
@@ -317,9 +321,9 @@ class FirestoreUsageRepository:
             doc_id = f"{user_id}_{today}"
 
             await self.db.collection(self.daily_collection_name).document(doc_id).delete()
-            logger.info(f"Reset daily count for user: {user_id}")
+            logger.info("Reset daily message count")
             return True
 
         except Exception as e:
-            logger.error(f"Error resetting daily count: {e}")
+            logger.error("Error resetting daily count: error_type=%s", type(e).__name__)
             return False

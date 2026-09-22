@@ -259,11 +259,14 @@ class LINEClient(BaseClient):
                 "status_code": response.status_code,
             }
 
-        except Exception as e:
-            logger.error(f"LINE health check failed: {e}")
+        except Exception as exc:
+            logger.error(
+                "LINE health check failed: error_type=%s",
+                type(exc).__name__,
+            )
             return {
                 "status": "unhealthy",
                 "service": "line",
                 "line_api_available": False,
-                "error": str(e),
+                "error": "LINE API unavailable",
             }

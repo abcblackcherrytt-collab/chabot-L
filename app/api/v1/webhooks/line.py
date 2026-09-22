@@ -14,6 +14,9 @@ from fastapi.responses import Response
 from app.core.config import settings
 from app.core.security import verify_webhook_signature
 from app.db.session import async_session_maker
+from app.repositories.firestore_conversation_repository import (
+    FirestoreConversationRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,7 @@ async def _process_line_events(
     events: list,
     line_service: Any,
     rag_service: Any,
+    conversation_repository: Any = None,
 ) -> None:
     """
     LINE イベントをバックグラウンドで処理します
@@ -56,6 +60,22 @@ async def _process_line_events(
             if not result:
                 continue
 
+            if result.get("status") == "limit_reached" and result.get("user_id"):
+                try:
+                    repository = (
+                        conversation_repository
+                        or FirestoreConversationRepository()
+                    )
+                    await repository.save_limit_denied(
+                        user_id=result["user_id"],
+                        plan=result.get("plan") or "free",
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Limit-denied conversation save failed: error_type=%s",
+                        type(exc).__name__,
+                    )
+
             # 回数制限とプラン別RAG設定を確定してからRAGを実行する。
             # 上限超過時の不要なVertex AI呼び出しと、誤コーパス利用を防ぐ。
             if (
@@ -63,6 +83,7 @@ async def _process_line_events(
                 and result.get("message")
                 and result.get("reply_token")
             ):
+                rag_result: Dict[str, Any] = {}
                 try:
                     rag_started = time.perf_counter()
                     rag_result = await rag_service.query(
@@ -81,8 +102,11 @@ async def _process_line_events(
                         "LINE RAG latency: %.1fms",
                         (time.perf_counter() - rag_started) * 1000,
                     )
-                except Exception as e:
-                    logger.error(f"RAG query failed: {e}")
+                except Exception as exc:
+                    logger.error(
+                        "RAG query failed: error_type=%s",
+                        type(exc).__name__,
+                    )
                     answer = (
                         "申し訳ありません、エラーが発生しました。"
                         "しばらくしてからもう一度お試しください。"
@@ -90,8 +114,35 @@ async def _process_line_events(
 
                 await line_service._send_reply(result["reply_token"], answer)
 
-        except Exception as e:
-            logger.error(f"Error processing LINE event: {e}")
+                # 回答送信に成功した場合だけ会話を保存する。保存失敗が
+                # 返信済みの回答や他イベント処理を止めないようにする。
+                if rag_result:
+                    try:
+                        classification = rag_result.get("classification") or {}
+                        repository = (
+                            conversation_repository
+                            or FirestoreConversationRepository()
+                        )
+                        await repository.save_conversation(
+                            user_id=result["user_id"],
+                            question_text=result["message"],
+                            answer_text=answer,
+                            plan=result.get("plan") or "free",
+                            denied=bool(rag_result.get("denied")),
+                            question_type=classification.get("question_type"),
+                            answer_aspects=classification.get("answer_aspects"),
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Conversation save failed after LINE reply: error_type=%s",
+                            type(exc).__name__,
+                        )
+
+        except Exception as exc:
+            logger.error(
+                "Error processing LINE event: error_type=%s",
+                type(exc).__name__,
+            )
 
 
 @router.post("/line")

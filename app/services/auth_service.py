@@ -192,12 +192,11 @@ class AuthService:
         if token_type != "refresh":
             return None
 
-        # JTIとユーザー情報を取得
+        # JTIとユーザーIDを取得。emailはPIIのためJWTへ格納しない。
         jti = payload.get("jti")
         user_id = payload.get("sub")
-        email = payload.get("email")
 
-        if not jti or not user_id or not email:
+        if not jti or not user_id:
             return None
 
         # リフレッシュトークンが存在し、有効かを確認

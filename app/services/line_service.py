@@ -185,9 +185,7 @@ class LineService:
             await self._send_reply(reply_token, "メッセージを入力してください。")
             return {"status": "processed", "reason": "empty_message"}
 
-        logger.info(
-            f"Processing message from LINE user: {self._mask_user_id(line_user_id)}"
-        )
+        logger.info("Processing LINE message")
         pre_rag_started = time.perf_counter()
 
         # Phase 2: ユーザー特定 → プラン → RAG 権限（corpus_id/model_name）解決
@@ -210,9 +208,8 @@ class LineService:
                 display_name = profile.get("displayName", "")
             except LINEError as exc:
                 logger.warning(
-                    "Failed to get profile while backfilling LINE user %s: %s",
-                    self._mask_user_id(line_user_id),
-                    exc,
+                    "Failed to get LINE profile during backfill: %s",
+                    type(exc).__name__,
                 )
 
             try:
@@ -220,10 +217,10 @@ class LineService:
                     line_user_id=line_user_id,
                     display_name=display_name,
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to backfill LINE user %s",
-                    self._mask_user_id(line_user_id),
+            except Exception as exc:
+                logger.error(
+                    "Failed to backfill LINE user: error_type=%s",
+                    type(exc).__name__,
                 )
                 await self._send_reply(
                     reply_token,
@@ -231,10 +228,7 @@ class LineService:
                 )
                 return {"status": "error", "reason": "user_backfill_failed"}
 
-            logger.info(
-                "Backfilled existing LINE friend: %s",
-                self._mask_user_id(line_user_id),
-            )
+            logger.info("Backfilled existing LINE friend")
 
         # 最初のユーザー取得結果を再利用し、同一ドキュメントの再読込を避ける。
         if not user_dict.get('is_active', False):
@@ -268,8 +262,10 @@ class LineService:
                 model_name = rag_perm.model_name
 
         logger.info(
-            f"Resolved plan={plan}, corpus_id={corpus_id}, model={model_name}, "
-            f"daily_limit={daily_limit} for line_user_id={self._mask_user_id(line_user_id)}"
+            "Resolved LINE plan settings: plan=%s model=%s daily_limit=%s",
+            plan,
+            model_name,
+            daily_limit,
         )
 
         # 全プランで1日あたりのメッセージ上限をチェック・インクリメントを原子的に実行
@@ -311,6 +307,7 @@ class LineService:
                 await self._send_reply(reply_token, limit_message)
                 return {
                     "status": "limit_reached",
+                    "user_id": user_dict['id'],
                     "plan": plan,
                     "daily_limit": daily_limit,
                     "remaining": limit_result['remaining']
@@ -366,15 +363,18 @@ class LineService:
         if not line_user_id:
             return {"status": "skipped", "reason": "missing_user_id"}
 
-        logger.info(f"New follow from: {self._mask_user_id(line_user_id)}")
+        logger.info("New LINE follow received")
 
         # プロフィール取得
         display_name = ""
         try:
             profile = await self.client.get_profile(line_user_id)
             display_name = profile.get("displayName", "")
-        except LINEError as e:
-            logger.warning(f"Failed to get profile: {e}")
+        except LINEError as exc:
+            logger.warning(
+                "Failed to get LINE profile: error_type=%s",
+                type(exc).__name__,
+            )
 
         # Phase 2: ユーザー作成（未存在）+ free サブスク（モック）
         # ※ Stripe 顧客作成（G1）・再有効化（is_active=True）は Phase 3
@@ -387,16 +387,12 @@ class LineService:
                 line_user_id=line_user_id,
                 display_name=display_name,
             )
-            logger.info(
-                f"Created user for line_user_id={self._mask_user_id(line_user_id)}"
-            )
+            logger.info("Created user from LINE follow")
         else:
             # unfollow後の再フォローでは既存IDを維持して再有効化する。
             if not user_dict.get("is_active", False):
                 await user_repo.activate_user(user_dict["id"])
-            logger.info(
-                f"Existing user found: {self._mask_user_id(line_user_id)}"
-            )
+            logger.info("Existing LINE user found")
 
         # ウェルカムメッセージ送信
         welcome_msg = (
@@ -435,7 +431,7 @@ class LineService:
         if not line_user_id:
             return {"status": "skipped", "reason": "missing_user_id"}
 
-        logger.info(f"Unfollow from: {self._mask_user_id(line_user_id)}")
+        logger.info("LINE unfollow received")
 
         # Firestoreユーザー無効化（推奨方針: LINE unfollow時はアカウント全体を停止）
         user_repo = self._get_user_repository(db)
@@ -445,7 +441,7 @@ class LineService:
             # ユーザーを無効化
             await user_repo.deactivate_user(user_dict['id'])
             await self._revoke_all_user_tokens(user_dict['id'], db)
-            logger.info(f"Deactivated user {user_dict['id']} after LINE unfollow")
+            logger.info("Deactivated user after LINE unfollow")
 
         return {
             "status": "processed",
@@ -473,7 +469,7 @@ class LineService:
         reply_token = event.get("replyToken", "")
         postback_data = event.get("postback", {}).get("data", "")
 
-        logger.info(f"Postback received: {postback_data}")
+        logger.info("LINE postback received")
 
         # ポストバックデータに応じた処理
         if postback_data == "action=subscribe":
@@ -527,13 +523,12 @@ class LineService:
                 to=line_user_id,
                 messages=[{"type": "text", "text": message}],
             )
-            logger.info(
-                f"Subscription notification sent to: {self._mask_user_id(line_user_id)}"
-            )
+            logger.info("Subscription notification sent")
             return True
         except LINEError as e:
             logger.error(
-                f"Failed to send notification to {self._mask_user_id(line_user_id)}: {e}"
+                "Failed to send subscription notification: %s",
+                type(e).__name__,
             )
             return False
 
@@ -557,8 +552,11 @@ class LineService:
 
         try:
             await self.client.reply_message(reply_token, messages)
-        except LINEError as e:
-            logger.error(f"Failed to send reply: {e}")
+        except LINEError as exc:
+            logger.error(
+                "Failed to send LINE reply: error_type=%s",
+                type(exc).__name__,
+            )
 
     def _split_message(
         self,
@@ -611,22 +609,6 @@ class LineService:
 
         return text
 
-    def _mask_user_id(self, user_id: str) -> str:
-        """
-        ログ出力用にユーザーIDをマスキングします
-
-        PII保護のため、ユーザーIDの先頭と末尾のみ表示します。
-
-        Args:
-            user_id: LINE ユーザーID
-
-        Returns:
-            マスキング済みID
-        """
-        if len(user_id) <= 8:
-            return "***masked***"
-        return f"{user_id[:4]}...{user_id[-4:]}"
-
     async def health_check(self) -> Dict[str, Any]:
         """
         LINEサービスのヘルスチェックを行います
@@ -636,10 +618,13 @@ class LineService:
         """
         try:
             return await self.client.health_check()
-        except Exception as e:
-            logger.error(f"LINE service health check failed: {e}")
+        except Exception as exc:
+            logger.error(
+                "LINE service health check failed: error_type=%s",
+                type(exc).__name__,
+            )
             return {
                 "status": "unhealthy",
                 "service": "line",
-                "error": str(e),
+                "error": "LINE service unavailable",
             }

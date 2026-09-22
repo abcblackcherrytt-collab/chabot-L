@@ -47,14 +47,14 @@ class FirestoreUserRepository(BaseUserRepository):
             for doc in docs:
                 user_data = doc.to_dict()
                 user_data['id'] = doc.id
-                logger.debug(f"User found by line_user_id: {line_user_id}")
+                logger.debug("User found by LINE user ID")
                 return user_data
 
-            logger.debug(f"User not found: {line_user_id}")
+            logger.debug("User not found by LINE user ID")
             return None
 
         except Exception as e:
-            logger.error(f"Error finding user by line_user_id: {e}")
+            logger.error("Error finding user by LINE user ID: error_type=%s", type(e).__name__)
             raise
 
     async def create_line_user(
@@ -99,11 +99,11 @@ class FirestoreUserRepository(BaseUserRepository):
             # ユーザードキュメント作成
             await self.db.collection('users').document(user_id).set(user_data)
 
-            logger.info(f"Created new user: {user_id} (line_user_id: {line_user_id})")
+            logger.info("Created new LINE user")
             return user_data
 
         except Exception as e:
-            logger.error(f"Error creating user: {e}")
+            logger.error("Error creating user: error_type=%s", type(e).__name__)
             raise
 
     async def find_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -122,14 +122,14 @@ class FirestoreUserRepository(BaseUserRepository):
             if doc.exists:
                 user_data = doc.to_dict()
                 user_data['id'] = doc.id
-                logger.debug(f"User found by id: {user_id}")
+                logger.debug("User found by internal ID")
                 return user_data
 
-            logger.debug(f"User not found: {user_id}")
+            logger.debug("User not found by internal ID")
             return None
 
         except Exception as e:
-            logger.error(f"Error finding user by id: {e}")
+            logger.error("Error finding user by ID: error_type=%s", type(e).__name__)
             raise
 
     async def get_subscription_plan(self, user_id: str) -> str:
@@ -181,11 +181,11 @@ class FirestoreUserRepository(BaseUserRepository):
             updated_data = doc.to_dict()
             updated_data['id'] = doc.id
 
-            logger.info(f"Updated subscription plan for user {user_id} to {plan}")
+            logger.info("Updated user subscription plan: plan=%s", plan)
             return updated_data
 
         except Exception as e:
-            logger.error(f"Error updating subscription plan: {e}")
+            logger.error("Error updating subscription plan: error_type=%s", type(e).__name__)
             raise
 
     async def update_subscription_data(
@@ -216,7 +216,7 @@ class FirestoreUserRepository(BaseUserRepository):
         update_data = dict(updates)
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         await self.db.collection("users").document(user_id).update(update_data)
-        logger.info("Updated Stripe subscription state for user %s", user_id)
+        logger.info("Updated Stripe subscription state")
 
     async def is_active(self, user_id: str) -> bool:
         """
@@ -249,10 +249,10 @@ class FirestoreUserRepository(BaseUserRepository):
                 'updated_at': datetime.utcnow().isoformat()
             })
 
-            logger.info(f"Deactivated user: {user_id}")
+            logger.info("Deactivated user")
 
         except Exception as e:
-            logger.error(f"Error deactivating user: {e}")
+            logger.error("Error deactivating user: error_type=%s", type(e).__name__)
             raise
 
     async def activate_user(self, user_id: str) -> None:
@@ -265,9 +265,9 @@ class FirestoreUserRepository(BaseUserRepository):
                 'reactivated_at': now,
                 'updated_at': now,
             })
-            logger.info(f"Activated user: {user_id}")
+            logger.info("Activated user")
         except Exception as e:
-            logger.error(f"Error activating user: {e}")
+            logger.error("Error activating user: error_type=%s", type(e).__name__)
             raise
 
     # ===== Stripe 顧客管理関連メソッド =====
@@ -291,14 +291,14 @@ class FirestoreUserRepository(BaseUserRepository):
             for doc in docs:
                 user_data = doc.to_dict()
                 user_data['id'] = doc.id
-                logger.debug(f"User found by stripe_customer_id: {stripe_customer_id}")
+                logger.debug("User found by Stripe customer ID")
                 return user_data
 
-            logger.debug(f"User not found by stripe_customer_id: {stripe_customer_id}")
+            logger.debug("User not found by Stripe customer ID")
             return None
 
         except Exception as e:
-            logger.error(f"Error finding user by stripe_customer_id: {e}")
+            logger.error("Error finding user by Stripe customer ID: error_type=%s", type(e).__name__)
             raise
 
     async def update_stripe_customer_id(self, user_id: str, stripe_customer_id: str) -> None:
@@ -317,10 +317,10 @@ class FirestoreUserRepository(BaseUserRepository):
                 'updated_at': datetime.utcnow().isoformat()
             })
 
-            logger.info(f"Updated stripe_customer_id for user {user_id}")
+            logger.info("Updated Stripe customer link")
 
         except Exception as e:
-            logger.error(f"Error updating stripe_customer_id: {e}")
+            logger.error("Error updating Stripe customer ID: error_type=%s", type(e).__name__)
             raise
 
     async def get_stripe_customer_id(self, user_id: str) -> Optional[str]:

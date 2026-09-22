@@ -11,6 +11,38 @@ from app.core.auth_cookies import REFRESH_TOKEN_COOKIE_NAME
 from app.server import app
 
 
+@pytest.mark.asyncio
+async def test_plan_selection_page_has_clear_basic_and_pro_cards() -> None:
+    """プラン選択画面に両プランとStripe導線が表示されること。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "あなたに合うプランを選ぶ" in response.text
+    assert "ベーシック" in response.text
+    assert "プロ" in response.text
+    assert "/api/v1/subscription/checkout/basic" in response.text
+    assert "/api/v1/subscription/checkout/pro" in response.text
+    assert "499円" in response.text
+    assert "999円" in response.text
+    assert "/api/v1/subscription/select.css" in response.text
+    assert "<style>" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_stylesheet_is_served_same_origin() -> None:
+    """CSPのdefault-src 'self'制約下でもスタイルが読み込めること。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/subscription/select.css")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+    assert ".plan" in response.text
+    assert "prefers-reduced-motion" in response.text
+
+
 @pytest.fixture
 def checkout_service() -> MagicMock:
     """Checkout URLを返すSubscriptionServiceモック。"""

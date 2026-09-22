@@ -126,7 +126,10 @@ class BaseClient:
             message = error_data.get("message", "Unknown error")
             status_code = response.get("status")
 
-            logger.error(f"API error: {message}")
+            logger.error(
+                "External API returned an error: status_code=%s",
+                status_code,
+            )
             raise error_class(message, status_code, response)
 
         return response

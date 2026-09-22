@@ -170,22 +170,22 @@ class SubscriptionSyncService:
                     }
 
             except StripeError as e:
-                logger.error(f"Stripe API error: {e}")
+                logger.error("Stripe API error: %s", type(e).__name__)
                 return {
                     "status": "stripe_error",
                     "line_user_id": line_user_id,
                     "user_id": user_id,
                     "consistent": False,
-                    "error": f"Stripe API error: {str(e)}"
+                    "error": "Stripe API error"
                 }
 
         except Exception as e:
-            logger.error(f"Error checking consistency: {e}")
+            logger.error("Error checking consistency: %s", type(e).__name__)
             return {
                 "status": "error",
                 "line_user_id": line_user_id,
                 "consistent": False,
-                "error": str(e)
+                "error": "Consistency check failed"
             }
 
     async def sync_stripe_to_firestore(
@@ -226,7 +226,7 @@ class SubscriptionSyncService:
             if not active_subscriptions:
                 # アクティブなサブスクリプションがない場合、freeプランに設定
                 await self.user_repo.update_subscription_plan(user["id"], "free")
-                logger.info(f"Synced user {user['id']} to free plan (no active subscription)")
+                logger.info("Synced user to free plan: reason=no_active_subscription")
 
                 return {
                     "status": "success",
@@ -249,8 +249,9 @@ class SubscriptionSyncService:
                     await self.user_repo.update_subscription_plan(user["id"], stripe_plan)
 
                     logger.info(
-                        f"Synced user {user['id']} to plan {stripe_plan} "
-                        f"(previous: {previous_plan})"
+                        "Synced user plan: plan=%s previous_plan=%s",
+                        stripe_plan,
+                        previous_plan,
                     )
 
                     return {
@@ -262,20 +263,20 @@ class SubscriptionSyncService:
                         "success": True
                     }
 
-                except ValueError as e:
+                except ValueError:
                     return {
                         "status": "invalid_price",
                         "user_id": user["id"],
                         "success": False,
-                        "error": str(e)
+                        "error": "Invalid Stripe price"
                     }
 
         except Exception as e:
-            logger.error(f"Error syncing Stripe to Firestore: {e}")
+            logger.error("Error syncing Stripe to Firestore: %s", type(e).__name__)
             return {
                 "status": "error",
                 "success": False,
-                "error": str(e)
+                "error": "Stripe to Firestore sync failed"
             }
 
     async def sync_firestore_to_stripe(
@@ -331,7 +332,7 @@ class SubscriptionSyncService:
                     subscription = active_subscriptions[0]
                     await self.stripe_client.cancel_subscription(subscription.get("id"))
 
-                    logger.info(f"Canceled Stripe subscription {subscription.get('id')}")
+                    logger.info("Canceled Stripe subscription")
 
                     return {
                         "status": "success",
@@ -357,9 +358,9 @@ class SubscriptionSyncService:
             }
 
         except Exception as e:
-            logger.error(f"Error syncing Firestore to Stripe: {e}")
+            logger.error("Error syncing Firestore to Stripe: %s", type(e).__name__)
             return {
                 "status": "error",
                 "success": False,
-                "error": str(e)
+                "error": "Firestore to Stripe sync failed"
             }

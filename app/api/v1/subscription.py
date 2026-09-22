@@ -29,30 +29,64 @@ router = APIRouter(prefix="/subscription", tags=["subscription"])
 
 
 # 選択画面に表示するプラン情報。金額はStripe側のPrice設定と合わせて運用する。
-PLAN_SELECTION_PAGE = """<!doctype html><html lang='ja'><meta charset='utf-8'>
+PLAN_SELECTION_CSS = """
+  :root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f5f7fb; color: #172033; }
+  main { width: min(100% - 32px, 720px); margin: 0 auto; padding: 40px 0 32px; }
+  .eyebrow { margin: 0 0 10px; color: #4967c5; font-size: .78rem; font-weight: 700; letter-spacing: .14em; }
+  h1 { margin: 0; font-size: clamp(1.8rem, 7vw, 2.5rem); letter-spacing: -.04em; }
+  .lead { margin: 14px 0 28px; color: #5d6880; line-height: 1.7; }
+  .plans { display: grid; gap: 14px; }
+  .plan { position: relative; display: block; padding: 22px; border: 1px solid #dce2ef; border-radius: 18px; background: #fff; color: inherit; text-decoration: none; box-shadow: 0 8px 24px rgba(32,48,88,.06); transition: transform .15s, box-shadow .15s; }
+  .plan:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(32,48,88,.13); }
+  .plan:focus-visible { outline: 3px solid #172033; outline-offset: 3px; box-shadow: 0 12px 30px rgba(32,48,88,.13); }
+  .plan.pro { border: 2px solid #536bd0; padding: 21px; }
+  .badge { position: absolute; top: -12px; right: 18px; padding: 5px 10px; border-radius: 99px; background: #536bd0; color: #fff; font-size: .72rem; font-weight: 700; }
+  .plan-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  h2 { margin: 0; font-size: 1.2rem; }
+  .price { margin: 14px 0 4px; font-size: 1.65rem; font-weight: 800; letter-spacing: -.04em; }
+  .price small { color: #68738a; font-size: .78rem; font-weight: 500; letter-spacing: 0; }
+  .limit { margin: 0; color: #536bd0; font-size: .9rem; font-weight: 700; }
+  ul { display: grid; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; color: #59647b; font-size: .88rem; line-height: 1.45; }
+  li::before { content: '✓'; margin-right: 8px; color: #536bd0; font-weight: 800; }
+  .arrow { float: right; color: #536bd0; font-size: 1.4rem; }
+  .note { margin: 24px 2px 0; color: #778197; font-size: .78rem; line-height: 1.7; }
+  .note strong { color: #59647b; }
+  @media (prefers-reduced-motion: reduce) { .plan { transition: none; } .plan:hover { transform: none; } }
+  @media (min-width: 620px) { .plans { grid-template-columns: 1fr 1fr; } }
+"""
+
+
+PLAN_SELECTION_PAGE = """<!doctype html>
+<html lang='ja'>
+<head>
+<meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>プラン選択</title>
-<body style='font-family:sans-serif;max-width:36rem;margin:2rem auto;padding:1rem;color:#222'>
-<h1 style='font-size:1.3rem'>プランの登録</h1>
-<p>利用するプランを選んでください。選択後、登録ページへ進みます。</p>
-<a href='/api/v1/subscription/checkout/basic'
-   style='display:block;margin:1rem 0;padding:1rem;border:2px solid #1a73e8;
-          border-radius:0.6rem;text-decoration:none;color:#1a73e8'>
-  <strong style='font-size:1.1rem'>ベーシックプラン</strong><br>
-  月額499円・1日100問まで<br>
-  <span style='font-size:0.85rem'>有料コーパスを利用した詳しい回答</span>
-</a>
-<a href='/api/v1/subscription/checkout/pro'
-   style='display:block;margin:1rem 0;padding:1rem;border:2px solid #0b8043;
-          border-radius:0.6rem;text-decoration:none;color:#0b8043'>
-  <strong style='font-size:1.1rem'>プロプラン</strong><br>
-  月額999円・1日500問まで<br>
-  <span style='font-size:0.85rem'>有料コーパスを利用した詳しい回答</span>
-</a>
-<p style='font-size:0.8rem;color:#555'>
-  登録はStripeでの決済へ進みます。プランの変更・解約はいつでもできます。
-</p>
-</body></html>"""
+<title>プランを選択 | Chabot</title>
+<link rel='stylesheet' href='/api/v1/subscription/select.css'>
+</head>
+<body><main>
+  <p class='eyebrow'>CHABOT SUBSCRIPTION</p>
+  <h1>あなたに合うプランを選ぶ</h1>
+  <p class='lead'>専門的な回答を、必要な量に合わせて。登録後はStripeの安全な決済ページへ進みます。</p>
+  <section class='plans' aria-label='プラン一覧'>
+    <a class='plan' href='/api/v1/subscription/checkout/basic'>
+      <div class='plan-head'><h2>ベーシックプラン</h2><span class='arrow' aria-hidden='true'>→</span></div>
+      <p class='price'>499円 <small>/ 月（税込）</small></p>
+      <p class='limit'>1日 100問まで</p>
+      <ul><li>有料コーパスによる詳しい回答</li><li>日々の学習・業務におすすめ</li></ul>
+    </a>
+    <a class='plan pro' href='/api/v1/subscription/checkout/pro'>
+      <span class='badge'>たくさん使う方へ</span>
+      <div class='plan-head'><h2>プロプラン</h2><span class='arrow' aria-hidden='true'>→</span></div>
+      <p class='price'>999円 <small>/ 月（税込）</small></p>
+      <p class='limit'>1日 500問まで</p>
+      <ul><li>有料コーパスによる詳しい回答</li><li>質問数が多い方におすすめ</li></ul>
+    </a>
+  </section>
+  <p class='note'><strong>お申し込みについて</strong><br>ボタンを押すとLINEログイン後、Stripeの決済ページへ移動します。プランの変更・解約はいつでも行えます。</p>
+</main></body></html>"""
 
 
 # ========== 依存性注入 ==========
@@ -208,6 +242,16 @@ async def select_plan() -> HTMLResponse:
     """リッチメニューから遷移する、basic/proのプラン選択画面を表示する。"""
     return HTMLResponse(
         content=PLAN_SELECTION_PAGE,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/select.css")
+async def plan_selection_stylesheet() -> Response:
+    """CSP準拠でプラン選択画面のスタイルを同一オリジン配信する。"""
+    return Response(
+        content=PLAN_SELECTION_CSS,
+        media_type="text/css",
         headers={"Cache-Control": "no-store"},
     )
 

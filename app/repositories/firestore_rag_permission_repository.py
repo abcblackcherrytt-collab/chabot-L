@@ -72,7 +72,7 @@ class FirestoreRagPermissionRepository:
             return None
 
         except Exception as e:
-            logger.error(f"Error getting RAG permission by plan: {e}")
+            logger.error("Error getting RAG permission by plan: error_type=%s", type(e).__name__)
             raise
 
     async def get_all_plans(self) -> list[Dict[str, Any]]:
@@ -97,7 +97,7 @@ class FirestoreRagPermissionRepository:
             return permissions
 
         except Exception as e:
-            logger.error(f"Error getting all RAG permissions: {e}")
+            logger.error("Error getting all RAG permissions: error_type=%s", type(e).__name__)
             raise
 
     async def create_permission(
@@ -153,7 +153,7 @@ class FirestoreRagPermissionRepository:
             return perm_data
 
         except Exception as e:
-            logger.error(f"Error creating RAG permission: {e}")
+            logger.error("Error creating RAG permission: error_type=%s", type(e).__name__)
             raise
 
     async def update_permission(
@@ -204,7 +204,7 @@ class FirestoreRagPermissionRepository:
             return None
 
         except Exception as e:
-            logger.error(f"Error updating RAG permission: {e}")
+            logger.error("Error updating RAG permission: error_type=%s", type(e).__name__)
             raise
 
     async def delete_permission(self, plan: str) -> bool:
@@ -234,7 +234,7 @@ class FirestoreRagPermissionRepository:
             return False
 
         except Exception as e:
-            logger.error(f"Error deleting RAG permission: {e}")
+            logger.error("Error deleting RAG permission: error_type=%s", type(e).__name__)
             raise
 
     @classmethod

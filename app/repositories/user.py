@@ -181,7 +181,7 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 }
             return None
         except Exception as e:
-            logger.error(f"Error finding user by id: {e}")
+            logger.error("Error finding user by id: %s", type(e).__name__)
             return None
 
     async def get_subscription_plan(self, user_id: str) -> str:
@@ -206,7 +206,7 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 return subscription.plan if subscription else 'free'
             return 'free'
         except Exception as e:
-            logger.error(f"Error getting subscription plan: {e}")
+            logger.error("Error getting subscription plan: %s", type(e).__name__)
             return 'free'
 
     async def update_subscription_plan(self, user_id: str, plan: str) -> Dict[str, Any]:
@@ -269,7 +269,7 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 }
 
         except Exception as e:
-            logger.error(f"Error updating subscription plan: {e}")
+            logger.error("Error updating subscription plan: %s", type(e).__name__)
             raise
 
     async def is_active(self, user_id: str) -> bool:
@@ -286,7 +286,7 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
             user = await self.get(user_id)
             return user.is_active if user else False
         except Exception as e:
-            logger.error(f"Error checking user active status: {e}")
+            logger.error("Error checking user active status: %s", type(e).__name__)
             return False
 
     async def deactivate_user(self, user_id: str) -> None:
@@ -304,9 +304,9 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 user.is_active = False
                 user.updated_at = datetime.utcnow()
                 await self.db.commit()
-                logger.info(f"Deactivated user: {user_id}")
+                logger.info("Deactivated user")
         except Exception as e:
-            logger.error(f"Error deactivating user: {e}")
+            logger.error("Error deactivating user: %s", type(e).__name__)
             raise
 
     async def activate_user(self, user_id: str) -> None:
@@ -319,9 +319,9 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 user.is_active = True
                 user.updated_at = datetime.utcnow()
                 await self.db.commit()
-                logger.info(f"Activated user: {user_id}")
+                logger.info("Activated user")
         except Exception as e:
-            logger.error(f"Error activating user: {e}")
+            logger.error("Error activating user: %s", type(e).__name__)
             raise
 
     async def find_by_line_user_id_dict(self, line_user_id: str) -> Optional[Dict[str, Any]]:
@@ -382,9 +382,9 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
                 user.stripe_customer_id = stripe_customer_id
                 user.updated_at = datetime.utcnow()
                 await self.db.commit()
-                logger.info(f"Updated stripe_customer_id for user: {user_id}")
+                logger.info("Updated Stripe customer reference for user")
         except Exception as e:
-            logger.error(f"Error updating stripe_customer_id: {e}")
+            logger.error("Error updating stripe_customer_id: %s", type(e).__name__)
             raise
 
     async def get_stripe_customer_id(self, user_id: str) -> str | None:
@@ -401,7 +401,7 @@ class UserRepository(BaseRepository[User], BaseUserRepository):
             user = await self.get(user_id)
             return user.stripe_customer_id if user else None
         except Exception as e:
-            logger.error(f"Error getting stripe_customer_id: {e}")
+            logger.error("Error getting stripe_customer_id: %s", type(e).__name__)
             return None
 
     #

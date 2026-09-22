@@ -108,7 +108,7 @@ async def get_current_user(
         # Firestoreの場合は辞書形式で取得
         user_dict = await user_repo.find_by_id(user_id)
         if not user_dict:
-            logger.warning(f"User not found: {user_id}")
+            logger.warning("Authenticated user was not found")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
@@ -116,7 +116,7 @@ async def get_current_user(
             )
 
         if not user_dict.get('is_active', False):
-            logger.warning(f"Inactive user attempt: {user_id}")
+            logger.warning("Inactive user attempted access")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account is inactive",
@@ -149,7 +149,7 @@ async def get_current_user(
         user = await user_repo.get(user_id)
 
         if not user:
-            logger.warning(f"User not found: {user_id}")
+            logger.warning("Authenticated user was not found")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
@@ -157,7 +157,7 @@ async def get_current_user(
             )
 
         if not user.is_active:
-            logger.warning(f"Inactive user attempt: {user.id}")
+            logger.warning("Inactive user attempted access")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account is inactive",
@@ -202,7 +202,7 @@ async def get_current_admin(
         HTTPException: 管理者でない場合
     """
     if current_user.role != "admin":
-        logger.warning(f"Non-admin user attempted admin access: {current_user.id}")
+        logger.warning("Non-admin user attempted admin access")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

@@ -155,37 +155,6 @@ async def seed():
             print("✅ 日次利用量登録完了 (4件)")
 
             # ==========================================
-            # 5. 会話ログ登録
-            # ==========================================
-            await session.execute(text("""
-                INSERT INTO conversations (id, user_id, line_message_id, user_message,
-                                           assistant_message, plan_at_request,
-                                           rag_corpus_id, input_tokens, output_tokens)
-                VALUES
-                    (:id1, :uid1, :msg1, 'こんにちは、教えてください。',
-                     'こんにちは！どのようなご質問でしょうか？', 'free',
-                     'general_basic', 500, 400),
-                    (:id2, :uid2, :msg2, '詳しく教えてもらえますか？',
-                     'はい、詳しく説明いたします。...', 'basic',
-                     'general_plus', 4000, 2000),
-                    (:id3, :uid3, :msg3, '高度な分析をお願いします。',
-                     '分析結果をご報告します。...', 'pro',
-                     'premium_domain', 12000, 4000)
-            """), {
-                "id1": str(uuid.uuid4()),
-                "uid1": user_free_id,
-                "msg1": "msg_test_001",
-                "id2": str(uuid.uuid4()),
-                "uid2": user_basic_id,
-                "msg2": "msg_test_002",
-                "id3": str(uuid.uuid4()),
-                "uid3": user_pro_id,
-                "msg3": "msg_test_003",
-            })
-
-            print("✅ 会話ログ登録完了 (3件)")
-
-            # ==========================================
             # 6. Stripeイベント登録
             # ==========================================
             await session.execute(text("""

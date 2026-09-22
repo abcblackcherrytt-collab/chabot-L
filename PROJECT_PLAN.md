@@ -177,7 +177,8 @@
 - [x] Stripe / Firestore整合性チェックサービスの土台
 - [x] LINE登録URL → セッション確認 → LINE Login復帰 → Stripe Checkoutリダイレクト導線（本番反映済み、Price ID未設定の準備中画面まで公開確認済み）
 - [x] リッチメニュー用のbasic/proプラン選択画面 /api/v1/subscription/select を追加。各カードから従来のCheckout導線（/checkout/basic・/checkout/pro）へ遷移する（2026-09-22実装、テスト追加、Cloud Run chabot-service-00032-sgh・GIT_SHA=1a16196・run 35673952459 成功で本番反映し、HTTP 200と両導線を含む本文を確認済み）
-- [x] プラン選択画面のレイアウトをスマホ優先のカードUIへ刷新。料金・1日上限・用途・Stripe遷移を見やすく整理し、Basic/Proの導線回帰テストを追加（2026-09-22、ローカルテスト済み・本番未反映）
+- [x] プラン選択画面のレイアウトをスマホ優先のカードUIへ刷新。Clean/Premium/Spaciousスキルの指針（限定色、8pt余白、明確な階層、可視フォーカス、44px以上の操作性）を反映し、料金・1日上限・用途・Stripe遷移を整理。Basic/Proの導線回帰テストを追加（2026-09-22、ローカルテスト済み・本番未反映）
+- [x] 実ブラウザ確認で default-src 'self' のCSPによりインラインスタイルが無効化される問題を発見。スタイルを同一オリジン /api/v1/subscription/select.css から配信する方式へ修正し、デスクトップ・390pxモバイル・キーボードフォーカス・タップ領域（358×220px）・コンソールエラーなしを視覚検証（2026-09-22、対象テスト9件成功・本番未反映）
 - [x] Checkout成功・キャンセル後の案内ページ（本番反映・HTTP 200確認済み）
 - [x] `customer.subscription.updated` のFirestore状態更新
 - [x] `invoice.paid` のFirestore状態・請求期間更新
@@ -202,6 +203,7 @@
 - [x] Codex用 `.agents/skills/project-plan-manager/SKILL.md` を作成
 - [x] Claude用 `.claude/skills/project-plan-manager/SKILL.md` へ同一内容を複製
 - [x] スキルは各配置の `SKILL.md` だけで構成し、追加のagents設定ファイルは使用しない
+- [x] デザイン修正時に自動発現する `chabot-design-system` を `.agents/skills/design-system/` に追加。`take/.claude/skills` のスタイル群を子ディレクトリへ整理し、親スキルが用途別に参照する階層構造を構築（2026-09-22、quick_validate成功）
 - [x] ルートの `AGENTS.md` / `CLAUDE.md` はスキル登録のために変更しない
 - [x] Codex版・Claude版のSKILL.md検証と同一性確認に成功
 - [ ] スキルを変更する場合は両配置を同時更新し、差分がないことを再確認
@@ -308,6 +310,7 @@ P0公開ゲート:
 - [x] JWTの追加クレーム経由でemail、LINE user ID、予約クレームを再注入できないよう共通生成関数で拒否した。（2026-09-21本番反映済み）
 - [x] デプロイ品質ゲート相当124件、既知のPostgreSQL Refresh Tokenテストを除くunit 139件、Python compileallにローカル成功した。
 - [x] 外部クライアント、同期処理、休眠中のPostgreSQLリポジトリを含む例外ログを例外型中心のallowlist形式へ変更した。
+- [x] 会話保管をPostgreSQL構造からFirestore構造へ完全移行した。PostgreSQL用Conversationモデル・Userリレーション・Alembic envインポート・seedスクリプト登録を削除し、FirestoreConversationRepository（conversationsコレクション）を追加。LINE返信成功後とチャットAPI応答後に質問・回答・プラン・分類・否認・PII検知フラグを1ドキュメント保存し、日次上限拒否は本文なしメタデータのみ記録する。保存失敗は回答導線を止めない（2026-09-22、対象unit 38件成功・本番未反映）
 - [ ] Cloud Loggingの既存ログ削除・保持期間・閲覧IAM・sink確認は未実施（IAM/IAPはユーザー指示により別作業）。
 - [保留] IAP、管理サービス用IAM/ingress、管理者allowlist、認証E2E、`chabot-admin` のデプロイは別作業とする。
 

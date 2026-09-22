@@ -1,0 +1,4 @@
+interface:
+  display_name: Chabot Design System
+  short_description: Design and revise Chabot user interfaces
+  default_prompt: Use $chabot-design-system to choose and apply an accessible visual direction for this Chabot UI change.

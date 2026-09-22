@@ -9,6 +9,7 @@
 
 # Service account keys (CRITICAL - never include in build)
 service_account/*.json
+gha-creds-*.json
 
 # Python
 __pycache__/

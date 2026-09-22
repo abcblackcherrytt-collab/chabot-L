@@ -11,7 +11,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.deps import get_current_user
+from app.core.pricing import get_daily_message_limit
 from app.models.user import User
+from app.repositories.firestore_rag_permission_repository import (
+    FirestoreRagPermissionRepository,
+)
+from app.repositories.firestore_conversation_repository import (
+    FirestoreConversationRepository,
+)
+from app.repositories.firestore_usage_repository import FirestoreUsageRepository
 
 if TYPE_CHECKING:
     from app.services.line_service import LineService
@@ -74,9 +82,38 @@ async def send_line_message(
             line_user_id=line_user_id,
             message=text,
         )
-        logger.debug(f"Push message sent to LINE user: {line_user_id[:4]}...")
+        logger.debug("Push message sent to LINE user")
     except Exception as e:
-        logger.error(f"Failed to send LINE message: {e}")
+        logger.error("Failed to send LINE message: error_type=%s", type(e).__name__)
+
+
+async def save_chat_conversation(
+    *,
+    user_id: str,
+    question_text: str,
+    answer_text: str,
+    plan: str,
+    denied: bool,
+    question_type: str | None,
+    answer_aspects: list[str],
+) -> None:
+    """チャットAPIの応答後に会話を保存する。保存失敗で応答は止めない。"""
+    try:
+        repository = FirestoreConversationRepository()
+        await repository.save_conversation(
+            user_id=user_id,
+            question_text=question_text,
+            answer_text=answer_text,
+            plan=plan,
+            denied=denied,
+            question_type=question_type,
+            answer_aspects=answer_aspects,
+        )
+    except Exception as exc:
+        logger.error(
+            "Conversation save failed after chat response: error_type=%s",
+            type(exc).__name__,
+        )
 
 
 @router.post(
@@ -104,14 +141,48 @@ async def send_message(
     LINEチャットボットとして動作し、RAGサービスを使用して回答を生成します。
     認証されたユーザーのみアクセス可能です。
     """
+    if request.include_context:
+        raise HTTPException(
+            status_code=403,
+            detail="RAG context metadata is not available from the public API",
+        )
+
     # アプリケーション状態からサービスを取得（lifespanで初期化済み）
     rag_service = http_request.app.state.rag_service
 
     # Phase 2: ユーザーのプラン → RAG 権限（corpus_id/model_name）解決
     plan = getattr(current_user, "subscription_plan", None) or "free"
 
+    # LINE経路と同じ日次上限を公開APIにも適用し、直接API呼び出しによる
+    # 利用回数・Vertex AI課金の迂回を防ぐ。
+    daily_limit = get_daily_message_limit(plan)
+    limit_result = await FirestoreUsageRepository().increment_with_limit_check(
+        str(current_user.id),
+        plan,
+        daily_limit,
+    )
+    if not limit_result.get("success"):
+        if limit_result.get("error"):
+            raise HTTPException(
+                status_code=503,
+                detail="Usage limit could not be verified",
+            )
+        try:
+            await FirestoreConversationRepository().save_limit_denied(
+                user_id=str(current_user.id),
+                plan=plan,
+            )
+        except Exception as exc:
+            logger.error(
+                "Limit-denied conversation save failed: error_type=%s",
+                type(exc).__name__,
+            )
+        raise HTTPException(
+            status_code=429,
+            detail="Daily message limit reached",
+        )
+
     # Firestore用プラン解決（user_repo経由でプラン取得）
-    from app.repositories.firestore_rag_permission_repository import FirestoreRagPermissionRepository
     rag_perm_repo = FirestoreRagPermissionRepository()
     rag_perm = await rag_perm_repo.get_by_plan(plan)
     corpus_id = rag_perm.get('rag_corpus_id') if rag_perm else None
@@ -122,7 +193,7 @@ async def send_message(
         rag_result = await rag_service.query(
             text=request.message,
             max_results=10,
-            include_context=request.include_context,
+            include_context=False,
             user_id=str(current_user.id),
             corpus_id=corpus_id,
             model_name=model_name,
@@ -133,17 +204,34 @@ async def send_message(
         if rag_result.get("denied"):
             logger.debug(f"RAG query denied: {rag_result.get('reason')}")
 
+        classification = rag_result.get("classification") or {}
+        background_tasks.add_task(
+            save_chat_conversation,
+            user_id=str(current_user.id),
+            question_text=request.message,
+            answer_text=rag_result.get("answer", ""),
+            plan=plan,
+            denied=bool(rag_result.get("denied")),
+            question_type=classification.get("question_type"),
+            answer_aspects=classification.get("answer_aspects") or [],
+        )
+
         return ChatResponse(
             answer=rag_result.get("answer", ""),
             user_id=str(current_user.id),
             confidence=rag_result.get("confidence"),
-            contexts=rag_result.get("contexts") if request.include_context else None,
+            contexts=None,
             denied=rag_result.get("denied", False),
             reason=rag_result.get("reason"),
         )
 
-    except Exception as e:
-        logger.error(f"Error processing chat message: {e}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Error processing chat message: error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=500,
             detail="Internal server error",
@@ -218,7 +306,7 @@ async def deep_health_check(http_request: Request) -> DeepHealthCheckResponse:
         )
 
     except Exception as e:
-        logger.error(f"Deep health check failed: {e}")
+        logger.error("Deep health check failed: %s", type(e).__name__)
         raise HTTPException(
             status_code=500,
             detail="Internal server error",

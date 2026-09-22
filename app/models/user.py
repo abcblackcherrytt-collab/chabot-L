@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from app.models.refresh_token import RefreshToken
     from app.models.subscription import Subscription
     from app.models.usage_daily import UsageDaily
-    from app.models.conversation import Conversation
 
 
 class User(Base, TimestampMixin):
@@ -115,12 +114,6 @@ class User(Base, TimestampMixin):
     )
     usage_records: Mapped[List["UsageDaily"]] = relationship(
         "UsageDaily",
-        back_populates="user",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
-    conversations: Mapped[List["Conversation"]] = relationship(
-        "Conversation",
         back_populates="user",
         cascade="all, delete-orphan",
         lazy="selectin",

@@ -2,6 +2,8 @@
 LINE サービスのユニットテスト
 """
 
+import logging
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,6 +101,27 @@ class TestProcessWebhookEvent:
         user_repo = line_service._get_user_repository()
         user_repo.is_active.assert_not_awaited()
         user_repo.get_subscription_plan.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_message_log_does_not_include_line_user_id(
+        self,
+        line_service,
+        caplog,
+    ):
+        """LINE user IDをアプリケーションログへ出さないこと。"""
+        line_user_id = "U_sensitive_line_identifier"
+        event = {
+            "type": "message",
+            "replyToken": "test_reply_token",
+            "source": {"userId": line_user_id},
+            "message": {"type": "text", "text": "患者情報を含む相談"},
+        }
+
+        with caplog.at_level(logging.INFO, logger="app.services.line_service"):
+            await line_service.process_webhook_event(event)
+
+        assert line_user_id not in caplog.text
+        assert "患者情報を含む相談" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_message_event_non_text(self, line_service, mock_line_client):
@@ -383,21 +406,6 @@ class TestMessageSplit:
         very_long_text = "a" * 30000
         messages = line_service._split_message(very_long_text, max_length=5000)
         assert len(messages) <= 5
-
-
-class TestUserIdMasking:
-    """ユーザーID マスキングテスト"""
-
-    def test_mask_user_id(self, line_service):
-        """ユーザーID がマスキングされること"""
-        masked = line_service._mask_user_id("U_abcdefghij123456")
-        assert masked == "U_ab...3456"
-        assert "abcdefghij123456" not in masked
-
-    def test_mask_short_user_id(self, line_service):
-        """短いIDは完全にマスキングされること"""
-        masked = line_service._mask_user_id("U_abcd")
-        assert masked == "***masked***"
 
 
 class TestSubscriptionNotification:

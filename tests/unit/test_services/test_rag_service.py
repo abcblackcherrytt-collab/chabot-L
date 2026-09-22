@@ -3,6 +3,8 @@ Unit tests for RAG Service
 RAGサービスのユニットテスト
 """
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -45,6 +47,39 @@ class TestRAGService:
             model_name=None,
             plan="free",
         )
+
+    @pytest.mark.asyncio
+    async def test_query_logs_only_non_sensitive_metadata(self, caplog):
+        """質問・回答・ユーザー識別子をログへ出さないこと。"""
+        sensitive_query = "患者氏名は山田太郎です"
+        sensitive_answer = "山田太郎さんの回答"
+        sensitive_user_id = "private-user-id"
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock(
+            return_value={
+                "answer": sensitive_answer,
+                "contexts": [],
+                "confidence": 0.9,
+                "denied": False,
+            }
+        )
+        service = RAGService(vertex_ai_client=mock_client)
+
+        with caplog.at_level(logging.INFO, logger="app.services.rag_service"):
+            await service.query(
+                text=sensitive_query,
+                user_id=sensitive_user_id,
+                plan="free",
+            )
+
+        log_text = caplog.text
+        assert sensitive_query not in log_text
+        assert sensitive_answer not in log_text
+        assert sensitive_user_id not in log_text
+        assert "query_length=" in log_text
+        assert "answer_length=" in log_text
 
     @pytest.mark.asyncio
     async def test_query_forwards_paid_plan(self, mock_vertex_ai_response):

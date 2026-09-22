@@ -69,9 +69,7 @@ class SubscriptionService:
             if not user:
                 raise ValueError(f"User not found: {user_id}")
 
-            logger.info(
-                f"Creating checkout session for user {user_id}, plan {plan}"
-            )
+            logger.info("Creating checkout session: plan=%s", plan)
 
             # Stripe顧客IDの取得または作成
             stripe_customer_id = await self._get_or_create_stripe_customer(user)
@@ -81,7 +79,7 @@ class SubscriptionService:
                 await self.user_repo.update_stripe_customer_id(
                     user_id, stripe_customer_id
                 )
-                logger.info(f"Linked Stripe customer {stripe_customer_id} to user {user_id}")
+                logger.info("Linked Stripe customer to user")
 
             # Checkout URLの取得
             checkout_urls = get_checkout_urls()
@@ -94,24 +92,23 @@ class SubscriptionService:
                 cancel_url=checkout_urls["cancel_url"],
                 metadata={
                     "user_id": user_id,
-                    "line_user_id": user.get("line_user_id", ""),
                     "plan": plan,
                 },
             )
 
             checkout_url = checkout_session.get("url")
-            logger.info(f"Created checkout session: {checkout_session.get('id')}")
+            logger.info("Created Stripe checkout session")
 
             return checkout_url
 
         except ValueError as e:
-            logger.error(f"Validation error: {e}")
+            logger.error("Subscription validation failed: %s", type(e).__name__)
             raise
         except StripeError as e:
-            logger.error(f"Stripe error: {e}")
+            logger.error("Stripe operation failed: %s", type(e).__name__)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+            logger.error("Unexpected subscription error: %s", type(e).__name__)
             raise
 
     async def _get_or_create_stripe_customer(
@@ -131,7 +128,7 @@ class SubscriptionService:
             # 既存のStripe顧客IDを確認
             existing_customer_id = user.get("stripe_customer_id")
             if existing_customer_id:
-                logger.info(f"Using existing Stripe customer: {existing_customer_id}")
+                logger.info("Using existing Stripe customer")
                 return existing_customer_id
 
             # 新規Stripe顧客作成
@@ -140,17 +137,19 @@ class SubscriptionService:
                 name=user.get("display_name"),
                 metadata={
                     "user_id": user.get("id"),
-                    "line_user_id": user.get("line_user_id", ""),
                 },
             )
 
             customer_id = customer.get("id")
-            logger.info(f"Created new Stripe customer: {customer_id}")
+            logger.info("Created new Stripe customer")
 
             return customer_id
 
         except StripeError as e:
-            logger.error(f"Failed to create Stripe customer: {e}")
+            logger.error(
+                "Failed to create Stripe customer: error_type=%s",
+                type(e).__name__,
+            )
             raise
 
     async def handle_checkout_success(
@@ -174,14 +173,12 @@ class SubscriptionService:
             subscription_id = session.get("subscription")
             metadata = session.get("metadata", {})
 
-            logger.info(
-                f"Checkout success: customer={customer_id}, subscription={subscription_id}"
-            )
+            logger.info("Processing successful Stripe Checkout return")
 
             # ユーザー情報を確認
             user = await self.user_repo.find_by_stripe_customer_id(customer_id)
             if not user:
-                logger.warning(f"User not found for customer: {customer_id}")
+                logger.warning("User not found for Stripe customer")
                 return {"status": "user_not_found", "session_id": session_id}
 
             # サブスクリプション情報を取得
@@ -203,9 +200,7 @@ class SubscriptionService:
                         user["id"], plan
                     )
 
-                    logger.info(
-                        f"Updated user {user['id']} to plan {plan} after checkout"
-                    )
+                    logger.info("Updated user plan after checkout: plan=%s", plan)
 
                     return {
                         "status": "success",
@@ -214,8 +209,8 @@ class SubscriptionService:
                         "subscription_id": subscription_id,
                     }
 
-                except ValueError as e:
-                    logger.error(f"Invalid price ID: {price_id}")
+                except ValueError:
+                    logger.error("Invalid Stripe price ID after checkout")
                     return {
                         "status": "invalid_price",
                         "session_id": session_id,
@@ -228,11 +223,17 @@ class SubscriptionService:
             }
 
         except StripeError as e:
-            logger.error(f"Stripe error handling checkout success: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.error(
+                "Stripe error handling checkout success: error_type=%s",
+                type(e).__name__,
+            )
+            return {"status": "error", "error": "Stripe operation failed"}
         except Exception as e:
-            logger.error(f"Unexpected error handling checkout success: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.error(
+                "Unexpected error handling checkout success: error_type=%s",
+                type(e).__name__,
+            )
+            return {"status": "error", "error": "Checkout processing failed"}
 
     async def get_user_subscription_status(
         self,
@@ -306,5 +307,8 @@ class SubscriptionService:
                 }
 
         except Exception as e:
-            logger.error(f"Error getting subscription status: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.error(
+                "Error getting subscription status: error_type=%s",
+                type(e).__name__,
+            )
+            return {"status": "error", "error": "Subscription status unavailable"}
