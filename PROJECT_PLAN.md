@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-22（回答出力構成を要約先行へ本番反映、会話保存を実データ確認）
+> **更新日**: 2026-09-23（管理UIローカルモック実装・デザインQA・挙動チェック完了）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -57,7 +57,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
-| Phase 2.7 | 管理UI、動的プロンプト・上限設定、1回限り登録URL、ユーザー参照 | Firestore | - | **安全基盤をローカル実装中・本番未反映** |
+| Phase 2.7 | 管理UI、動的プロンプト・上限設定、1回限り登録URL、ユーザー参照 | Firestore | - | **ローカルUI実装済み・本番未反映** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Price検証・本番反映済み・Checkout/Webhook E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
@@ -249,7 +249,7 @@ P0公開ゲート:
 #### 推奨アーキテクチャ
 
 - [ ] 既存の公開Botサービス `chabot-service` と分離するため、管理専用ASGI entrypointを実装済み。本番の `chabot-admin` 起動・デプロイは未実施。
-- [ ] 管理サービスは `app/admin_server.py` を入口として実装済み。Jinja2 + 小量のVanilla JavaScriptによる実画面は未実装。
+- [ ] 管理サービスは `app/admin_server.py` を入口として実装済み。2026-09-23にローカル開発用モックUI（8セクション・同一origin配信のCSS/JS・CSP準拠）を実装し、デザインQAと挙動チェック6項目に成功。Firestore接続・管理API・IAP認証は未実装のため、本番UIとしては未完成。
 - [ ] Botと管理UIはFirestore `chabotline` を共有する。管理サービスは専用サービスアカウントを使い、IAMで許される最小のAPI操作へ絞るが、Firestore IAMをコレクション単位の境界とはみなさない。より強い分離が必要なら別database/projectを採用する。
 - [保留] 管理者認証とIAPの作業は別途行う。それまでは `ADMIN_UI_ENABLED=False` を既定とし、本番の管理サービスを公開しない。
 - [ ] 管理APIはブラウザから直接Firestoreへ接続させず、すべてFastAPI経由にする。書込みには認可、CSRF対策、入力検証、監査記録を必須とする。
@@ -301,6 +301,15 @@ P0公開ゲート:
 7. [ ] 本番反映: 管理者認証を有効化した後だけ `chabot-admin` をデプロイし、Bot側の設定反映、監査記録、ロールバックを確認する
 
 #### ローカル実装状況（2026-09-04）
+
+**2026-09-23: 管理UIローカルモック実装（デザインQA・挙動チェック完了・本番未反映）**
+
+- [x] `app/admin_server.py` にローカル開発用管理コンソールを実装。集計・ユーザー・回数上限設定・クーポン・無料登録URL・会話保管・要望・監査ログの8セクションを、依存追加なしの同一origin配信HTML/CSS/JSで提供した（既存プラン選択画面と同じ方式）。
+- [x] データはすべて架空のローカルモック。本番Firestore・管理API・IAP・CSRF・監査保存には未接続。画面ヘッダーに「モックデータ（本番・Firestore未接続）」を常時表示する。
+- [x] chabot-design-systemスキルのclean + spacious方向と既存ブランドトークン（アクセント#536bd0・8ptリズム・44px以上ターゲット・focus-visible・prefers-reduced-motion・overflow-wrap）で実装し、デスクトップ1440pxとモバイル390pxのスクリーンショットでデザインQAを実施した。
+- [x] UI挙動チェック6項目（ユーザー詳細表示・表示名前方一致検索・プラン変更理由必須・上限1〜999範囲検証・要望対応済み更新・監査ログへの操作反映）をヘッドレスChrome CDPで実行して全成功（`scripts/check_admin_ui_behavior.mjs`）。
+- [x] CSP準拠（インラインscript/styleなし・innerHTML不使用・外部通信なし）と既定無効（/admin・/admin.css・/admin.jsが503、/healthのみ200）を回帰テスト化し、deploy.yml品質ゲートへ追加した。ローカルで品質ゲート137件成功。
+- [ ] 本番向け管理API（/api/v1/admin/*）、Firestore読み書き、IAP認証、CSRF、監査ログ保存、ページネーションは未実装。UIの書き込み操作はモック状態でしか動かない。
 
 - [x] `app/admin_server.py` を公開Botと分離し、管理機能を既定無効、OpenAPI/Swagger/ReDocを無効にした。
 - [x] 共通セキュリティヘッダーミドルウェアを切り出し、管理レスポンスへ `Cache-Control: no-store`、`Pragma: no-cache`、`Referrer-Policy: no-referrer`、CSP、frame拒否、MIME sniffing防止を適用した。

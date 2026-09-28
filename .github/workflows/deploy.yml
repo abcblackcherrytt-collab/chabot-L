@@ -55,6 +55,7 @@ jobs:
         run: |
           pytest \
             tests/unit/test_admin_app_security.py \
+            tests/unit/test_admin_ui.py \
             tests/unit/test_build_security.py \
             tests/unit/test_chat_api_security.py \
             tests/unit/test_auth_session.py \
