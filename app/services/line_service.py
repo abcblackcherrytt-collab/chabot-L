@@ -11,6 +11,7 @@ Phase 2: ユーザー管理・サブスクリプション連携を追加。詳�
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,19 @@ from app.core.pricing import get_daily_message_limit
 from app.repositories.base_user_repository import BaseUserRepository
 
 logger = logging.getLogger(__name__)
+
+
+FEEDBACK_QUICK_REPLY = [
+    {
+        "type": "action",
+        "action": {
+            "type": "postback",
+            "label": "要望を送る",
+            "data": "action=feedback_start",
+            "displayText": "要望を送る",
+        },
+    }
+]
 
 
 class LineService:
@@ -237,7 +251,93 @@ class LineService:
                 "このアカウントは現在無効です。サポートまでお問い合わせください。"
             )
             return {"status": "skipped", "reason": "user_inactive"}
-        plan = user_dict.get('subscription_plan') or "free"
+
+        # クーポン引き換えは日次回数を消費しないため、プラン解決の前に処理する。
+        from app.services.coupon_service import CouponService, match_coupon_message
+
+        coupon_code = match_coupon_message(user_message)
+        if coupon_code:
+            try:
+                coupon_result = await CouponService().redeem(
+                    raw_code=coupon_code,
+                    user_id=user_dict["id"],
+                )
+            except Exception as exc:
+                logger.error(
+                    "Coupon redemption failed: error_type=%s",
+                    type(exc).__name__,
+                )
+                coupon_result = {
+                    "status": "error",
+                    "message": "クーポン処理でエラーが発生しました。しばらくしてからもう一度お試しください。",
+                }
+            try:
+                from app.repositories.firestore_admin_stats_repository import (
+                    FirestoreAdminStatsRepository,
+                )
+
+                stats_repo = FirestoreAdminStatsRepository()
+                if coupon_result.get("status") == "granted":
+                    await stats_repo.increment_coupon_redemption()
+                else:
+                    await stats_repo.increment_coupon_failure()
+            except Exception as exc:
+                logger.warning(
+                    "Coupon stats update failed: error_type=%s",
+                    type(exc).__name__,
+                )
+            await self._send_reply(reply_token, coupon_result["message"])
+            return {
+                "status": "processed",
+                "action": "coupon_redeem",
+                "coupon_status": coupon_result.get("status"),
+            }
+
+        # 要望受付モード中のメッセージは通常質問として扱わず、要望として記録する。
+        from app.services.feedback_service import FEEDBACK_ENTRY_TEXTS, FeedbackService
+
+        if user_message.strip() in FEEDBACK_ENTRY_TEXTS:
+            try:
+                guidance = await FeedbackService().start_pending(user_id=user_dict["id"])
+            except Exception as exc:
+                logger.error(
+                    "Feedback start failed: error_type=%s",
+                    type(exc).__name__,
+                )
+                guidance = "要望の受付を開始できませんでした。しばらくしてからもう一度お試しください。"
+            await self._send_reply(reply_token, guidance)
+            return {"status": "processed", "action": "feedback_start"}
+
+        try:
+            feedback_result = await FeedbackService().handle_pending_message(
+                user_id=user_dict["id"],
+                text=user_message,
+                display_name=user_dict.get("display_name") or "",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Feedback pending check failed: error_type=%s",
+                type(exc).__name__,
+            )
+            feedback_result = None
+        if feedback_result is not None:
+            if feedback_result.get("saved"):
+                try:
+                    from app.repositories.firestore_admin_stats_repository import (
+                        FirestoreAdminStatsRepository,
+                    )
+
+                    await FirestoreAdminStatsRepository().increment_feedback()
+                except Exception as exc:
+                    logger.warning(
+                        "Feedback stats update failed: error_type=%s",
+                        type(exc).__name__,
+                    )
+            await self._send_reply(reply_token, feedback_result["reply"])
+            return {"status": "processed", "action": "feedback_saved"}
+
+        # プラン解決優先度: Stripe契約 > plan_override > free
+        plan = self._resolve_effective_plan(user_dict)
 
         # データベースバックエンドに応じたRAG権限リポジトリを使用
         rag_perm_repo = self._get_rag_permission_repository()
@@ -248,8 +348,21 @@ class LineService:
         # Firestore版とPostgreSQL版でデータ形式を統一
         corpus_id = None
         model_name = None
-        # Firestore上の値ではなく、コードで定義した3/100/500を制限値の基準にする。
+        # コードで定義した3/100/500を安全な既定値とし、公開済みplan_settingsを運用上の正とする。
         daily_limit = get_daily_message_limit(plan)
+        try:
+            from app.repositories.firestore_plan_settings_repository import (
+                FirestorePlanSettingsRepository,
+            )
+
+            published_limit = await FirestorePlanSettingsRepository().get_published_daily_limit(plan)
+            if published_limit is not None:
+                daily_limit = published_limit
+        except Exception as exc:
+            logger.warning(
+                "Plan settings fallback to code default: error_type=%s",
+                type(exc).__name__,
+            )
 
         if rag_perm:
             if isinstance(rag_perm, dict):
@@ -307,7 +420,11 @@ class LineService:
                             f"{settings.subscription_pro_url}"
                         )
                     limit_message += "\n\n明日になると利用回数がリセットされます。"
-                await self._send_reply(reply_token, limit_message)
+                await self._send_reply(
+                    reply_token,
+                    limit_message,
+                    quick_replies=FEEDBACK_QUICK_REPLY,
+                )
                 return {
                     "status": "limit_reached",
                     "user_id": user_dict['id'],
@@ -338,6 +455,7 @@ class LineService:
             "plan": plan,
             "corpus_id": corpus_id,
             "model_name": model_name,
+            "daily_limit": daily_limit,
             "message": user_message,
         }
 
@@ -403,7 +521,11 @@ class LineService:
             "Chabotへようこそ。\n"
             "何でもお気軽にご質問ください。"
         )
-        await self._send_reply(reply_token, welcome_msg)
+        await self._send_reply(
+            reply_token,
+            welcome_msg,
+            quick_replies=FEEDBACK_QUICK_REPLY,
+        )
 
         return {
             "status": "processed",
@@ -490,7 +612,34 @@ class LineService:
                 "・テキストメッセージで質問すると、AIがお答えします\n"
                 "・サブスクリプションの管理は下のメニューからどうぞ\n"
                 "・困ったときは「ヘルプ」と入力してください",
+                quick_replies=FEEDBACK_QUICK_REPLY,
             )
+        elif postback_data == "action=feedback_start":
+            from app.services.feedback_service import FeedbackService
+
+            source = event.get("source", {})
+            line_user_id = source.get("userId", "")
+            user_repo = self._get_user_repository(db)
+            user_dict = (
+                await user_repo.find_by_line_user_id(line_user_id) if line_user_id else None
+            )
+            if not user_dict:
+                await self._send_reply(
+                    reply_token,
+                    "ユーザー情報を確認できませんでした。何かお話しかけてからもう一度お試しください。",
+                )
+            else:
+                try:
+                    guidance = await FeedbackService().start_pending(
+                        user_id=user_dict["id"]
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Feedback start failed: error_type=%s",
+                        type(exc).__name__,
+                    )
+                guidance = "要望の受付を開始できませんでした。しばらくしてからもう一度お試しください。"
+                await self._send_reply(reply_token, guidance)
         else:
             await self._send_reply(reply_token, "対応できない操作です。")
 
@@ -539,6 +688,7 @@ class LineService:
         self,
         reply_token: str,
         text: str,
+        quick_replies: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         リプライメッセージを送信します
@@ -552,6 +702,8 @@ class LineService:
         """
         # メッセージを5000文字以内に分割
         messages = self._split_message(text)
+        if quick_replies and messages:
+            messages[0]["quickReply"] = {"items": quick_replies}
 
         try:
             await self.client.reply_message(reply_token, messages)
@@ -611,6 +763,28 @@ class LineService:
             text = text[:10000]
 
         return text
+
+    @staticmethod
+    def _resolve_effective_plan(user_dict: Dict[str, Any]) -> str:
+        """プラン解決優先度（Stripe契約 > plan_override > free）を適用する。"""
+        plan = user_dict.get("subscription_plan") or "free"
+        override = user_dict.get("plan_override")
+        if not isinstance(override, dict):
+            return plan
+        override_plan = override.get("plan")
+        if override_plan not in ("basic", "pro"):
+            return plan
+        expires_at = override.get("expires_at")
+        if isinstance(expires_at, str):
+            try:
+                still_valid = datetime.fromisoformat(expires_at) > datetime.now(timezone.utc)
+            except ValueError:
+                still_valid = False
+        else:
+            still_valid = expires_at is None
+        if still_valid and plan not in ("basic", "pro"):
+            return override_plan
+        return plan
 
     async def health_check(self) -> Dict[str, Any]:
         """

@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-23（管理UIローカルモック実装・デザインQA・挙動チェック完了）
+> **更新日**: 2026-09-28（管理UI本番実装：Firestore管理API・Bot側連携・単体テスト完了）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -45,7 +45,7 @@
   2. 実Stripe Webhook署名・再送をE2E確認
   3. free 3件 / basic 100件 / pro 500件、コーパス切替、回答構成の差を確認
   4. Cloud Runのコールドスタート対策（min instanceまたは起動処理軽量化）を費用と比較して決定
-  5. 管理UIは別ASGIサービスとしてローカル開発を進める。IAP・IAM・本番公開は別作業として保留する
+  5. 管理UIの本番実装は完了（単体テスト済み）。管理サービスのIAP・IAM・デプロイは別作業として保留する
 - **freeプラン上限超過メッセージ（本番反映済み・実端末未確認）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL（SUBSCRIPTION_PLAN_SELECTION_URL）、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した。コミット 248c7ed、Cloud Run chabot-service-00035-drg、GitHub Actions run 35690378112 成功、品質ゲート139件成功、/health・選択画面・select.css・Basic導線303を確認済み
 - **回答出力構成変更（2026-09-22本番反映済み・実端末表示未確認）**: RAG回答の「回答：／要約：」ラベル付き2ブロックを廃止し、最重要点をまとめた要約1文を最初に置き、2行の空行を挟んで回答本文を続ける構成へ変更した。free/basic/pro別の本文構成指示（結論→理由→確認点／結論→根拠→適用→限界）と文字数制限（全体は原則500字以内）は維持。ローカルでデプロイ品質ゲート133件成功。初回pushはHEADのdocs [skip ci]で起動しなかったため、空コミット b8401f5 で再起動した。GitHub Actions run 35698220400 成功（2m43s）、Cloud Run chabot-service-00036-g8v（GIT_SHA=b8401f5）へ100%トラフィックで反映、/health 200、デプロイ後ERRORログ0件を確認。実LINE端末での新形式表示と保存本文の形式確認が残課題
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
@@ -57,7 +57,7 @@
 | Phase 1 | 友だち追加後にLINEでRAG回答 | なし | なし | **本番稼働中** |
 | Phase 2 | ユーザー管理、日次回数制限、プラン別コーパス | **Firestore** | テストAPIのみ | **本番デプロイ済み・LINE E2E未確認** |
 | Phase 2.5 | パフォーマンス最適化 | Firestore | - | **本番反映済み・実測比較待ち** |
-| Phase 2.7 | 管理UI、動的プロンプト・上限設定、1回限り登録URL、ユーザー参照 | Firestore | - | **ローカルUI実装済み・本番未反映** |
+| Phase 2.7 | 管理UI、動的プロンプト・上限設定、1回限り登録URL、ユーザー参照 | Firestore | - | **本番実装完了（単体テスト済み）・管理サービスのIAP/デプロイは保留** |
 | Phase 3 | Stripeテストモードで登録・更新・解約を検証 | Firestore | テストモード | **Price検証・本番反映済み・Checkout/Webhook E2E未実施** |
 | Phase 4 | Stripe本番決済と運用監視 | Firestore | 本番モード | **未着手** |
 | 将来 | PostgreSQL / Cloud SQLへの移行 | PostgreSQL | 継続 | **保留** |
@@ -249,7 +249,7 @@ P0公開ゲート:
 #### 推奨アーキテクチャ
 
 - [ ] 既存の公開Botサービス `chabot-service` と分離するため、管理専用ASGI entrypointを実装済み。本番の `chabot-admin` 起動・デプロイは未実施。
-- [ ] 管理サービスは `app/admin_server.py` を入口として実装済み。2026-09-23にローカル開発用モックUI（8セクション・同一origin配信のCSS/JS・CSP準拠）を実装し、デザインQAと挙動チェック6項目に成功。Firestore接続・管理API・IAP認証は未実装のため、本番UIとしては未完成。
+- [ ] 管理サービスは `app/admin_server.py` を入口として実装済み。2026-09-23にローカル開発用モックUI（8セクション・同一origin配信のCSS/JS・CSP準拠）を実装し、デザインQAと挙動チェック6項目に成功。2026-09-28に本番実装へ置換済み（下記2026-09-28ブロック参照）。
 - [ ] Botと管理UIはFirestore `chabotline` を共有する。管理サービスは専用サービスアカウントを使い、IAMで許される最小のAPI操作へ絞るが、Firestore IAMをコレクション単位の境界とはみなさない。より強い分離が必要なら別database/projectを採用する。
 - [保留] 管理者認証とIAPの作業は別途行う。それまでは `ADMIN_UI_ENABLED=False` を既定とし、本番の管理サービスを公開しない。
 - [ ] 管理APIはブラウザから直接Firestoreへ接続させず、すべてFastAPI経由にする。書込みには認可、CSRF対策、入力検証、監査記録を必須とする。
@@ -292,11 +292,11 @@ P0公開ゲート:
 
 #### 実装順序と完了条件
 
-1. [ ] 仕様確定: 有料上限のbasic/pro別・共通、有効期限既定値、既存ユーザーがURLを使った場合の扱いを決定。管理者認証/IAPは別作業として保留
-2. [ ] 基盤: 管理サービスの別ASGI entrypoint、既定無効、docs無効、no-store/no-referrer/CSP等のヘッダー、公開Botとのroute分離テストまでローカル実装済み。Firestoreスキーマ、監査ログ、認証境界は未実装
-3. [ ] 設定管理: 読込、下書き、差分、反映、Bot側動的読込、安全なfallback、ロールバックを実装
-4. [ ] 無料登録URL: 発行、LINE Login連携、単回消費、期限切れ・失効、競合テストを実装
-5. [ ] ユーザー参照: 一覧、検索、詳細、利用回数、取得可能なLINEプロフィール項目を実装
+1. [x] 仕様確定: 有料上限はbasic/pro別、招待URL既定有効期限72時間、既存ユーザーのURL使用は紐付けのみに決定（2026-09-28）。管理者認証/IAPは別作業として保留
+2. [x] 基盤: 管理サービスの別ASGI entrypoint、既定無効、docs無効、no-store/no-referrer/CSP等のヘッダー、公開Botとのroute分離テストに加え、Firestore管理スキーマ、監査ログ、IAP/dev認証境界、CSRFを実装（単体テスト済み）
+3. [x] 設定管理: 読込、下書き、差分、反映、Bot側動的読込（60秒キャッシュ）、安全なfallback、ロールバックを実装（E2E未確認）
+4. [x] 無料登録URL: 発行、LINE Login連携、単回消費、期限切れ・失効を実装（競合テストは単体テストレベル）
+5. [x] ユーザー参照: 一覧、前方一致検索、詳細（監査記録付き）、当日利用回数、plan_override、無効化、LINE ID直指定free作成を実装
 6. [ ] 検証: unit、Firestore Emulatorまたはモック、ローカルブラウザE2E、認証済みステージング、LINE実端末E2Eを順に行う
 7. [ ] 本番反映: 管理者認証を有効化した後だけ `chabot-admin` をデプロイし、Bot側の設定反映、監査記録、ロールバックを確認する
 
@@ -310,6 +310,20 @@ P0公開ゲート:
 - [x] UI挙動チェック6項目（ユーザー詳細表示・表示名前方一致検索・プラン変更理由必須・上限1〜999範囲検証・要望対応済み更新・監査ログへの操作反映）をヘッドレスChrome CDPで実行して全成功（`scripts/check_admin_ui_behavior.mjs`）。
 - [x] CSP準拠（インラインscript/styleなし・innerHTML不使用・外部通信なし）と既定無効（/admin・/admin.css・/admin.jsが503、/healthのみ200）を回帰テスト化し、deploy.yml品質ゲートへ追加した。ローカルで品質ゲート137件成功。
 - [ ] 本番向け管理API（/api/v1/admin/*）、Firestore読み書き、IAP認証、CSRF、監査ログ保存、ページネーションは未実装。UIの書き込み操作はモック状態でしか動かない。
+
+**2026-09-28: 管理UI本番実装（単体テスト済み・管理サービスのIAP/デプロイは保留）**
+
+- [x] 管理API `/api/v1/admin/*` を `app/admin_api.py` として実装し、`app.admin_server` へだけ登録（公開Botへの混入はroute分離テストで固定）。session / users一覧・詳細・プラン変更・無効化・free作成 / plan-settings下書き・反映・ロールバック / coupons発行・一覧・失効 / invites発行・一覧・失効 / conversations / feedback / audit-logs / stats のエンドポイント群。
+- [x] Firestore管理リポジトリを実装: plan_settings（下書き保存・Transaction反映・ロールバック・履歴・Bot側60秒キャッシュ）、admin_invites（SHA-256保存・期限・失効・Transaction単回消費）、coupons/coupon_redemptions（Crockford Base32・チェックディジット・ユーザーごと1回・全体上限・ボーナス回数付与）、admin_audit_logs、feedback/feedback_pending（TTL10分・1日5通）、admin_daily_stats（Increment・active_usersサブコレクション）、users管理参照（一覧・前方一致検索・詳細・plan_override・無効化）。
+- [x] 管理認証基盤 `app/core/admin_security.py`: IAPアサーションJWT検証（google.auth・公開鍵キャッシュ）+ Firestore `admin_admins/{email}` allowlist（60秒キャッシュ）+ 署名付き短命セッションCookie（HttpOnly / Secure / SameSite=Strict）+ CSRFトークン・Origin検証。devモード（debug=True限定・許可リストメール）はローカル開発用。IAP実環境での検証は未実施。
+- [x] 管理UI（admin.js）を本番API接続版へ書き換え。全8セクションが `/api/v1/admin/*` 経由で実データを表示し、書込みはCSRFトークン付き。クーポンコード・招待URL平文は発行時のみ画面表示。外部originへの通信なし・innerHTML不使用をテストで固定。
+- [x] Bot側連携（公開Botへデプロイされる変更）: 日次上限を plan_settings 公開値（60秒キャッシュ・欠損/不正/読取失敗時は3/100/500へフォールバック）へ変更、プラン解決優先度（Stripe契約 > plan_override > free）を実装、クーポン「クーポン CODE」引き換え（日次回数を消費しない・試行10回/日制限・bonus_messagesは当日上限に加算）、要望受付（quick reply「要望を送る」+ postback action=feedback_start・次の1通を要望として記録・「やめる」で取消）、admin_daily_stats をBot処理と同じタイミングで加算。公開チャットAPIも同じ上限解決へ統一。
+- [x] 無料登録URL引き換え導線（公開Bot側 `/api/v1/invite`）: URL fragmentのトークンをlanding JSから同一origin POSTへ移行し履歴から消去 → 署名付きクレームCookie（10分）→ LINE Login（return_to=/api/v1/invite/complete）→ Refresh Cookie認証後にTransactionで unused→consumed を確定し registration_source=admin_invite を記録。既存ユーザーは紐付けのみ（プラン変更・重複作成なし）。
+- [x] 検証: 品質ゲート178件・全unit（PostgreSQL Refresh Token除外）202件成功、compileall成功。管理API認証・CSRF否定系・route分離、クーポンコードと引き換れ、招待トークンと消費、要望・プラン上書き・上限フォールバックの単体テストを追加。
+- [x] 設計書10節の未決定事項を決定: 有料上限はbasic/pro別、招待URL既定有効期限72時間（1〜720時間で指定可）、既存ユーザーのURL使用は紐付けのみ、クーポンはapp内プラン付与のみ（Stripeプロモコード連携なし）、bonus_messagesを初回から含める、要望入口はquick reply＋postback併用、conversations保持期間は未決定維持（本文閲覧は初期版非表示）。
+- [ ] 管理サービス `chabot-admin` のデプロイ・deploy-admin.yml・IAP/LB設定は未実施（ユーザー指示により別作業）。`ADMIN_UI_ENABLED=False` 既定を維持。
+- [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
+- [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
 
 - [x] `app/admin_server.py` を公開Botと分離し、管理機能を既定無効、OpenAPI/Swagger/ReDocを無効にした。
 - [x] 共通セキュリティヘッダーミドルウェアを切り出し、管理レスポンスへ `Cache-Control: no-store`、`Pragma: no-cache`、`Referrer-Policy: no-referrer`、CSP、frame拒否、MIME sniffing防止を適用した。
@@ -625,8 +639,13 @@ git diff --check
 # CI品質ゲート（Python 3.11）
 pytest \
   tests/unit/test_admin_app_security.py \
+  tests/unit/test_admin_ui.py \
+  tests/unit/test_admin_api.py \
+  tests/unit/test_admin_repositories.py \
   tests/unit/test_build_security.py \
   tests/unit/test_chat_api_security.py \
+  tests/unit/test_coupon_service.py \
+  tests/unit/test_invite_claim.py \
   tests/unit/test_auth_session.py \
   tests/unit/test_subscription_checkout.py \
   tests/unit/test_stripe_webhook.py \
@@ -636,6 +655,7 @@ pytest \
   tests/unit/test_repositories/test_firestore_repositories.py \
   tests/unit/test_services/test_line_webhook_pipeline.py \
   tests/unit/test_services/test_line_service.py \
+  tests/unit/test_services/test_line_admin_flows.py \
   tests/unit/test_services/test_rag_service.py \
   tests/unit/test_services/test_firestore_auth_service.py \
   tests/unit/test_services/test_stripe_service.py \

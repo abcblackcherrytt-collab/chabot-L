@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import auth_router, chat_router, stripe_webhook_router, subscription_router
 from app.api.v1.auth_line import router as line_auth_router
+from app.api.v1.invite import router as invite_router
 from app.api.v1.webhooks.line import router as line_webhook_router
 from app.core.config import settings
 from app.core.firestore import close_firestore_client, get_firestore_client
@@ -91,6 +92,7 @@ app.include_router(auth_router, prefix=f"/api/{settings.api_version}")
 app.include_router(line_auth_router, prefix=f"/api/{settings.api_version}")
 app.include_router(chat_router, prefix=f"/api/{settings.api_version}")
 app.include_router(subscription_router, prefix=f"/api/{settings.api_version}")
+app.include_router(invite_router, prefix=f"/api/{settings.api_version}")
 app.include_router(line_webhook_router, prefix=f"/api/{settings.api_version}")
 app.include_router(stripe_webhook_router, prefix=f"/api/{settings.api_version}")
 

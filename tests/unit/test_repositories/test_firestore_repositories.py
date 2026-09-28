@@ -25,6 +25,31 @@ def _snapshot(document_id: str, data: dict, *, exists: bool = True) -> MagicMock
 
 
 @pytest.mark.asyncio
+async def test_bonus_messages_extend_daily_limit(monkeypatch) -> None:
+    """bonus_messagesクーポン分だけ当日上限が伸びること。"""
+    monkeypatch.setattr(usage_module.firestore, "async_transactional", lambda fn: fn)
+    document = MagicMock()
+    document.get = AsyncMock(
+        return_value=_snapshot(
+            "user-1_2026-09-28",
+            {"message_count": 3, "bonus_messages": 2},
+        )
+    )
+    collection = MagicMock()
+    collection.document.return_value = document
+    client = MagicMock()
+    client.collection.return_value = collection
+    transaction = MagicMock()
+    client.transaction.return_value = transaction
+    repository = FirestoreUsageRepository(client=client)
+
+    result = await repository.increment_with_limit_check("user-1", "free", 3)
+
+    assert result["success"] is True
+    assert result["remaining"] == 1
+
+
+@pytest.mark.asyncio
 async def test_user_repository_awaits_async_query() -> None:
     """LINEユーザー検索がAsyncClientのquery.getをawaitすること。"""
     snapshot = _snapshot("user-1", {"line_user_id": "U123", "is_active": True})

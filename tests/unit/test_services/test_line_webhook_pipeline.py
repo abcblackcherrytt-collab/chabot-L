@@ -8,6 +8,19 @@ from app.api.v1.webhooks.line import _process_line_events
 from app.services.rag_service import RAGService
 
 
+@pytest.fixture(autouse=True)
+def _mock_admin_stats(monkeypatch) -> None:
+    """管理統計リポジトリをモックし、実Firestoreへ接続しないようにする。"""
+    stats_repository = MagicMock()
+    stats_repository.increment_message_count = AsyncMock()
+    stats_repository.increment_denied_by_limit = AsyncMock()
+    stats_repository.record_active_user = AsyncMock()
+    monkeypatch.setattr(
+        "app.repositories.firestore_admin_stats_repository.FirestoreAdminStatsRepository",
+        lambda: stats_repository,
+    )
+
+
 def _conversation_repository() -> MagicMock:
     """会話保存リポジトリのモックを返す。"""
     repository = MagicMock()

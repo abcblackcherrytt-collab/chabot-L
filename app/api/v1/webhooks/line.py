@@ -28,6 +28,7 @@ async def _process_line_events(
     line_service: Any,
     rag_service: Any,
     conversation_repository: Any = None,
+    admin_stats_repository: Any = None,
 ) -> None:
     """
     LINE イベントをバックグラウンドで処理します
@@ -60,7 +61,26 @@ async def _process_line_events(
             if not result:
                 continue
 
+            async def _bump_stats(method: str, *args: Any) -> None:
+                """管理用統計を更新する。失敗はメイン導線へ影響させない。"""
+                try:
+                    repository = admin_stats_repository
+                    if repository is None:
+                        from app.repositories.firestore_admin_stats_repository import (
+                            FirestoreAdminStatsRepository,
+                        )
+
+                        repository = FirestoreAdminStatsRepository()
+                    await getattr(repository, method)(*args)
+                except Exception as exc:
+                    logger.warning(
+                        "Admin stats update failed: error_type=%s",
+                        type(exc).__name__,
+                    )
+
             if result.get("status") == "limit_reached" and result.get("user_id"):
+                await _bump_stats("increment_denied_by_limit")
+                await _bump_stats("record_active_user", result["user_id"])
                 try:
                     repository = (
                         conversation_repository
@@ -113,6 +133,10 @@ async def _process_line_events(
                     )
 
                 await line_service._send_reply(result["reply_token"], answer)
+
+                # 統計更新は返信をブロックしない位置で行う。
+                await _bump_stats("increment_message_count")
+                await _bump_stats("record_active_user", result["user_id"])
 
                 # 回答送信に成功した場合だけ会話を保存する。保存失敗が
                 # 返信済みの回答や他イベント処理を止めないようにする。

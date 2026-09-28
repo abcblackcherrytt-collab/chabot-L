@@ -6,9 +6,10 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse, HTMLResponse
 
+from app.admin_api import router as admin_api_router
 from app.core.config import settings
 from app.core.http_security import SecurityHeadersMiddleware
 
@@ -32,10 +33,10 @@ ADMIN_PAGE_HTML = """<!doctype html>
       <span class='brand-mark' aria-hidden='true'>C</span>
       <div>
         <h1>Chabot 管理</h1>
-        <p class='brand-sub'>ローカル開発用モック</p>
+        <p class='brand-sub'>Chabot 管理コンソール</p>
       </div>
     </div>
-    <p class='env-badge'><span aria-hidden='true'>●</span> モックデータ（本番・Firestore未接続）</p>
+    <p class='env-badge' id='env-badge'><span aria-hidden='true'>●</span> <span id='env-badge-text'>接続確認中…</span></p>
   </header>
   <div class='app-body'>
     <nav class='section-nav' aria-label='管理メニュー'>
@@ -91,6 +92,15 @@ def create_admin_app(*, enabled: bool | None = None) -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Admin UI is disabled",
             )
+
+    async def _ensure_enabled_dependency() -> None:
+        """管理APIルーター全体への有効化ゲート。"""
+        _ensure_enabled()
+
+    admin_app.include_router(
+        admin_api_router,
+        dependencies=[Depends(_ensure_enabled_dependency)],
+    )
 
     @admin_app.get("/health", include_in_schema=False)
     async def health_check() -> dict[str, str]:

@@ -17,6 +17,7 @@ from app.core.pricing import get_daily_message_limit
 
 logger = logging.getLogger(__name__)
 JST = ZoneInfo("Asia/Tokyo")
+COUPON_ATTEMPT_DAILY_LIMIT = 10
 
 
 class FirestoreUsageRepository:
@@ -180,17 +181,23 @@ class FirestoreUsageRepository:
                 doc = await doc_ref.get(transaction=tx)
 
                 if doc.exists:
-                    current_count = doc.to_dict().get('message_count', 0)
+                    usage_data = doc.to_dict()
+                    current_count = usage_data.get('message_count', 0)
                 else:
+                    usage_data = {}
                     current_count = 0
 
+                # bonus_messagesクーポンで当日追加された回数を上限へ加算する。
+                bonus = int(usage_data.get('bonus_messages', 0) or 0)
+                effective_limit = daily_limit + bonus
+
                 # 上限確認
-                if current_count >= daily_limit:
+                if current_count >= effective_limit:
                     return {
                         'success': False,
                         'current_count': current_count,
                         'remaining': 0,
-                        'message': f'日次メッセージ上限に達しました（{daily_limit}件/日）'
+                        'message': f'日次メッセージ上限に達しました（{effective_limit}件/日）'
                     }
 
                 # インクリメント
@@ -214,8 +221,8 @@ class FirestoreUsageRepository:
                 return {
                     'success': True,
                     'current_count': new_count,
-                    'remaining': daily_limit - new_count,
-                    'message': f'メッセージ回数をインクリメントしました（残り{daily_limit - new_count}件）'
+                    'remaining': effective_limit - new_count,
+                    'message': f'メッセージ回数をインクリメントしました（残り{effective_limit - new_count}件）'
                 }
 
             result = await update_in_transaction(transaction)
@@ -236,6 +243,46 @@ class FirestoreUsageRepository:
                 'remaining': 0,
                 'message': '使用回数を確認できませんでした'
             }
+
+    async def add_bonus_messages(self, user_id: str, bonus_count: int) -> int:
+        """クーポン引き換えで当日のfree回数を追加する。"""
+        try:
+            today = self._get_today_date_str()
+            doc_ref = self.db.collection(self.daily_collection_name).document(f"{user_id}_{today}")
+            await doc_ref.set(
+                {
+                    'user_id': user_id,
+                    'date': today,
+                    'bonus_messages': firestore.Increment(int(bonus_count)),
+                    'updated_at': datetime.now(JST).isoformat(),
+                },
+                merge=True,
+            )
+            doc = await doc_ref.get()
+            return int(doc.to_dict().get('bonus_messages', 0) or 0)
+        except Exception as e:
+            logger.error("Error adding bonus messages: error_type=%s", type(e).__name__)
+            raise
+
+    async def count_coupon_attempt(self, user_id: str) -> int:
+        """クーポン引き換え試行を数える。上限超過の試行制限に使う。"""
+        try:
+            today = self._get_today_date_str()
+            doc_ref = self.db.collection(self.daily_collection_name).document(f"{user_id}_{today}")
+            await doc_ref.set(
+                {
+                    'user_id': user_id,
+                    'date': today,
+                    'coupon_attempts': firestore.Increment(1),
+                    'updated_at': datetime.now(JST).isoformat(),
+                },
+                merge=True,
+            )
+            doc = await doc_ref.get()
+            return int(doc.to_dict().get('coupon_attempts', 0) or 0)
+        except Exception as e:
+            logger.error("Error counting coupon attempt: error_type=%s", type(e).__name__)
+            return 0
 
     async def get_remaining_messages(self, user_id: str, plan: str, daily_limit: Optional[int] = None) -> int:
         """

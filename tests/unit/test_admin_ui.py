@@ -1,4 +1,4 @@
-"""ローカル管理UIの構成・CSP準拠・既定無効のテスト。"""
+"""管理UIの構成・CSP準拠・既定無効のテスト。"""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -47,11 +47,12 @@ async def test_admin_assets_are_served_same_origin() -> None:
     assert "44px" in css.text
     assert js.status_code == 200
     assert js.headers["content-type"].startswith("text/javascript")
-    assert "ローカル開発用モック" in js.text
+    assert "/api/v1/admin" in js.text
     assert "refreshSection" in js.text
-    # 保存型XSS対策と外部通信なしを固定する。
+    # 保存型XSS対策と外部originへの通信なしを固定する（同一originのfetchのみ許可）。
     assert "innerHTML" not in js.text
-    assert "fetch(" not in js.text
+    assert "http://" not in js.text
+    assert "https://" not in js.text
     assert "XMLHttpRequest" not in js.text
     assert "eval(" not in js.text
 
@@ -75,6 +76,6 @@ async def test_admin_shell_does_not_embed_user_data() -> None:
     async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
         response = await client.get("/admin")
 
-    assert "モックデータ" in response.text
+    assert "接続確認中" in response.text
     assert "u-00" not in response.text
     assert "lineId" not in response.text

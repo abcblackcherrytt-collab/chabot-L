@@ -27,6 +27,16 @@ class Settings(BaseSettings):
 
     # 管理UIはIAP等の認証境界が完成するまで既定で無効にする。
     admin_ui_enabled: bool = False
+    # 管理UI認証モード。"iap"（Cloud IAPアサーション検証）または "dev"（ローカル開発用）。
+    admin_auth_mode: str = "iap"
+    # IAPアサーションの期待audience（例: /projects/<番号>/apps/<プロジェクトID>）。
+    admin_iap_audience: str = ""
+    # devモードで管理者として認めるメールアドレス（カンマ区切り・debug=True時のみ有効）。
+    admin_dev_emails: str = ""
+    # 管理セッションの有効期間（秒）。
+    admin_session_ttl_seconds: int = 3600
+    # 無料登録URLの既定有効期間（時間）。
+    admin_invite_default_ttl_hours: int = 72
 
     # サーバー設定
     host: str = "0.0.0.0"
@@ -74,6 +84,9 @@ class Settings(BaseSettings):
     subscription_basic_url: str = "https://your-service.com/subscription/basic"
     subscription_pro_url: str = "https://your-service.com/subscription/pro"
     subscription_plan_selection_url: str = "https://your-service.com/subscription/select"
+
+    # 公開Botの外部公開ベースURL（無料登録URLの組み立てに使用）。
+    public_base_url: str = ""
 
     # Google Cloud Vertex AI設定
     # RAG Engine の GA リージョンは us-central1 / europe-west3 のみ（asia-northeast1 非対応）。

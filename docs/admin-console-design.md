@@ -1,6 +1,6 @@
 # 管理コンソール設計（Phase 2.7）
 
-> ステータス: 設計のみ。実装・デプロイは未実施。
+> ステータス: 本番実装完了（2026-09-28・単体テスト済み）。管理サービス chabot-admin のIAP/LB・デプロイは未実施。
 > 関連: PROJECT_PLAN.md 2.6節、app/admin_server.py（ASGI入口のみ実装済み）。
 
 ## 1. 目的とスコープ
@@ -171,9 +171,15 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 
 ## 10. 未決定事項（実装前に確定）
 
-1. クーポンをStripeプロモーションコード（Checkout割引）と連携するか、本設計のapp内プラン付与のみか
-2. bonus_messages（free当日回数追加）を初回リリースに含めるか
-3. 管理者候補アカウント（email）と人数
-4. chabot-admin の最小IAM（datastore.user を絞るか custom role を作るか）
-5. conversations の保持期間（無期限／1年など）と、本文閲覧機能の要否
-6. 要望受付の入口をクイックリプライとリッチメニューのどちらに固定するか、1通完結方式でよいか
+1. [決定 2026-09-28] クーポンは本設計のapp内プラン付与のみとし、Stripeプロモーションコード連携は行わない
+2. [決定 2026-09-28] bonus_messages（free当日回数追加）を初回リリースに含める
+3. [未決定] 管理者候補アカウント（email）と人数 — IAP作業時に確定する
+4. [未決定] chabot-admin の最小IAM（datastore.user を絞るか custom role を作るか） — IAP作業時に確定する
+5. [未決定] conversations の保持期間（無期限／1年など）と、本文閲覧機能の要否 — 初期版は本文非表示・TTLなし
+6. [決定 2026-09-28] 要望受付の入口はクイックリプライとpostback（action=feedback_start）の併用、1通完結方式とする
+
+実装上の補足（2026-09-28）:
+
+- 招待URLの既定有効期限は72時間（1〜720時間で発行時に指定可）。既存ユーザーが使用した場合は紐付けのみ行い、プラン変更・重複作成をしない
+- 招待消費とfreeユーザー作成は同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定する。同時利用でも1人だけ成功する保証は消費Transactionで維持する
+- 有料上限（plan_settings）はbasic/pro別として管理する

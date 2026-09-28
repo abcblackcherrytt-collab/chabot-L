@@ -90,3 +90,28 @@ class FirestoreConversationRepository:
         _, document_ref = await self.db.collection(self.collection_name).add(document)
         logger.info("Limit-denied conversation metadata saved: plan=%s", plan)
         return document_ref.id
+
+    async def list_metadata(self, limit: int = 100) -> Dict[str, Any]:
+        """管理UI表示用に本文を除いた会話メタデータを新しい順に返す。"""
+        docs = await (
+            self.db.collection(self.collection_name)
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+            .get()
+        )
+        items = []
+        for doc in docs:
+            data = doc.to_dict()
+            items.append(
+                {
+                    "id": doc.id,
+                    "user_id": data.get("user_id"),
+                    "plan": data.get("plan"),
+                    "question_type": data.get("question_type"),
+                    "answer_aspects": list(data.get("answer_aspects") or []),
+                    "denied": bool(data.get("denied")),
+                    "pii_suspected": bool(data.get("pii_suspected")),
+                    "created_at": data.get("created_at"),
+                }
+            )
+        return {"items": items, "count": len(items)}

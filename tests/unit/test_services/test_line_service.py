@@ -73,6 +73,18 @@ def line_service(mock_line_client, monkeypatch):
         "app.repositories.firestore_usage_repository.FirestoreUsageRepository",
         lambda: usage_repo,
     )
+    plan_settings_repo = MagicMock()
+    plan_settings_repo.get_published_daily_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.repositories.firestore_plan_settings_repository.FirestorePlanSettingsRepository",
+        lambda: plan_settings_repo,
+    )
+    feedback_service = MagicMock()
+    feedback_service.handle_pending_message = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.feedback_service.FeedbackService",
+        lambda: feedback_service,
+    )
     revoke_all = AsyncMock(return_value=1)
     monkeypatch.setattr(service, "_revoke_all_user_tokens", revoke_all)
     service._test_usage_repo = usage_repo

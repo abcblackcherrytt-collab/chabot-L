@@ -28,9 +28,12 @@ LOGIN_RETURN_COOKIE_NAME = "line_login_return_to"
 
 
 def _allowed_return_to(return_to: Optional[str]) -> Optional[str]:
-    """Stripe Checkout導線内の相対URLだけをログイン後遷移先として許可する。"""
+    """ログイン後遷移先として、管理対象の相対URLだけを許可する。"""
     allowed_prefix = f"/api/{settings.api_version}/subscription/checkout/"
-    if return_to and return_to.startswith(allowed_prefix):
+    invite_complete = f"/api/{settings.api_version}/invite/complete"
+    if return_to and (
+        return_to.startswith(allowed_prefix) or return_to == invite_complete
+    ):
         return return_to
     return None
 

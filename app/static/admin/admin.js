@@ -1,7 +1,8 @@
 'use strict';
 
-/* Chabot 管理UI — ローカル開発用モック実装。
- * 本番接続（Firestore / IAP / 管理API）は未実装。全データは架空のモック。 */
+/* Chabot 管理UI — 本番実装。
+ * データはすべて /api/v1/admin/* 経由でFirestoreへ接続する。
+ * 書込みはCSRFトークン付きで送信し、401時はセッション再確立を促す。 */
 
 function el(tag, attrs, children) {
   var node = document.createElement(tag);
@@ -52,75 +53,17 @@ function kv(pairs) {
   return dl;
 }
 
-var state = {
-  users: [
-    { id: 'u-001', name: '佐藤 花子', plan: 'basic', source: 'stripe', status: 'active', today: 12, limit: 100, registered: '2026-08-12', lineId: 'U4f2…9c2a', email: null, profileFetched: '2026-09-01 10:12', stripeActive: true, stripePeriodEnd: '2026-10-12' },
-    { id: 'u-002', name: '鈴木 大輝', plan: 'pro', source: 'stripe', status: 'active', today: 87, limit: 500, registered: '2026-08-20', lineId: 'U91a…44fd', email: null, profileFetched: '2026-09-02 08:40', stripeActive: true, stripePeriodEnd: '2026-10-20' },
-    { id: 'u-003', name: '高橋 美咲', plan: 'free', source: 'default', status: 'active', today: 3, limit: 3, registered: '2026-09-01', lineId: 'U77c…be10', email: null, profileFetched: '2026-09-01 21:02', stripeActive: false, stripePeriodEnd: null },
-    { id: 'u-004', name: '山本 涼介', plan: 'basic', source: 'override', status: 'active', today: 41, limit: 100, registered: '2026-09-05', lineId: 'U20e…77aa', email: null, profileFetched: '2026-09-05 19:22', stripeActive: false, overrideExpires: '2026-09-30' },
-    { id: 'u-005', name: '中村 陽菜', plan: 'free', source: 'default', status: 'active', today: 1, limit: 3, registered: '2026-09-18', lineId: 'Ue39…02c5', email: null, profileFetched: '2026-09-18 07:55', stripeActive: false },
-    { id: 'u-006', name: '小林 真理', plan: 'free', source: 'default', status: 'inactive', today: 0, limit: 3, registered: '2026-08-25', lineId: 'Ub62…9d31', email: null, profileFetched: '2026-08-25 12:10', stripeActive: false },
-    { id: 'u-007', name: '伊藤 健太', plan: 'pro', source: 'stripe', status: 'active', today: 233, limit: 500, registered: '2026-09-10', lineId: 'Uc05…61be', email: null, profileFetched: '2026-09-10 16:48', stripeActive: true, stripePeriodEnd: '2026-10-10' },
-    { id: 'u-008', name: '渡辺 朋子', plan: 'free', source: 'override', status: 'active', today: 0, limit: 3, registered: '2026-09-21', lineId: 'U3aa…f8c2', email: null, profileFetched: '2026-09-21 10:31', stripeActive: false, overrideExpires: '2026-10-05' }
-  ],
-  usersFilter: { q: '', plan: 'all', status: 'all' },
-  selectedUserId: null,
-  planSettings: {
-    free: { label: 'free（既定）', published: 3, draft: 3, revision: 4, updated: '2026-09-15 11:04', history: [
-      { rev: 2, limit: 2, date: '2026-09-01 09:00' },
-      { rev: 3, limit: 3, date: '2026-09-10 14:20' },
-      { rev: 4, limit: 3, date: '2026-09-15 11:04' }
-    ] },
-    basic: { label: 'basic', published: 100, draft: 100, revision: 5, updated: '2026-09-12 10:11', history: [
-      { rev: 4, limit: 100, date: '2026-09-01 09:00' },
-      { rev: 5, limit: 100, date: '2026-09-12 10:11' }
-    ] },
-    pro: { label: 'pro', published: 500, draft: 500, revision: 3, updated: '2026-09-12 10:12', history: [
-      { rev: 2, limit: 500, date: '2026-09-01 09:00' },
-      { rev: 3, limit: 500, date: '2026-09-12 10:12' }
-    ] }
-  },
-  coupons: [
-    { id: 'cpn-901', kind: 'plan_grant', plan: 'basic', days: 14, bonus: null, max: 20, redeemed: 8, status: 'active', expires: '2026-10-15', note: '理学療法士向け' },
-    { id: 'cpn-902', kind: 'bonus_messages', plan: 'free', days: null, bonus: 5, max: 50, redeemed: 12, status: 'active', expires: '2026-09-30', note: '無料枠追加体験' },
-    { id: 'cpn-903', kind: 'plan_grant', plan: 'pro', days: 7, bonus: null, max: 10, redeemed: 10, status: 'exhausted', expires: '2026-09-20', note: '学会出展用' }
-  ],
-  invites: [
-    { id: 'inv-101', status: 'unused', expires: '2026-09-24 18:00', created: '2026-09-22 11:31', consumedBy: null, consumedAt: null },
-    { id: 'inv-102', status: 'consumed', expires: '2026-09-21 18:00', created: '2026-09-20 20:58', consumedBy: 'u-008', consumedAt: '2026-09-20 21:14' },
-    { id: 'inv-103', status: 'expired', expires: '2026-09-22 09:00', created: '2026-09-19 09:00', consumedBy: null, consumedAt: null },
-    { id: 'inv-104', status: 'revoked', expires: '2026-09-26 09:00', created: '2026-09-18 09:00', consumedBy: null, consumedAt: null }
-  ],
-  conversations: [
-    { date: '2026-09-22 15:51', user: '高橋 美咲', plan: 'free', type: '知識', denied: false, pii: false },
-    { date: '2026-09-22 15:40', user: '山本 涼介', plan: 'basic', type: '評価', denied: false, pii: false },
-    { date: '2026-09-22 15:22', user: '伊藤 健太', plan: 'pro', type: '所見解釈', denied: false, pii: true },
-    { date: '2026-09-22 14:58', user: '高橋 美咲', plan: 'free', type: '上限拒否', denied: true, pii: false },
-    { date: '2026-09-22 14:31', user: '鈴木 大輝', plan: 'pro', type: '介入', denied: false, pii: false },
-    { date: '2026-09-22 13:47', user: '中村 陽菜', plan: 'free', type: '術後', denied: false, pii: false }
-  ],
-  feedback: [
-    { id: 'fb-201', user: '佐藤 花子', date: '2026-09-22 09:12', status: 'open', content: '回答をもっと短くしてほしいです。', note: null },
-    { id: 'fb-202', user: '鈴木 大輝', date: '2026-09-21 20:45', status: 'open', content: '参考文献の出典を必ず表示してほしい。', note: null },
-    { id: 'fb-203', user: '中村 陽菜', date: '2026-09-20 11:03', status: 'handled', content: '土日に返信が遅いことがある。', note: '平日案内を追加しました。', handledBy: 'local-admin', handledAt: '2026-09-20 15:20' },
-    { id: 'fb-204', user: '伊藤 健太', date: '2026-09-19 08:30', status: 'open', content: 'クーポンコードの入力方法が分かりにくい。', note: null }
-  ],
-  feedbackFilter: 'open',
-  statsPeriod: 'daily',
-  stats: {
-    daily: { activeUsers: 5, messages: 38, denied: 4, redemptions: 2, feedback: 1 },
-    weekly: { activeUsers: 18, messages: 246, denied: 21, redemptions: 9, feedback: 6 },
-    monthly: { activeUsers: 42, messages: 1032, denied: 87, redemptions: 31, feedback: 24 }
-  },
-  audit: [
-    { at: '2026-09-22 15:40', actor: 'local-admin', action: '設定反映', target: 'plan_settings/free', revision: 4, result: '成功' },
-    { at: '2026-09-22 14:02', actor: 'local-admin', action: 'クーポン発行', target: 'coupons/cpn-902', revision: null, result: '成功' },
-    { at: '2026-09-22 11:31', actor: 'local-admin', action: '登録URL発行', target: 'admin_invites/inv-101', revision: null, result: '成功' },
-    { at: '2026-09-21 19:05', actor: 'local-admin', action: 'プラン変更', target: 'users/u-004', revision: null, result: '成功' },
-    { at: '2026-09-20 15:20', actor: 'local-admin', action: '要望ステータス更新', target: 'feedback/fb-203', revision: null, result: '成功' },
-    { at: '2026-09-20 10:12', actor: 'local-admin', action: 'プロフィール再取得', target: 'users/u-001', revision: null, result: '成功' }
-  ]
-};
+function shortId(value) {
+  if (!value) { return '—'; }
+  return value.length > 12 ? value.slice(0, 8) + '…' : value;
+}
+
+function fmtDate(value) {
+  if (!value) { return '—'; }
+  var date = new Date(value);
+  if (isNaN(date.getTime())) { return value; }
+  return date.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' });
+}
 
 var sectionTitles = {
   overview: '集計',
@@ -134,106 +77,187 @@ var sectionTitles = {
 };
 
 var sectionMeta = {
-  overview: '目的別の数値だけを確認できます。統合ダッシュボードは作りません。',
-  users: '表示名・プラン・状態で絞り込んで確認できます。LINE IDは詳細画面でのみマスク表示します。',
-  settings: '下書き保存 → 差分確認 → 反映の順で進みます。Botへの適用は最大60秒です。',
-  coupons: '発行・引き換え状況・失効を管理します。コード平文は発行時のみ1回表示します。',
-  invites: '1回限りの無料登録URLを発行します。トークンはURLフラグメントで受け渡します。',
-  conversations: '質問と回答のペアを保管します。初期版では本文を表示しません。',
-  feedback: 'LINEで受け付けた要望を確認し、対応状況を管理します。',
-  audit: '管理操作の時系列記録を確認できます。本文・トークン・個人情報は記録しません。'
+  overview: '期間別のアクティブユーザー数とメッセージ数を確認します。',
+  users: '登録ユーザーの検索・詳細・プラン変更を行います。',
+  settings: 'free/basic/proの日次回数上限を下書き・反映・ロールバックします。',
+  coupons: 'クーポンの発行・状況確認・失効を行います。コード平文は発行時のみ表示します。',
+  invites: '1回限りの無料登録URLを発行・失効します。URL平文は発行時のみ表示します。',
+  conversations: '保管済みの質問・回答ペアの件数とメタデータを確認します（本文は非表示）。',
+  feedback: 'LINEで受け付けた要望の確認と対応管理を行います。',
+  audit: '管理操作の履歴を確認します。'
 };
 
-function nowStamp() {
-  var d = new Date();
-  function pad(n) { return String(n).padStart(2, '0'); }
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-}
-
-function dateAfterDays(days) {
-  var d = new Date();
-  d.setDate(d.getDate() + days);
-  function pad(n) { return String(n).padStart(2, '0'); }
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-}
-
-function logAudit(action, target, revision) {
-  state.audit.unshift({ at: nowStamp(), actor: 'local-admin', action: action, target: target, revision: revision || null, result: '成功' });
-}
-
 var toastRegion = null;
+
 function toast(message, kind) {
   if (!toastRegion) {
-    toastRegion = el('div', { class: 'toast-region', role: 'status', 'aria-live': 'polite' }, []);
+    toastRegion = el('div', { class: 'toast-region', 'aria-live': 'polite' }, []);
     document.body.appendChild(toastRegion);
   }
-  var item = el('div', { class: 'toast ' + (kind || ''), text: message }, []);
+  var item = el('p', { class: 'toast toast-' + (kind || 'info'), text: message }, []);
   toastRegion.appendChild(item);
-  window.setTimeout(function () { item.remove(); }, 3400);
+  window.setTimeout(function () { item.remove(); }, 4200);
 }
 
 function confirmDialog(options) {
+  var previous = document.querySelector('dialog.confirm-dialog');
+  if (previous) { previous.remove(); }
+  var dialog = el('dialog', { class: 'confirm-dialog' }, []);
+  dialog.appendChild(el('h3', { text: options.title }, []));
+  (options.lines || []).forEach(function (line) {
+    dialog.appendChild(el('p', { text: line }, []));
+  });
+  var cancel = el('button', { class: 'btn', type: 'button', text: options.cancelLabel || 'キャンセル' }, []);
+  var ok = el('button', { class: 'btn btn-primary', type: 'button', text: options.okLabel || '実行' }, []);
+  dialog.appendChild(el('div', { class: 'btn-row' }, [cancel, ok]));
+  document.body.appendChild(dialog);
+  dialog.addEventListener('close', function () { dialog.remove(); });
   return new Promise(function (resolve) {
-    var dialog = el('dialog', {}, []);
-    var body = el('div', { class: 'dialog-body' }, [
-      el('h3', { text: options.title }, []),
-      options.lines.map(function (line) { return el('p', { text: line }, []); })
-    ]);
-    var actions = el('div', { class: 'dialog-actions' }, []);
-    var cancelButton = el('button', { class: 'btn', type: 'button', text: options.cancelLabel || 'キャンセル', onclick: function () { dialog.close(false); } }, []);
-    var okButton = el('button', { class: 'btn ' + (options.danger ? 'btn-danger' : 'btn-primary'), type: 'button', text: options.okLabel || '実行する', onclick: function () { dialog.close(true); } }, []);
-    actions.appendChild(cancelButton);
-    actions.appendChild(okButton);
-    body.appendChild(actions);
-    dialog.appendChild(body);
-    dialog.addEventListener('close', function () {
-      var result = dialog.returnValue === 'true';
-      dialog.remove();
-      resolve(result);
-    });
-    document.body.appendChild(dialog);
+    cancel.addEventListener('click', function () { dialog.close(); resolve(false); });
+    ok.addEventListener('click', function () { dialog.close(); resolve(true); });
     dialog.showModal();
   });
 }
 
 function copyText(text, successMessage) {
-  var done = function (ok) {
-    toast(ok ? successMessage : 'コピーできませんでした。画面から直接選択してください。', ok ? 'success' : 'error');
-  };
+  var done = function () { toast(successMessage, 'success'); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
-    return;
+    navigator.clipboard.writeText(text).then(done, function () { toast('コピーできませんでした。手動で選択してください。'); });
+  } else {
+    done();
   }
-  var area = el('textarea', { 'aria-hidden': 'true' }, []);
-  area.value = text;
-  document.body.appendChild(area);
-  area.select();
-  var ok = false;
-  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-  area.remove();
-  done(ok);
 }
 
-var CODE_CHARS = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-function randomCode(length) {
-  var out = '';
-  var sum = 0;
-  for (var i = 0; i < length; i += 1) {
-    var index = Math.floor(Math.random() * CODE_CHARS.length);
-    sum += index;
-    out += CODE_CHARS[index];
-  }
-  return out + CODE_CHARS[sum % CODE_CHARS.length];
+/* ---------- API ---------- */
+
+var session = { email: null, csrfToken: null, authMode: 'iap' };
+
+function apiRequest(method, path, body) {
+  var headers = { 'Accept': 'application/json' };
+  if (body !== undefined) { headers['Content-Type'] = 'application/json'; }
+  if (session.csrfToken) { headers['X-CSRF-Token'] = session.csrfToken; }
+  return window.fetch(path, {
+    method: method,
+    headers: headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'same-origin'
+  }).then(function (response) {
+    if (response.status === 204) { return { ok: true, status: 204, data: null }; }
+    return response.json().catch(function () { return null; }).then(function (data) {
+      return { ok: response.ok, status: response.status, data: data };
+    });
+  });
 }
 
-function randomToken() {
-  var chars = '0123456789abcdef';
-  var out = '';
-  for (var i = 0; i < 40; i += 1) { out += chars[Math.floor(Math.random() * chars.length)]; }
-  return out;
+function apiError(result) {
+  var detail = result && result.data && result.data.detail;
+  if (typeof detail === 'string') { return detail; }
+  if (detail && detail.reason) { return detail.reason; }
+  return 'エラーが発生しました（HTTP ' + (result ? result.status : '?') + '）。';
+}
+
+function loadingCard() {
+  return el('div', { class: 'card' }, [el('p', { class: 'sub', text: '読み込み中…' }, [])]);
+}
+
+function errorCard(message, retry) {
+  var card = el('div', { class: 'card' }, [
+    el('p', { class: 'error-note', role: 'alert', text: message }, [])
+  ]);
+  if (retry) {
+    card.appendChild(el('div', { class: 'btn-row' }, [
+      el('button', { class: 'btn', type: 'button', text: '再読み込み', onclick: retry }, [])
+    ]));
+  }
+  return card;
+}
+
+function loadInto(container, fetchFn, renderFn) {
+  var target = container;
+  target.appendChild(loadingCard());
+  fetchFn().then(function (result) {
+    clearNode(target);
+    if (!result.ok) {
+      target.appendChild(errorCard(apiError(result), function () {
+        clearNode(target);
+        loadInto(target, fetchFn, renderFn);
+      }));
+      return;
+    }
+    renderFn(target, result.data);
+  }).catch(function () {
+    clearNode(target);
+    target.appendChild(errorCard('通信エラーが発生しました。', function () {
+      clearNode(target);
+      loadInto(target, fetchFn, renderFn);
+    }));
+  });
+}
+
+/* ---------- セッション ---------- */
+
+function setEnvBadge(text) {
+  var node = document.getElementById('env-badge-text');
+  if (node) { node.textContent = text; }
+}
+
+function renderDevLogin(host) {
+  var error = el('p', { class: 'error-note', role: 'alert' }, []);
+  var email = el('input', { type: 'email', autocomplete: 'username', placeholder: 'admin@example.com' }, []);
+  var form = el('form', {}, [
+    el('h3', { text: '開発者ログイン' }, []),
+    el('p', { class: 'sub', text: 'devモードで動作しています。許可リスト内のメールアドレスでログインできます。' }, []),
+    el('div', { class: 'field' }, [el('label', { text: 'メールアドレス' }, []), email]),
+    el('div', { class: 'btn-row' }, [
+      el('button', { class: 'btn btn-primary', type: 'submit', text: 'ログイン' }, [])
+    ]),
+    error
+  ]);
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    clearNode(error);
+    apiRequest('POST', '/api/v1/admin/dev-login', { email: email.value.trim() }).then(function (result) {
+      if (!result.ok) { error.textContent = apiError(result); return; }
+      session.email = result.data.email;
+      session.csrfToken = result.data.csrf_token;
+      startApp();
+    });
+  });
+  host.appendChild(el('div', { class: 'card' }, [form]));
+}
+
+function bootstrapSession() {
+  var host = document.getElementById('section-host');
+  clearNode(host);
+  host.appendChild(pageHead('Chabot 管理', 'セッションを確認しています…'));
+  apiRequest('GET', '/api/v1/admin/session').then(function (result) {
+    if (result.ok) {
+      session.email = result.data.email;
+      session.csrfToken = result.data.csrf_token;
+      startApp();
+      return;
+    }
+    var detail = result.data && result.data.detail;
+    var mode = detail && detail.mode;
+    session.authMode = mode || 'iap';
+    clearNode(host);
+    if (session.authMode === 'dev') {
+      renderDevLogin(host);
+    } else {
+      setEnvBadge('未認証');
+      host.appendChild(errorCard('管理者として認証されていません。Cloud IAP経由でアクセスしてください。'));
+    }
+  }).catch(function () {
+    clearNode(host);
+    host.appendChild(errorCard('管理APIへ接続できませんでした。'));
+  });
 }
 
 /* ---------- 集計 ---------- */
+
+var statsDays = { daily: 1, weekly: 7, monthly: 30 };
+var statsPeriod = 'daily';
+
 function renderOverview(host) {
   var periodNames = { daily: '日次', weekly: '週次', monthly: '月次' };
   var segmented = el('div', { class: 'segmented', role: 'group', 'aria-label': '集計期間' }, []);
@@ -241,155 +265,157 @@ function renderOverview(host) {
     segmented.appendChild(el('button', {
       type: 'button',
       text: periodNames[key],
-      'aria-pressed': String(state.statsPeriod === key),
-      onclick: function () { state.statsPeriod = key; refreshSection(); }
+      'aria-pressed': String(statsPeriod === key),
+      onclick: function () { statsPeriod = key; refreshSection(); }
     }, []));
   });
-
-  var current = state.stats[state.statsPeriod];
-  var metrics = [
-    ['アクティブユーザー数', current.activeUsers, '人'],
-    ['メッセージ数', current.messages, '件'],
-    ['上限拒否数', current.denied, '件'],
-    ['クーポン引き換え', current.redemptions, '件'],
-    ['要望受付', current.feedback, '件']
-  ];
-  var grid = el('div', { class: 'metric-grid wide' }, metrics.map(function (m) {
-    return el('div', { class: 'metric' }, [
-      el('p', { class: 'label', text: m[0] }, []),
-      el('p', { class: 'value' }, [String(m[1]), el('span', { class: 'unit', text: m[2] }, [])])
-    ]);
-  }));
-
   host.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: '期間別の指標' }, []),
-    el('p', { class: 'sub', text: periodNames[state.statsPeriod] + '・管理者の操作対象を個別に確認します。' }, []),
-    segmented,
-    el('div', { class: 'spacer-14' }, [])
+    el('p', { class: 'sub', text: 'admin_daily_stats の範囲集計です。' }, []),
+    segmented
   ]));
-  host.appendChild(grid);
-  host.appendChild(el('p', { class: 'help', text: 'データソース: admin_daily_stats（モック）。期間切替は既存ドキュメントの範囲集計です。' }, []));
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/stats?days=' + statsDays[statsPeriod]);
+  }, function (target, data) {
+    var totals = data.totals || {};
+    var metrics = [
+      ['アクティブユーザー数（延べ）', totals.active_user_count || 0, '人'],
+      ['メッセージ数', totals.message_count || 0, '件'],
+      ['上限拒否数', totals.denied_by_limit || 0, '件'],
+      ['クーポン引き換え', totals.coupon_redemptions || 0, '件'],
+      ['要望受付', totals.feedback_count || 0, '件']
+    ];
+    target.appendChild(el('div', { class: 'metric-grid wide' }, metrics.map(function (m) {
+      return el('div', { class: 'metric' }, [
+        el('p', { class: 'label', text: m[0] }, []),
+        el('p', { class: 'value' }, [String(m[1]), el('span', { class: 'unit', text: m[2] }, [])])
+      ]);
+    })));
+    var list = el('ul', { class: 'timeline' }, []);
+    (data.daily || []).slice().reverse().forEach(function (day) {
+      list.appendChild(el('li', {}, [
+        el('div', { class: 'head' }, [
+          el('time', { text: day.date }, []),
+          el('span', { class: 'action', text: 'メッセージ ' + (day.message_count || 0) + '件・アクティブ ' + (day.active_user_count || 0) + '人' }, [])
+        ])
+      ]));
+    });
+    if (!list.childNodes.length) {
+      list.appendChild(el('li', {}, [el('p', { class: 'meta', text: 'まだ統計データがありません。' }, [])]));
+    }
+    target.appendChild(el('div', { class: 'card' }, [
+      el('h3', { text: '日別の内訳' }, []),
+      list
+    ]));
+  });
 }
 
 /* ---------- ユーザー ---------- */
-function filteredUsers() {
-  var f = state.usersFilter;
-  var q = f.q.trim();
-  return state.users.filter(function (user) {
-    if (q && user.name.indexOf(q) !== 0) { return false; }
-    if (f.plan !== 'all' && user.plan !== f.plan) { return false; }
-    if (f.status !== 'all' && user.status !== f.status) { return false; }
-    return true;
-  });
-}
+
+var usersFilter = { q: '', plan: 'all', status: 'all' };
+var selectedUserId = null;
 
 function sourceLabel(user) {
-  if (user.source === 'stripe') { return 'Stripe契約'; }
-  if (user.source === 'override') { return 'クーポン・管理者指定（期限 ' + (user.overrideExpires || '未設定') + '）'; }
+  var override = user.plan_override;
+  if (override && override.plan) {
+    return '管理者・クーポン指定（' + override.plan + '・期限 ' + (override.expires_at ? fmtDate(override.expires_at) : '未設定') + '）';
+  }
   return '既定（free）';
 }
 
 function renderUserDetail(host) {
   var panel = el('section', { class: 'panel', 'aria-label': 'ユーザー詳細' }, []);
-  var user = state.users.filter(function (item) { return item.id === state.selectedUserId; })[0];
-  if (!user) {
+  host.appendChild(panel);
+  if (!selectedUserId) {
     panel.appendChild(el('h3', { text: 'ユーザー詳細' }, []));
     panel.appendChild(el('p', { class: 'sub', text: '一覧の「詳細」を選ぶと、ここに情報が表示されます。' }, []));
-    host.appendChild(panel);
     return;
   }
-  panel.appendChild(el('h3', { text: user.name }, []));
-  if (user.stripeActive) {
-    panel.appendChild(el('p', {}, [badge('Stripe契約中', 'warning')]));
-  }
-  panel.appendChild(kv([
-    ['ユーザーID', user.id],
-    ['LINE ID（マスク）', user.lineId],
-    ['メール', user.email || '未取得'],
-    ['プラン', user.plan],
-    ['判定経路', sourceLabel(user)],
-    ['状態', user.status === 'active' ? '有効' : '無効（unfollow）'],
-    ['当日利用', user.today + ' / ' + user.limit + ' 回'],
-    ['登録日', user.registered],
-    ['プロフィール最終取得', user.profileFetched]
-  ]));
-
-  var error = el('p', { class: 'error-note', role: 'alert' }, []);
-  var planSelect = el('select', { id: 'plan-select-' + user.id }, [
-    el('option', { value: 'free', text: 'free' }, []),
-    el('option', { value: 'basic', text: 'basic' }, []),
-    el('option', { value: 'pro', text: 'pro' }, [])
-  ]);
-  planSelect.value = user.plan;
-  var reason = el('textarea', { id: 'plan-reason-' + user.id, 'aria-label': '変更理由（必須）' }, []);
-  reason.placeholder = '変更理由を入力（必須）';
-
-  panel.appendChild(el('form', {}, [
-    el('h4', { text: 'プラン変更' }, []),
-    el('div', { class: 'toolbar' }, [
-      el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
-      el('div', { class: 'field grow' }, [el('label', { text: '理由' }, []), reason])
-    ]),
-    el('div', { class: 'btn-row' }, [
-      el('button', { class: 'btn btn-primary', type: 'submit', text: 'プランを変更' }, [])
-    ]),
-    error
-  ]));
-
-  var form = panel.querySelector('form');
-  form.addEventListener('submit', function (event) {
-    event.preventDefault();
-    clearNode(error);
-    var nextPlan = planSelect.value;
-    var reasonText = reason.value.trim();
-    if (!reasonText) {
-      error.textContent = '変更理由は必須です。';
+  panel.appendChild(loadingCard());
+  apiRequest('GET', '/api/v1/admin/users/' + encodeURIComponent(selectedUserId)).then(function (result) {
+    clearNode(panel);
+    if (!result.ok) {
+      panel.appendChild(errorCard(apiError(result)));
       return;
     }
-    var applyChange = function () {
-      user.plan = nextPlan;
-      user.source = 'override';
-      user.limit = state.planSettings[nextPlan].published;
-      user.overrideExpires = dateAfterDays(30);
-      logAudit('プラン変更', 'users/' + user.id);
-      toast('プランを ' + nextPlan + ' へ変更しました（モック）。', 'success');
-      refreshSection();
-    };
-    if (user.stripeActive) {
-      confirmDialog({
-        title: 'Stripe契約と競合します',
-        lines: [
-          'このユーザーには有効なStripe契約があります。プラン解決ではStripe契約が優先されます。',
-          '管理者指定を記録しても、表示プランは契約プランになります。続行しますか？'
-        ],
-        okLabel: '競合を理解して記録'
-      }).then(function (ok) { if (ok) { applyChange(); } });
-      return;
-    }
-    applyChange();
-  });
-
-  if (user.status === 'active') {
-    var deactivate = el('button', { class: 'btn btn-danger', type: 'button', text: '無効化する' }, []);
-    deactivate.addEventListener('click', function () {
-      confirmDialog({
-        title: 'ユーザーを無効化します',
-        lines: ['unfollowと同じ扱いで is_active=false にします。削除は行いません。'],
-        danger: true,
-        okLabel: '無効化する'
-      }).then(function (ok) {
-        if (!ok) { return; }
-        user.status = 'inactive';
-        logAudit('ユーザー無効化', 'users/' + user.id);
-        toast('ユーザーを無効化しました（モック）。', 'success');
+    var user = result.data;
+    var stripeActive = (user.subscription_plan === 'basic' || user.subscription_plan === 'pro') &&
+      user.subscription_status === 'active';
+    panel.appendChild(el('h3', { text: user.display_name || '(名称未取得)' }, []));
+    if (stripeActive) { panel.appendChild(el('p', {}, [badge('Stripe契約中', 'warning')])); }
+    panel.appendChild(kv([
+      ['ユーザーID', user.id],
+      ['LINE ID', user.line_user_id || '未取得'],
+      ['メール', user.email || '未取得'],
+      ['プラン', user.subscription_plan || 'free'],
+      ['判定経路', sourceLabel(user)],
+      ['状態', user.is_active ? '有効' : '無効（unfollow等）'],
+      ['登録日', fmtDate(user.created_at)],
+      ['更新日', fmtDate(user.updated_at)]
+    ]));
+    if (!user.is_active) { return; }
+    var error = el('p', { class: 'error-note', role: 'alert' }, []);
+    var planSelect = el('select', {}, [
+      el('option', { value: '', text: '既定（free）へ戻す' }, []),
+      el('option', { value: 'basic', text: 'basic' }, []),
+      el('option', { value: 'pro', text: 'pro' }, [])
+    ]);
+    var days = el('input', { type: 'number', min: '1', max: '3650', placeholder: '日数（未入力で無期限）' }, []);
+    var reason = el('textarea', { 'aria-label': '変更理由（必須）' }, []);
+    reason.placeholder = '変更理由を入力（必須）';
+    var form = el('form', {}, [
+      el('h4', { text: 'プラン変更' }, []),
+      el('div', { class: 'toolbar' }, [
+        el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
+        el('div', { class: 'field' }, [el('label', { text: '期間（日）' }, []), days]),
+        el('div', { class: 'field grow' }, [el('label', { text: '理由' }, []), reason])
+      ]),
+      el('div', { class: 'btn-row' }, [
+        el('button', { class: 'btn btn-primary', type: 'submit', text: 'プランを変更' }, [])
+      ]),
+      error
+    ]);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      clearNode(error);
+      if (!reason.value.trim()) { error.textContent = '変更理由は必須です。'; return; }
+      if (stripeActive && planSelect.value) {
+        toast('Stripe契約中のため、Bot側はStripeプランを優先します。', 'info');
+      }
+      apiRequest('POST', '/api/v1/admin/users/' + encodeURIComponent(user.id) + '/plan', {
+        plan: planSelect.value || null,
+        reason: reason.value.trim(),
+        duration_days: days.value ? parseInt(days.value, 10) : null
+      }).then(function (result2) {
+        if (!result2.ok && result2.status !== 204) { error.textContent = apiError(result2); return; }
+        toast('プランを変更しました。', 'success');
         refreshSection();
       });
     });
+    panel.appendChild(form);
+    var deactivate = el('button', { class: 'btn btn-danger', type: 'button', text: 'ユーザーを無効化' }, []);
+    deactivate.addEventListener('click', function () {
+      confirmDialog({
+        title: 'ユーザーを無効化します',
+        lines: ['無効化するとBot利用を停止できます（unfollowと同じ扱い）。'],
+        okLabel: '無効化する'
+      }).then(function (ok) {
+        if (!ok) { return; }
+        var why = window.prompt('無効化の理由（必須）') || '';
+        if (!why.trim()) { toast('理由が入力されていないため中止しました。'); return; }
+        apiRequest('POST', '/api/v1/admin/users/' + encodeURIComponent(user.id) + '/deactivate', {
+          reason: why.trim()
+        }).then(function (result2) {
+          if (!result2.ok && result2.status !== 204) { toast(apiError(result2)); return; }
+          toast('ユーザーを無効化しました。', 'success');
+          refreshSection();
+        });
+      });
+    });
     panel.appendChild(el('div', { class: 'btn-row' }, [deactivate]));
-  } else {
-    panel.appendChild(el('p', { class: 'help', text: '無効化済みユーザー。再開発は本番実装で対応します。' }, []));
-  }
-  host.appendChild(panel);
+  });
 }
 
 function renderUsers(host) {
@@ -398,14 +424,15 @@ function renderUsers(host) {
   var right = el('div', {}, []);
   layout.appendChild(left);
   layout.appendChild(right);
+  host.appendChild(layout);
 
-  var search = el('input', { type: 'search', placeholder: '表示名の前方一致' });
-  search.value = state.usersFilter.q;
+  var search = el('input', { type: 'search', placeholder: '表示名の前方一致' }, []);
+  search.value = usersFilter.q;
+  var searchTimer = null;
   search.addEventListener('input', function () {
-    state.usersFilter.q = search.value;
-    refreshSection();
-    var next = document.querySelector("input[type='search']");
-    if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
+    usersFilter.q = search.value;
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(refreshSection, 350);
   });
   var planSelect = el('select', {}, [
     el('option', { value: 'all', text: 'すべてのプラン' }, []),
@@ -413,19 +440,19 @@ function renderUsers(host) {
     el('option', { value: 'basic', text: 'basic' }, []),
     el('option', { value: 'pro', text: 'pro' }, [])
   ]);
-  planSelect.value = state.usersFilter.plan;
-  planSelect.addEventListener('change', function () { state.usersFilter.plan = planSelect.value; refreshSection(); });
+  planSelect.value = usersFilter.plan;
+  planSelect.addEventListener('change', function () { usersFilter.plan = planSelect.value; refreshSection(); });
   var statusSelect = el('select', {}, [
     el('option', { value: 'all', text: 'すべての状態' }, []),
     el('option', { value: 'active', text: '有効' }, []),
     el('option', { value: 'inactive', text: '無効' }, [])
   ]);
-  statusSelect.value = state.usersFilter.status;
-  statusSelect.addEventListener('change', function () { state.usersFilter.status = statusSelect.value; refreshSection(); });
+  statusSelect.value = usersFilter.status;
+  statusSelect.addEventListener('change', function () { usersFilter.status = statusSelect.value; refreshSection(); });
 
   left.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: '登録ユーザー' }, []),
-    el('p', { class: 'sub', text: '氏名はすべて架空のモックデータです。' }, []),
+    el('p', { class: 'sub', text: '一覧ではLINE IDをマスク表示します。' }, []),
     el('div', { class: 'toolbar' }, [
       el('div', { class: 'field grow' }, [el('label', { text: '検索' }, []), search]),
       el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
@@ -433,29 +460,37 @@ function renderUsers(host) {
     ])
   ]));
 
-  var users = filteredUsers();
-  var countNote = el('p', { class: 'help', text: users.length + ' 件（ページネーションは本番実装で対応）' }, []);
-  left.appendChild(countNote);
-
-  if (!users.length) {
-    left.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '条件に一致するユーザーがありません。' }, [])]));
-  } else {
+  var holder = el('div', {}, []);
+  left.appendChild(holder);
+  var params = [];
+  if (usersFilter.q.trim()) { params.push('q=' + encodeURIComponent(usersFilter.q.trim())); }
+  if (usersFilter.plan !== 'all') { params.push('plan=' + usersFilter.plan); }
+  if (usersFilter.status !== 'all') { params.push('status_filter=' + usersFilter.status); }
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/users' + (params.length ? '?' + params.join('&') : ''));
+  }, function (target, data) {
+    var users = data.users || [];
+    target.appendChild(el('p', { class: 'help', text: users.length + ' 件' }, []));
+    if (!users.length) {
+      target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '条件に一致するユーザーがありません。' }, [])]));
+      return;
+    }
     var rows = users.map(function (user) {
-      var detailButton = el('button', { class: 'btn btn-small', type: 'button', text: '詳細' });
+      var detailButton = el('button', { class: 'btn btn-small', type: 'button', text: '詳細' }, []);
       detailButton.addEventListener('click', function () {
-        state.selectedUserId = user.id;
-        refreshSection();
+        selectedUserId = user.id;
+        renderUserDetail(right);
       });
       return el('tr', {}, [
-        el('td', { text: user.name }, []),
-        el('td', {}, [planBadge(user.plan)]),
-        el('td', {}, [user.status === 'active' ? badge('有効', 'active') : badge('無効', 'inactive')]),
-        el('td', { text: user.today + ' / ' + user.limit }, []),
-        el('td', { text: user.registered }, []),
+        el('td', { text: user.display_name || '(名称未取得)' }, []),
+        el('td', {}, [planBadge(user.subscription_plan || 'free')]),
+        el('td', {}, [user.is_active ? badge('有効', 'active') : badge('無効', 'inactive')]),
+        el('td', { text: String(user.today_message_count || 0) }, []),
+        el('td', { text: fmtDate(user.created_at) }, []),
         el('td', {}, [detailButton])
       ]);
     });
-    left.appendChild(el('div', { class: 'card table-wrap' }, [
+    target.appendChild(el('div', { class: 'card table-wrap' }, [
       el('table', {}, [
         el('thead', {}, [el('tr', {}, [
           el('th', { scope: 'col', text: '表示名' }, []),
@@ -468,13 +503,36 @@ function renderUsers(host) {
         el('tbody', {}, rows)
       ])
     ]));
-  }
-
+  });
   renderUserDetail(right);
-  host.appendChild(layout);
+
+  var createError = el('p', { class: 'error-note', role: 'alert' }, []);
+  var lineId = el('input', { type: 'text', placeholder: 'Uxxxxxxxx…' }, []);
+  var createForm = el('form', {}, [
+    el('h3', { text: 'LINE ID直指定でfree作成' }, []),
+    el('p', { class: 'sub', text: 'テスト・移行用。Messaging APIで実在確認します。' }, []),
+    el('div', { class: 'toolbar' }, [
+      el('div', { class: 'field grow' }, [el('label', { text: 'LINE user ID' }, []), lineId])
+    ]),
+    el('div', { class: 'btn-row' }, [
+      el('button', { class: 'btn', type: 'submit', text: 'freeユーザーを作成' }, [])
+    ]),
+    createError
+  ]);
+  createForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    clearNode(createError);
+    apiRequest('POST', '/api/v1/admin/users/free', { line_user_id: lineId.value.trim() }).then(function (result) {
+      if (!result.ok) { createError.textContent = apiError(result); return; }
+      toast('freeユーザーを作成しました。', 'success');
+      refreshSection();
+    });
+  });
+  host.appendChild(el('div', { class: 'card' }, [createForm]));
 }
 
 /* ---------- 回数上限設定 ---------- */
+
 function parseLimit(value) {
   if (!/^[0-9]+$/.test(value)) { return null; }
   var parsed = parseInt(value, 10);
@@ -483,110 +541,129 @@ function parseLimit(value) {
 }
 
 function renderSettings(host) {
-  var grid = el('div', { class: 'settings-grid' }, []);
-  Object.keys(state.planSettings).forEach(function (plan) {
-    var setting = state.planSettings[plan];
-    var error = el('p', { class: 'error-note', role: 'alert' }, []);
-    var draftInput = el('input', { type: 'number', min: '1', max: '999', step: '1', value: String(setting.draft), 'aria-label': plan + ' の下書き上限' });
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/plan-settings');
+  }, function (target, data) {
+    var grid = el('div', { class: 'settings-grid' }, []);
+    (data.items || []).forEach(function (setting) {
+      var plan = setting.plan;
+      var error = el('p', { class: 'error-note', role: 'alert' }, []);
+      var draftInput = el('input', { type: 'number', min: '1', max: '999', step: '1', value: String(setting.draft_daily_message_limit), 'aria-label': plan + ' の下書き上限' }, []);
+      var configuredNote = setting.configured
+        ? '公開中 ' + setting.daily_message_limit + ' 回/日・revision ' + setting.published_revision + '・' + fmtDate(setting.updated_at)
+        : '未設定（コード既定値 ' + setting.daily_message_limit + ' 回/日で運用中）';
 
-    var saveDraft = function () {
-      clearNode(error);
-      var parsed = parseLimit(draftInput.value);
-      if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-      setting.draft = parsed;
-      toast(plan + ' の下書きを保存しました。Bot挙動は変わりません。', 'success');
-    };
-    var showDiff = function () {
-      clearNode(error);
-      var parsed = parseLimit(draftInput.value);
-      if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-      setting.draft = parsed;
-      confirmDialog({
-        title: '差分確認',
-        lines: ['公開中: ' + setting.published + ' 回/日', '下書き: ' + setting.draft + ' 回/日'],
-        okLabel: '差分を確認しました'
+      var saveDraft = function () {
+        clearNode(error);
+        var parsed = parseLimit(draftInput.value);
+        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
+        apiRequest('PUT', '/api/v1/admin/plan-settings/' + plan, {
+          daily_message_limit: parsed,
+          base_revision: setting.published_revision
+        }).then(function (result) {
+          if (!result.ok) { error.textContent = apiError(result); return; }
+          toast(plan + ' の下書きを保存しました。Bot挙動は変わりません。', 'success');
+          refreshSection();
+        });
+      };
+      var showDiff = function () {
+        var parsed = parseLimit(draftInput.value);
+        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
+        confirmDialog({
+          title: '差分確認',
+          lines: ['公開中: ' + setting.daily_message_limit + ' 回/日', '入力中: ' + parsed + ' 回/日'],
+          okLabel: '差分を確認しました'
+        });
+      };
+      var publish = function () {
+        clearNode(error);
+        var parsed = parseLimit(draftInput.value);
+        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
+        if (parsed === setting.daily_message_limit) { toast('公開値と同じため、反映しません。'); return; }
+        confirmDialog({
+          title: plan + ' の上限を反映します',
+          lines: [setting.daily_message_limit + ' 回/日 → ' + parsed + ' 回/日', 'Botへの適用は最大60秒です。'],
+          okLabel: '反映する'
+        }).then(function (ok) {
+          if (!ok) { return; }
+          apiRequest('PUT', '/api/v1/admin/plan-settings/' + plan, {
+            daily_message_limit: parsed,
+            base_revision: setting.published_revision
+          }).then(function (draftResult) {
+            if (!draftResult.ok) { error.textContent = apiError(draftResult); return null; }
+            return apiRequest('POST', '/api/v1/admin/plan-settings/' + plan + '/publish', {
+              revision: setting.published_revision
+            });
+          }).then(function (result) {
+            if (!result) { return; }
+            if (!result.ok) { error.textContent = apiError(result); return; }
+            toast(plan + ' を反映しました（Bot適用は最大60秒）。', 'success');
+            refreshSection();
+          });
+        });
+      };
+
+      var card = el('div', { class: 'card' }, [
+        el('h3', { text: plan + (plan === 'free' ? '（必須）' : '') }, []),
+        el('p', { class: 'sub', text: configuredNote }, []),
+        el('div', { class: 'field' }, [el('label', { text: '下書き上限（1日あたり）' }, []), draftInput]),
+        el('div', { class: 'btn-row' }, [
+          el('button', { class: 'btn', type: 'button', text: '下書き保存', onclick: saveDraft }, []),
+          el('button', { class: 'btn', type: 'button', text: '差分確認', onclick: showDiff }, []),
+          el('button', { class: 'btn btn-primary', type: 'button', text: '反映', onclick: publish }, [])
+        ]),
+        error
+      ]);
+
+      var historyList = el('ul', { class: 'timeline', 'aria-label': plan + ' の公開履歴' }, []);
+      (setting.history || []).slice().reverse().forEach(function (entry) {
+        historyList.appendChild(el('li', {}, [
+          el('div', { class: 'head' }, [
+            el('time', { text: fmtDate(entry.published_at) }, []),
+            el('span', { class: 'action', text: 'rev ' + entry.revision + '・' + entry.daily_message_limit + ' 回/日' }, [])
+          ])
+        ]));
       });
-    };
-    var publish = function () {
-      clearNode(error);
-      var parsed = parseLimit(draftInput.value);
-      if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-      if (parsed === setting.published) { toast('下書きが公開値と同じため、反映しません。'); return; }
-      setting.draft = parsed;
-      confirmDialog({
-        title: plan + ' の上限を反映します',
-        lines: [setting.published + ' 回/日 → ' + setting.draft + ' 回/日', 'Botへの適用は最大60秒です。'],
-        okLabel: '反映する'
-      }).then(function (ok) {
-        if (!ok) { return; }
-        setting.published = setting.draft;
-        setting.revision += 1;
-        setting.updated = nowStamp();
-        setting.history.push({ rev: setting.revision, limit: setting.published, date: setting.updated });
-        logAudit('設定反映', 'plan_settings/' + plan, setting.revision);
-        toast(plan + ' を反映しました（rev ' + setting.revision + '・Bot適用は最大60秒）。', 'success');
-        refreshSection();
-      });
-    };
-
-    var card = el('div', { class: 'card' }, [
-      el('h3', { text: setting.label }, []),
-      el('p', { class: 'sub', text: '公開中 ' + setting.published + ' 回/日・revision ' + setting.revision + '・' + setting.updated }, []),
-      el('div', { class: 'field' }, [el('label', { text: '下書き上限（1日あたり）' }, []), draftInput]),
-      el('div', { class: 'btn-row' }, [
-        el('button', { class: 'btn', type: 'button', text: '下書き保存', onclick: saveDraft }, []),
-        el('button', { class: 'btn', type: 'button', text: '差分確認', onclick: showDiff }, []),
-        el('button', { class: 'btn btn-primary', type: 'button', text: '反映', onclick: publish }, [])
-      ]),
-      error
-    ]);
-
-    var historyList = el('ul', { class: 'timeline', 'aria-label': plan + ' の公開履歴' }, []);
-    setting.history.slice().reverse().forEach(function (entry) {
-      var isCurrent = entry.rev === setting.revision;
-      var rollback = el('button', { class: 'btn btn-small', type: 'button', text: 'この値へ戻す', disabled: isCurrent ? 'disabled' : null });
+      if (!historyList.childNodes.length) {
+        historyList.appendChild(el('li', {}, [el('p', { class: 'meta', text: '公開履歴はまだありません。' }, [])]));
+      }
+      var rollback = el('button', { class: 'btn', type: 'button', text: '直前のrevisionへ戻す' }, []);
       rollback.addEventListener('click', function () {
         confirmDialog({
           title: '設定をロールバックします',
-          lines: ['rev ' + entry.rev + ' の ' + entry.limit + ' 回/日を新しいrevisionとして反映します。'],
+          lines: ['直前の公開値へ戻します。戻した値も新しいrevisionとして記録されます。'],
           okLabel: 'ロールバック'
         }).then(function (ok) {
           if (!ok) { return; }
-          setting.published = entry.limit;
-          setting.draft = entry.limit;
-          setting.revision += 1;
-          setting.updated = nowStamp();
-          setting.history.push({ rev: setting.revision, limit: entry.limit, date: setting.updated });
-          logAudit('設定ロールバック', 'plan_settings/' + plan, setting.revision);
-          toast('ロールバックしました（rev ' + setting.revision + '）。', 'success');
-          refreshSection();
+          apiRequest('POST', '/api/v1/admin/plan-settings/' + plan + '/rollback', {}).then(function (result) {
+            if (!result.ok) { toast(apiError(result)); return; }
+            toast('ロールバックしました（rev ' + result.data.published_revision + '）。', 'success');
+            refreshSection();
+          });
         });
       });
-      historyList.appendChild(el('li', {}, [
-        el('div', { class: 'head' }, [
-          el('time', { text: entry.date }, []),
-          el('span', { class: 'action', text: 'rev ' + entry.rev + '・' + entry.limit + ' 回/日' }, [])
-        ]),
+      var historyCard = el('div', { class: 'card' }, [
+        el('h3', { text: plan + ' の公開履歴' }, []),
+        el('p', { class: 'sub', text: '直前のrevisionへ戻せます。' }, []),
+        historyList,
         el('div', { class: 'btn-row' }, [rollback])
-      ]));
+      ]);
+      grid.appendChild(el('div', {}, [card, historyCard]));
     });
-    var historyCard = el('div', { class: 'card' }, [
-      el('h3', { text: setting.label + ' の公開履歴' }, []),
-      el('p', { class: 'sub', text: '直前のrevisionへ戻せます。' }, []),
-      historyList
-    ]);
-    grid.appendChild(el('div', {}, [card, historyCard]));
+    target.appendChild(grid);
+    target.appendChild(el('p', { class: 'help', text: '下書き保存ではBot挙動が変わりません。反映はFirestore Transactionで公開revisionを切り替え、Botへの適用は最大60秒です。' }, []));
   });
-  host.appendChild(grid);
-  host.appendChild(el('p', { class: 'help', text: '下書き保存ではBot挙動が変わりません。反映はFirestore Transactionで公開revisionを切り替えます（本番実装）。' }, []));
 }
 
 /* ---------- クーポン ---------- */
+
 function couponSummary(coupon) {
   if (coupon.kind === 'plan_grant') {
-    return coupon.plan + ' を ' + coupon.days + ' 日付与';
+    return (coupon.plan || '?') + ' を ' + (coupon.duration_days || '?') + ' 日付与';
   }
-  return 'freeの当日回数を ' + coupon.bonus + ' 回追加';
+  return 'freeの当日回数を ' + (coupon.bonus_free_messages || '?') + ' 回追加';
 }
 
 function renderCoupons(host) {
@@ -596,341 +673,375 @@ function renderCoupons(host) {
     el('option', { value: 'plan_grant', text: 'プラン付与（plan_grant）' }, []),
     el('option', { value: 'bonus_messages', text: '当日回数追加（bonus_messages）' }, [])
   ]);
+  var planSelect = el('select', {}, [
+    el('option', { value: 'basic', text: 'basic' }, []),
+    el('option', { value: 'pro', text: 'pro' }, [])
+  ]);
+  var daysInput = el('input', { type: 'number', min: '1', max: '365', value: '14' }, []);
+  var bonusInput = el('input', { type: 'number', min: '1', max: '100', value: '5' }, []);
+  var maxInput = el('input', { type: 'number', min: '1', max: '10000', value: '20' }, []);
+  var expiresInput = el('input', { type: 'date' }, []);
+  var noteInput = el('input', { type: 'text', maxlength: '200', placeholder: '用途メモ（任意）' }, []);
   var grantFields = el('div', { class: 'toolbar' }, [
-    el('div', { class: 'field' }, [
-      el('label', { text: '付与プラン' }, []),
-      el('select', {}, [el('option', { value: 'basic', text: 'basic' }, []), el('option', { value: 'pro', text: 'pro' }, [])])
-    ]),
-    el('div', { class: 'field' }, [el('label', { text: '付与日数' }, []), el('input', { type: 'number', min: '1', max: '365', value: '14' })])
+    el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
+    el('div', { class: 'field' }, [el('label', { text: '付与日数' }, []), daysInput])
   ]);
-  var bonusField = el('div', { class: 'field', hidden: 'hidden' }, [
-    el('label', { text: '追加回数' }, []),
-    el('input', { type: 'number', min: '1', max: '100', value: '5' })
+  var bonusFields = el('div', { class: 'toolbar' }, [
+    el('div', { class: 'field' }, [el('label', { text: '追加回数（当日）' }, []), bonusInput])
   ]);
+  bonusFields.style.display = 'none';
   kindSelect.addEventListener('change', function () {
-    var isGrant = kindSelect.value === 'plan_grant';
-    grantFields.hidden = isGrant ? null : 'hidden';
-    bonusField.hidden = isGrant ? 'hidden' : null;
+    grantFields.style.display = kindSelect.value === 'plan_grant' ? '' : 'none';
+    bonusFields.style.display = kindSelect.value === 'bonus_messages' ? '' : 'none';
   });
-  var maxInput = el('input', { type: 'number', min: '1', max: '10000', value: '20' });
-  var daysInput = el('input', { type: 'number', min: '1', max: '180', value: '14' });
-  var noteInput = el('input', { type: 'text', placeholder: '用途メモ（任意）' });
-
-  var form = el('form', { class: 'card' }, [
+  var form = el('form', {}, [
     el('h3', { text: 'クーポン発行' }, []),
-    el('p', { class: 'sub', text: 'コード平文は発行時のみ1回表示します。本番ではSHA-256ハッシュのみ保存します。' }, []),
-    el('div', { class: 'field' }, [el('label', { text: '種別' }, []), kindSelect]),
-    el('div', { class: 'spacer-10' }, []),
+    el('p', { class: 'sub', text: 'コード平文は発行時のみ表示されます。' }, []),
+    el('div', { class: 'toolbar' }, [el('div', { class: 'field' }, [el('label', { text: '種別' }, []), kindSelect])]),
     grantFields,
-    bonusField,
+    bonusFields,
     el('div', { class: 'toolbar' }, [
       el('div', { class: 'field' }, [el('label', { text: '最大引き換え数' }, []), maxInput]),
-      el('div', { class: 'field' }, [el('label', { text: '有効期限（日数後）' }, []), daysInput]),
+      el('div', { class: 'field' }, [el('label', { text: '有効期限（任意）' }, []), expiresInput]),
       el('div', { class: 'field grow' }, [el('label', { text: 'メモ' }, []), noteInput])
     ]),
-    el('div', { class: 'btn-row' }, [el('button', { class: 'btn btn-primary', type: 'submit', text: '発行する' }, [])]),
+    el('div', { class: 'btn-row' }, [
+      el('button', { class: 'btn btn-primary', type: 'submit', text: '発行' }, [])
+    ]),
     error
   ]);
-
   form.addEventListener('submit', function (event) {
     event.preventDefault();
-    clearNode(error);
     clearNode(reveal);
-    var max = parseLimit(maxInput.value);
-    var days = parseInt(daysInput.value, 10);
-    if (max === null || !(days >= 1 && days <= 180)) {
-      error.textContent = '最大引き換え数（1〜999）と有効期限（1〜180日）を確認してください。';
-      return;
-    }
-    var coupon = {
-      id: 'cpn-' + String(900 + state.coupons.length + 1),
+    clearNode(error);
+    var body = {
       kind: kindSelect.value,
-      plan: 'free',
-      days: null,
-      bonus: null,
-      max: max,
-      redeemed: 0,
-      status: 'active',
-      expires: dateAfterDays(days),
+      plan: kindSelect.value === 'plan_grant' ? planSelect.value : null,
+      duration_days: kindSelect.value === 'plan_grant' ? parseInt(daysInput.value, 10) : null,
+      bonus_free_messages: kindSelect.value === 'bonus_messages' ? parseInt(bonusInput.value, 10) : null,
+      max_redemptions: parseInt(maxInput.value, 10),
       note: noteInput.value.trim() || null
     };
-    if (coupon.kind === 'plan_grant') {
-      coupon.plan = grantFields.querySelector('select').value;
-      coupon.days = parseInt(grantFields.querySelector('input').value, 10);
-      if (!(coupon.days >= 1 && coupon.days <= 365)) { error.textContent = '付与日数は1〜365で入力してください。'; return; }
-    } else {
-      coupon.bonus = parseInt(bonusField.querySelector('input').value, 10);
-      if (!(coupon.bonus >= 1 && coupon.bonus <= 100)) { error.textContent = '追加回数は1〜100で入力してください。'; return; }
+    if (expiresInput.value) {
+      body.expires_at = new Date(expiresInput.value + 'T23:59:59+09:00').toISOString();
     }
-    var code = randomCode(9);
-    state.coupons.unshift(coupon);
-    logAudit('クーポン発行', 'coupons/' + coupon.id);
-    reveal.appendChild(el('p', { text: 'クーポンコード（この画面でのみ表示・モック生成）' }, []));
-    reveal.appendChild(el('code', { text: code }, []));
-    var copy = el('button', { class: 'btn btn-small', type: 'button', text: 'コピー' }, []);
-    copy.addEventListener('click', function () { copyText(code, 'クーポンコードをコピーしました。'); });
-    reveal.appendChild(copy);
-    reveal.appendChild(el('p', { class: 'note', text: '平文は再表示できません。一覧にはハッシュ接頭辞のみ表示します。' }, []));
-    toast('クーポン ' + coupon.id + ' を発行しました（モック）。', 'success');
-    refreshSection();
+    apiRequest('POST', '/api/v1/admin/coupons', body).then(function (result) {
+      if (!result.ok) { error.textContent = apiError(result); return; }
+      var code = result.data.code;
+      var copy = el('button', { class: 'btn btn-small', type: 'button', text: 'コピー' }, []);
+      copy.addEventListener('click', function () { copyText(code, 'クーポンコードをコピーしました。'); });
+      reveal.appendChild(el('p', { class: 'code', text: code }, []));
+      reveal.appendChild(el('div', { class: 'btn-row' }, [copy]));
+      toast('クーポンを発行しました。', 'success');
+      refreshCouponList();
+    });
   });
-
-  host.appendChild(form);
+  host.appendChild(el('div', { class: 'card' }, [form]));
   host.appendChild(reveal);
 
-  var rows = state.coupons.map(function (coupon) {
-    var statusNode = coupon.status === 'active' ? badge('有効', 'active') : (coupon.status === 'revoked' ? badge('失効', 'danger') : badge('上限到達', 'inactive'));
-    var action = null;
-    if (coupon.status === 'active') {
-      action = el('button', { class: 'btn btn-small btn-danger', type: 'button', text: '失効' }, []);
-      action.addEventListener('click', function () {
-        confirmDialog({
-          title: 'クーポンを失効します',
-          lines: ['新規引き換えのみ停止します。付与済みの特典は維持されます。'],
-          danger: true,
-          okLabel: '失効する'
-        }).then(function (ok) {
-          if (!ok) { return; }
-          coupon.status = 'revoked';
-          logAudit('クーポン失効', 'coupons/' + coupon.id);
-          toast('クーポンを失効しました（モック）。', 'success');
-          refreshSection();
-        });
+  var listHolder = el('div', {}, []);
+  host.appendChild(listHolder);
+  function refreshCouponList() {
+    clearNode(listHolder);
+    loadInto(listHolder, function () {
+      return apiRequest('GET', '/api/v1/admin/coupons');
+    }, function (target, data) {
+      var coupons = data.items || [];
+      if (!coupons.length) {
+        target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: 'クーポンはまだありません。' }, [])]));
+        return;
+      }
+      var rows = coupons.map(function (coupon) {
+        var action = el('span', {}, []);
+        if (coupon.status === 'active') {
+          var revoke = el('button', { class: 'btn btn-small', type: 'button', text: '失効' }, []);
+          revoke.addEventListener('click', function () {
+            confirmDialog({
+              title: 'クーポンを失効します',
+              lines: ['新規引き換えを停止します。付与済みの分は維持されます。'],
+              okLabel: '失効する'
+            }).then(function (ok) {
+              if (!ok) { return; }
+              apiRequest('POST', '/api/v1/admin/coupons/' + encodeURIComponent(coupon.id) + '/revoke', {}).then(function (result) {
+                if (!result.ok && result.status !== 204) { toast(apiError(result)); return; }
+                toast('クーポンを失効しました。', 'success');
+                refreshCouponList();
+              });
+            });
+          });
+          action.appendChild(revoke);
+        }
+        return el('tr', {}, [
+          el('td', { text: couponSummary(coupon) }, []),
+          el('td', { text: (coupon.redeemed_count || 0) + ' / ' + (coupon.max_redemptions || 0) }, []),
+          el('td', {}, [coupon.status === 'active' ? badge('有効', 'active') : badge('失効', 'inactive')]),
+          el('td', { text: coupon.expires_at ? fmtDate(coupon.expires_at) : '無期限' }, []),
+          el('td', { text: coupon.note || '—' }, []),
+          el('td', {}, [action])
+        ]);
       });
-    }
-    return el('tr', {}, [
-      el('td', { text: coupon.id }, []),
-      el('td', { text: coupon.kind === 'plan_grant' ? 'プラン付与' : '回数追加' }, []),
-      el('td', { text: couponSummary(coupon) }, []),
-      el('td', { text: coupon.redeemed + ' / ' + coupon.max }, []),
-      el('td', { text: coupon.expires }, []),
-      el('td', {}, [statusNode]),
-      el('td', {}, [action])
-    ]);
-  });
-  host.appendChild(el('div', { class: 'card table-wrap' }, [
-    el('h3', { text: 'クーポン一覧' }, []),
-    el('p', { class: 'sub', text: '引き換え状況と残数を確認できます。' }, []),
-    el('table', {}, [
-      el('thead', {}, [el('tr', {}, [
-        el('th', { scope: 'col', text: 'ID' }, []),
-        el('th', { scope: 'col', text: '種別' }, []),
-        el('th', { scope: 'col', text: '内容' }, []),
-        el('th', { scope: 'col', text: '引き換え' }, []),
-        el('th', { scope: 'col', text: '有効期限' }, []),
-        el('th', { scope: 'col', text: '状態' }, []),
-        el('th', { scope: 'col', text: '操作' }, [])
-      ])]),
-      el('tbody', {}, rows)
-    ])
-  ]));
+      target.appendChild(el('div', { class: 'card table-wrap' }, [
+        el('h3', { text: '発行済みクーポン' }, []),
+        el('table', {}, [
+          el('thead', {}, [el('tr', {}, [
+            el('th', { scope: 'col', text: '内容' }, []),
+            el('th', { scope: 'col', text: '引き換え' }, []),
+            el('th', { scope: 'col', text: '状態' }, []),
+            el('th', { scope: 'col', text: '期限' }, []),
+            el('th', { scope: 'col', text: 'メモ' }, []),
+            el('th', { scope: 'col', text: '操作' }, [])
+          ])]),
+          el('tbody', {}, rows)
+        ])
+      ]));
+    });
+  }
+  refreshCouponList();
 }
 
 /* ---------- 無料登録URL ---------- */
+
 function renderInvites(host) {
-  var reveal = el('div', { class: 'callout warning', 'aria-live': 'polite' }, []);
-  var expirySelect = el('select', {}, [
-    el('option', { value: '1', text: '24時間後' }, []),
-    el('option', { value: '3', text: '72時間後' }, []),
-    el('option', { value: '7', text: '7日後' }, [])
-  ]);
-  var issueButton = el('button', { class: 'btn btn-primary', type: 'button', text: '登録URLを発行' }, []);
+  var reveal = el('div', { class: 'callout', 'aria-live': 'polite' }, []);
+  var error = el('p', { class: 'error-note', role: 'alert' }, []);
+  var hours = el('input', { type: 'number', min: '1', max: '720', value: '72' }, []);
+  var issueButton = el('button', { class: 'btn btn-primary', type: 'button', text: 'URLを発行' }, []);
   issueButton.addEventListener('click', function () {
     clearNode(reveal);
-    var token = randomToken();
-    var url = window.location.origin + '/claim#' + token;
-    var invite = {
-      id: 'inv-' + String(100 + state.invites.length + 1),
-      status: 'unused',
-      expires: dateAfterDays(parseInt(expirySelect.value, 10)) + ' 23:59',
-      created: nowStamp(),
-      consumedBy: null,
-      consumedAt: null
-    };
-    state.invites.unshift(invite);
-    logAudit('登録URL発行', 'admin_invites/' + invite.id);
-    reveal.appendChild(el('p', { text: '発行しました（トークンは再表示できません）' }, []));
-    reveal.appendChild(el('code', { text: url }, []));
-    var copy = el('button', { class: 'btn btn-small', type: 'button', text: 'コピー' }, []);
-    copy.addEventListener('click', function () { copyText(url, '登録URLをコピーしました。'); });
-    reveal.appendChild(copy);
-    reveal.appendChild(el('p', { class: 'note', text: '本番ではURLフラグメントで受け渡し、claim landingで短期セッションへ移行します。' }, []));
-    toast('登録URL ' + invite.id + ' を発行しました（モック）。', 'success');
-    refreshSection();
+    clearNode(error);
+    apiRequest('POST', '/api/v1/admin/invites', {
+      ttl_hours: parseInt(hours.value, 10)
+    }).then(function (result) {
+      if (!result.ok) { error.textContent = apiError(result); return; }
+      var url = result.data.url;
+      var copy = el('button', { class: 'btn btn-small', type: 'button', text: 'コピー' }, []);
+      copy.addEventListener('click', function () { copyText(url, '登録URLをコピーしました。'); });
+      reveal.appendChild(el('p', { class: 'code', text: url }, []));
+      reveal.appendChild(el('div', { class: 'btn-row' }, [copy]));
+      toast('登録URLを発行しました。', 'success');
+      refreshInviteList();
+    });
   });
-
   host.appendChild(el('div', { class: 'card' }, [
-    el('h3', { text: '登録URL発行' }, []),
-    el('p', { class: 'sub', text: '1回限り。LINE Login完了時に消費されます。' }, []),
+    el('h3', { text: '無料登録URL発行' }, []),
+    el('p', { class: 'sub', text: '1回限り。LINE Login成功時に消費されます。' }, []),
     el('div', { class: 'toolbar' }, [
-      el('div', { class: 'field' }, [el('label', { text: '有効期限' }, []), expirySelect]),
-      el('div', { class: 'field' }, [el('label', { text: '発行' }, []), issueButton])
-    ])
+      el('div', { class: 'field' }, [el('label', { text: '有効期間（時間）' }, []), hours]),
+      el('div', { class: 'field' }, [el('label', { text: '' }, []), issueButton])
+    ]),
+    error
   ]));
   host.appendChild(reveal);
 
-  var statusBadge = { unused: ['未使用', 'active'], consumed: ['使用済み', 'inactive'], expired: ['期限切れ', 'warning'], revoked: ['失効', 'danger'] };
-  var rows = state.invites.map(function (invite) {
-    var meta = statusBadge[invite.status];
-    var action = null;
-    if (invite.status === 'unused') {
-      action = el('button', { class: 'btn btn-small btn-danger', type: 'button', text: '失効' }, []);
-      action.addEventListener('click', function () {
-        confirmDialog({ title: '登録URLを失効します', lines: ['未使用のURLを無効化します。'], danger: true, okLabel: '失効する' }).then(function (ok) {
-          if (!ok) { return; }
-          invite.status = 'revoked';
-          logAudit('登録URL失効', 'admin_invites/' + invite.id);
-          toast('登録URLを失効しました（モック）。', 'success');
-          refreshSection();
-        });
+  var listHolder = el('div', {}, []);
+  host.appendChild(listHolder);
+  function refreshInviteList() {
+    clearNode(listHolder);
+    loadInto(listHolder, function () {
+      return apiRequest('GET', '/api/v1/admin/invites');
+    }, function (target, data) {
+      var invites = data.items || [];
+      if (!invites.length) {
+        target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '発行済みのURLはまだありません。' }, [])]));
+        return;
+      }
+      var rows = invites.map(function (invite) {
+        var action = el('span', {}, []);
+        if (invite.effective_status === 'unused') {
+          var revoke = el('button', { class: 'btn btn-small', type: 'button', text: '失効' }, []);
+          revoke.addEventListener('click', function () {
+            apiRequest('POST', '/api/v1/admin/invites/' + encodeURIComponent(invite.id) + '/revoke', {}).then(function (result) {
+              if (!result.ok && result.status !== 204) { toast(apiError(result)); return; }
+              toast('登録URLを失効しました。', 'success');
+              refreshInviteList();
+            });
+          });
+          action.appendChild(revoke);
+        }
+        var statusLabel = {
+          unused: badge('未使用', 'active'),
+          consumed: badge('使用済み', 'inactive'),
+          revoked: badge('失効', 'inactive'),
+          expired: badge('期限切れ', 'warning')
+        }[invite.effective_status] || badge(invite.effective_status || '?', 'inactive');
+        return el('tr', {}, [
+          el('td', { text: shortId(invite.id) }, []),
+          el('td', {}, [statusLabel]),
+          el('td', { text: fmtDate(invite.expires_at) }, []),
+          el('td', { text: fmtDate(invite.created_at) }, []),
+          el('td', { text: invite.consumed_by ? shortId(invite.consumed_by) : '—' }, []),
+          el('td', { text: invite.consumed_at ? fmtDate(invite.consumed_at) : '—' }, []),
+          el('td', {}, [action])
+        ]);
       });
-    }
-    return el('tr', {}, [
-      el('td', { text: invite.id }, []),
-      el('td', {}, [badge(meta[0], meta[1])]),
-      el('td', { text: invite.expires }, []),
-      el('td', { text: invite.created }, []),
-      el('td', { text: invite.consumedBy ? invite.consumedBy + '（' + invite.consumedAt + '）' : '—' }, []),
-      el('td', {}, [action])
-    ]);
-  });
-  host.appendChild(el('div', { class: 'card table-wrap' }, [
-    el('h3', { text: '発行済みURL' }, []),
-    el('p', { class: 'sub', text: '状態と消費者を確認できます。' }, []),
-    el('table', {}, [
-      el('thead', {}, [el('tr', {}, [
-        el('th', { scope: 'col', text: 'ID' }, []),
-        el('th', { scope: 'col', text: '状態' }, []),
-        el('th', { scope: 'col', text: '有効期限' }, []),
-        el('th', { scope: 'col', text: '作成日時' }, []),
-        el('th', { scope: 'col', text: '使用者' }, []),
-        el('th', { scope: 'col', text: '操作' }, [])
-      ])]),
-      el('tbody', {}, rows)
-    ])
-  ]));
+      target.appendChild(el('div', { class: 'card table-wrap' }, [
+        el('h3', { text: '発行済みURL' }, []),
+        el('table', {}, [
+          el('thead', {}, [el('tr', {}, [
+            el('th', { scope: 'col', text: 'ID' }, []),
+            el('th', { scope: 'col', text: '状態' }, []),
+            el('th', { scope: 'col', text: '期限' }, []),
+            el('th', { scope: 'col', text: '発行日時' }, []),
+            el('th', { scope: 'col', text: '使用者' }, []),
+            el('th', { scope: 'col', text: '使用日時' }, []),
+            el('th', { scope: 'col', text: '操作' }, [])
+          ])]),
+          el('tbody', {}, rows)
+        ])
+      ]));
+    });
+  }
+  refreshInviteList();
 }
 
 /* ---------- 会話保管 ---------- */
+
 function renderConversations(host) {
   host.appendChild(el('p', { class: 'notice', text: '初期版では本文を表示しません。件数とメタデータのみ確認できます。' }, []));
-  var piiCount = state.conversations.filter(function (row) { return row.pii; }).length;
-  var rows = state.conversations.map(function (row) {
-    return el('tr', {}, [
-      el('td', { text: row.date }, []),
-      el('td', { text: row.user }, []),
-      el('td', {}, [planBadge(row.plan)]),
-      el('td', { text: row.type }, []),
-      el('td', {}, [row.denied ? badge('拒否', 'danger') : document.createTextNode('—')]),
-      el('td', {}, [row.pii ? badge('検知', 'warning') : document.createTextNode('—')])
-    ]);
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/conversations?limit=100');
+  }, function (target, data) {
+    var items = data.items || [];
+    var piiCount = items.filter(function (row) { return row.pii_suspected; }).length;
+    var rows = items.map(function (row) {
+      return el('tr', {}, [
+        el('td', { text: fmtDate(row.created_at) }, []),
+        el('td', { text: shortId(row.user_id) }, []),
+        el('td', {}, [planBadge(row.plan || 'free')]),
+        el('td', { text: row.question_type || '—' }, []),
+        el('td', {}, [row.denied ? badge('拒否', 'danger') : document.createTextNode('—')]),
+        el('td', {}, [row.pii_suspected ? badge('検知', 'warning') : document.createTextNode('—')])
+      ]);
+    });
+    if (!rows.length) {
+      target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '保管済みの会話はまだありません。' }, [])]));
+      return;
+    }
+    target.appendChild(el('div', { class: 'card table-wrap' }, [
+      el('h3', { text: '保管済み会話（メタデータ）' }, []),
+      el('p', { class: 'sub', text: '直近' + items.length + '件・PII検知' + piiCount + '件' }, []),
+      el('table', {}, [
+        el('thead', {}, [el('tr', {}, [
+          el('th', { scope: 'col', text: '日時' }, []),
+          el('th', { scope: 'col', text: 'ユーザー' }, []),
+          el('th', { scope: 'col', text: 'プラン' }, []),
+          el('th', { scope: 'col', text: '主目的' }, []),
+          el('th', { scope: 'col', text: '上限拒否' }, []),
+          el('th', { scope: 'col', text: 'PII検知' }, [])
+        ])]),
+        el('tbody', {}, rows)
+      ])
+    ]));
   });
-  host.appendChild(el('div', { class: 'card table-wrap' }, [
-    el('h3', { text: '保管済み会話（メタデータ）' }, []),
-    el('p', { class: 'sub', text: '総' + state.conversations.length + '件・PII検知' + piiCount + '件（架空データ）' }, []),
-    el('table', {}, [
-      el('thead', {}, [el('tr', {}, [
-        el('th', { scope: 'col', text: '日時' }, []),
-        el('th', { scope: 'col', text: 'ユーザー' }, []),
-        el('th', { scope: 'col', text: 'プラン' }, []),
-        el('th', { scope: 'col', text: '主目的' }, []),
-        el('th', { scope: 'col', text: '上限拒否' }, []),
-        el('th', { scope: 'col', text: 'PII検知' }, [])
-      ])]),
-      el('tbody', {}, rows)
-    ])
-  ]));
-  host.appendChild(el('p', { class: 'help', text: '保持期間は未決定（設計書10節）。本文閲覧は監査記録付きの個別権限として将来追加します。' }, []));
 }
 
 /* ---------- 要望 ---------- */
-function renderFeedback(host) {
-  var openCount = state.feedback.filter(function (item) { return item.status === 'open'; }).length;
-  var handledCount = state.feedback.length - openCount;
-  var tabs = [
-    ['open', '未対応 ' + openCount],
-    ['handled', '対応済み ' + handledCount],
-    ['all', 'すべて ' + state.feedback.length]
-  ];
-  var segmented = el('div', { class: 'segmented', role: 'group', 'aria-label': '対応状況' }, []);
-  tabs.forEach(function (tab) {
-    segmented.appendChild(el('button', {
-      type: 'button',
-      text: tab[1],
-      'aria-pressed': String(state.feedbackFilter === tab[0]),
-      onclick: function () { state.feedbackFilter = tab[0]; refreshSection(); }
-    }, []));
-  });
-  host.appendChild(el('div', { class: 'card' }, [
-    el('h3', { text: 'LINE要望' }, []),
-    el('p', { class: 'sub', text: '未対応を優先して確認します。' }, []),
-    segmented
-  ]));
 
-  var items = state.feedback.filter(function (item) {
-    if (state.feedbackFilter === 'all') { return true; }
-    return state.feedbackFilter === 'open' ? item.status === 'open' : item.status === 'handled';
-  });
-  if (!items.length) {
-    host.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '該当する要望がありません。' }, [])]));
-    return;
-  }
-  items.forEach(function (item) {
-    var card = el('div', { class: 'card' }, [
-      el('div', { class: 'head' }, [
-        el('h3', { text: item.user }, []),
-        el('time', { text: item.date }, []),
-        item.status === 'open' ? badge('未対応', 'warning') : badge('対応済み', 'active')
-      ]),
-      el('p', { text: item.content }, [])
-    ]);
-    if (item.status === 'handled') {
-      card.appendChild(kv([
-        ['管理メモ', item.note || '—'],
-        ['対応者', item.handledBy],
-        ['対応日時', item.handledAt]
-      ]));
-    } else {
-      var note = el('textarea', { 'aria-label': '管理メモ' }, []);
-      note.placeholder = '管理メモ（任意）';
-      var done = el('button', { class: 'btn btn-primary', type: 'button', text: '対応済みにする' }, []);
-      done.addEventListener('click', function () {
-        item.status = 'handled';
-        item.note = note.value.trim() || null;
-        item.handledBy = 'local-admin';
-        item.handledAt = nowStamp();
-        logAudit('要望ステータス更新', 'feedback/' + item.id);
-        toast('要望を対応済みにしました（モック）。', 'success');
-        refreshSection();
-      });
-      card.appendChild(el('div', { class: 'field' }, [el('label', { text: '管理メモ' }, []), note]));
-      card.appendChild(el('div', { class: 'btn-row' }, [done]));
+var feedbackFilter = 'open';
+
+function renderFeedback(host) {
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    var query = feedbackFilter === 'all' ? '' : '?status_filter=' + feedbackFilter;
+    return apiRequest('GET', '/api/v1/admin/feedback' + query);
+  }, function (target, data) {
+    var items = data.items || [];
+    var tabs = [
+      ['open', '未対応'],
+      ['handled', '対応済み'],
+      ['all', 'すべて']
+    ];
+    var segmented = el('div', { class: 'segmented', role: 'group', 'aria-label': '対応状況' }, []);
+    tabs.forEach(function (tab) {
+      segmented.appendChild(el('button', {
+        type: 'button',
+        text: tab[1],
+        'aria-pressed': String(feedbackFilter === tab[0]),
+        onclick: function () { feedbackFilter = tab[0]; refreshSection(); }
+      }, []));
+    });
+    target.appendChild(el('div', { class: 'card' }, [
+      el('h3', { text: 'LINE要望' }, []),
+      el('p', { class: 'sub', text: '未対応を優先して確認します。' }, []),
+      segmented
+    ]));
+    if (!items.length) {
+      target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '該当する要望がありません。' }, [])]));
+      return;
     }
-    host.appendChild(card);
+    items.forEach(function (item) {
+      var card = el('div', { class: 'card' }, [
+        el('div', { class: 'head' }, [
+          el('h3', { text: item.display_name || '(名称未取得)' }, []),
+          el('time', { text: fmtDate(item.created_at) }, []),
+          item.status === 'open' ? badge('未対応', 'warning') : badge('対応済み', 'active')
+        ]),
+        el('p', { text: item.content }, [])
+      ]);
+      if (item.status === 'handled') {
+        card.appendChild(kv([
+          ['管理メモ', item.admin_note || '—'],
+          ['対応者', item.handled_by || '—'],
+          ['対応日時', fmtDate(item.handled_at)]
+        ]));
+      } else {
+        var note = el('textarea', { 'aria-label': '管理メモ' }, []);
+        note.placeholder = '管理メモ（任意）';
+        var done = el('button', { class: 'btn btn-primary', type: 'button', text: '対応済みにする' }, []);
+        done.addEventListener('click', function () {
+          apiRequest('POST', '/api/v1/admin/feedback/' + encodeURIComponent(item.id) + '/status', {
+            status: 'handled',
+            admin_note: note.value.trim() || null
+          }).then(function (result) {
+            if (!result.ok && result.status !== 204) { toast(apiError(result)); return; }
+            toast('要望を対応済みにしました。', 'success');
+            refreshSection();
+          });
+        });
+        card.appendChild(el('div', { class: 'field' }, [el('label', { text: '管理メモ' }, []), note]));
+        card.appendChild(el('div', { class: 'btn-row' }, [done]));
+      }
+      target.appendChild(card);
+    });
   });
 }
 
 /* ---------- 監査ログ ---------- */
+
 function renderAudit(host) {
-  var list = el('ul', { class: 'timeline' }, []);
-  state.audit.forEach(function (entry) {
-    list.appendChild(el('li', {}, [
-      el('div', { class: 'head' }, [
-        el('time', { text: entry.at }, []),
-        el('span', { class: 'action', text: entry.action }, []),
-        badge(entry.result, 'active')
-      ]),
-      el('p', { class: 'meta', text: entry.actor + '・' + entry.target + (entry.revision ? '・rev ' + entry.revision : '') }, [])
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/audit-logs?limit=100');
+  }, function (target, data) {
+    var items = data.items || [];
+    var list = el('ul', { class: 'timeline' }, []);
+    items.forEach(function (entry) {
+      list.appendChild(el('li', {}, [
+        el('div', { class: 'head' }, [
+          el('time', { text: fmtDate(entry.created_at) }, []),
+          el('span', { class: 'action', text: entry.action }, []),
+          badge(entry.result || 'success', entry.result === 'success' ? 'active' : 'danger')
+        ]),
+        el('p', { class: 'meta', text: (entry.actor || '?') + '・' + (entry.target_type || '') + (entry.target_id ? '/' + entry.target_id : '') + (entry.revision ? '・rev ' + entry.revision : '') }, [])
+      ]));
+    });
+    if (!list.childNodes.length) {
+      list.appendChild(el('li', {}, [el('p', { class: 'meta', text: '監査ログはまだありません。' }, [])]));
+    }
+    target.appendChild(el('div', { class: 'card' }, [
+      el('h3', { text: '操作履歴' }, []),
+      el('p', { class: 'sub', text: '管理操作を新しい順に表示します。' }, []),
+      list
     ]));
   });
-  host.appendChild(el('div', { class: 'card' }, [
-    el('h3', { text: '操作履歴' }, []),
-    el('p', { class: 'sub', text: '管理操作を新しい順に表示します。' }, []),
-    list
-  ]));
 }
 
 /* ---------- ルーティング ---------- */
+
 var renderers = {
   overview: renderOverview,
   users: renderUsers,
@@ -981,6 +1092,11 @@ function setSection(name) {
   renderSection(target, true);
 }
 
+function startApp() {
+  setEnvBadge('ログイン中: ' + session.email);
+  setSection(currentSectionFromHash());
+}
+
 function init() {
   document.querySelectorAll('.section-nav button').forEach(function (button) {
     button.addEventListener('click', function () { setSection(button.getAttribute('data-section')); });
@@ -989,7 +1105,7 @@ function init() {
     var target = currentSectionFromHash();
     if (target !== renderedSection) { setSection(target); }
   });
-  setSection(currentSectionFromHash());
+  bootstrapSession();
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -9,6 +9,17 @@ from fastapi import HTTPException
 from app.api.v1 import chat as chat_api
 
 
+@pytest.fixture(autouse=True)
+def _mock_plan_settings(monkeypatch) -> None:
+    """plan_settings読み取りをモックし、実Firestoreへ接続しないようにする。"""
+    repository = MagicMock()
+    repository.get_published_daily_limit = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.repositories.firestore_plan_settings_repository.FirestorePlanSettingsRepository",
+        lambda: repository,
+    )
+
+
 def _request_with_rag_service(rag_service: MagicMock) -> MagicMock:
     """RAGサービスを保持する最小のRequestモックを返す。"""
     request = MagicMock()

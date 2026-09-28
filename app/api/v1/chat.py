@@ -156,6 +156,19 @@ async def send_message(
     # LINE経路と同じ日次上限を公開APIにも適用し、直接API呼び出しによる
     # 利用回数・Vertex AI課金の迂回を防ぐ。
     daily_limit = get_daily_message_limit(plan)
+    try:
+        from app.repositories.firestore_plan_settings_repository import (
+            FirestorePlanSettingsRepository,
+        )
+
+        published_limit = await FirestorePlanSettingsRepository().get_published_daily_limit(plan)
+        if published_limit is not None:
+            daily_limit = published_limit
+    except Exception as exc:
+        logger.warning(
+            "Plan settings fallback to code default: error_type=%s",
+            type(exc).__name__,
+        )
     limit_result = await FirestoreUsageRepository().increment_with_limit_check(
         str(current_user.id),
         plan,
