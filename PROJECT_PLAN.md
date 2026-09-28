@@ -325,7 +325,9 @@ P0公開ゲート:
 - [x] 2026-09-28（費用方針変更）: ドメイン取得とLB費用（月$20前後）を避けるためIAP＋HTTPS LB構成を不採用とし、Cloud Run IAM認証（`run_iam` モード）＋cloud-run-proxy に切り替えた。
 - [x] `run_iam` 認証モードを実装: Authorization Bearer のGoogle IDトークンをGoogle OAuth公開鍵で検証（署名・exp・iss・aud・email_verified）し、既存の admin_admins allowlist・監査・CSRFをそのまま利用。audienceは `ADMIN_RUN_IAM_AUDIENCES`（カンマ区切り）で指定。ローカルプロキシ経由のhttp://localhostを想定し、このモードのセッションCookieはSecure属性を付けない。単体テスト3件追加（全unit 205件成功）。
 - [x] 管理コンソールプロキシ起動スキル `chabot-admin-proxy` を `.agents/skills/` と `.claude/skills/` の両方へ作成。「管理画面を開いて」等の自然言語指示から `scripts/start_admin_proxy.sh`（npx cloud-run-proxy）を起動する。プロジェクトの両配置同一性ルールに従う。
-- [ ] chabot-adminの再デプロイ（run_iamモード・ingress=all・audience設定）と管理者Firestore `admin_admins` 登録、実E2E確認は本コミット後に実施する。
+- [x] 2026-09-28: `chabot-admin` を run_iam モードへ再デプロイ（リビジョン `chabot-admin-00002-x6r`・イメージ `admin-264fff7`・ingress `all`）。未認証アクセスは403で拒否。IAM権限として ユーザーアカウントへ chabot-sa の `iam.serviceAccountTokenCreator`、chabot-sa へ `run.invoker` を付与（いずれも取り消し可能）。Firestore `admin_admins` へ ユーザーメールと `chabot-sa@...` を登録。
+- [x] 2026-09-28: cloud-run-proxy はnpm/リリースバイナリが提供されていないため、同梱のローカルプロキシ `scripts/admin_proxy.py`（chabot-sa権限借用のgenerateIdToken・トークンキャッシュ・Set-Cookie中継対応）を実装し `scripts/start_admin_proxy.sh` から起動する方式へ確定。実E2Eで プロキシ経由 /health 200・/api/v1/admin/session 200（email+csrf発行）・/admin 200 を確認。管理コンソールはブラウザで http://localhost:8080/admin から利用可能。
+- [ ] 運用メモ: gcloudの `print-identity-token --audiences` はユーザーアカウントでは使えない（サービスアカウント専用）。ユーザートークンはaudがgcloudクライアントIDになるためアプリ側で拒否される仕様（Cloud RunのIAMは受理する）。トークン発行の429レート制限が発生した場合は数分待って再試行する（プロキシは約1時間キャッシュするため通常発生しない）。
 - [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。

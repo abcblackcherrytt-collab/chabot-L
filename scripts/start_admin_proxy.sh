@@ -4,14 +4,9 @@
 
 set -eu
 
-PROJECT_ID="${CHABOT_ADMIN_PROJECT_ID:-takahashi-451312}"
-REGION="${CHABOT_ADMIN_REGION:-asia-northeast1}"
-SERVICE="${CHABOT_ADMIN_SERVICE:-chabot-admin}"
-PORT="${ADMIN_PROXY_PORT:-8080}"
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PY="$DIR/venv/bin/python"
+[ -x "$PY" ] || PY=python3
 
-echo "Starting admin console proxy: http://localhost:${PORT}/admin"
-exec npx -y cloud-run-proxy \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --service "$SERVICE" \
-  --port "$PORT"
+exec "$PY" "$DIR/scripts/admin_proxy.py"
+
