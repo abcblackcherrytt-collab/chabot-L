@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-28（管理UI本番実装：Firestore管理API・Bot側連携・単体テスト完了）
+> **更新日**: 2026-09-28（管理UI本番実装＋chabot-admin初回デプロイ完了）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -321,7 +321,8 @@ P0公開ゲート:
 - [x] 無料登録URL引き換え導線（公開Bot側 `/api/v1/invite`）: URL fragmentのトークンをlanding JSから同一origin POSTへ移行し履歴から消去 → 署名付きクレームCookie（10分）→ LINE Login（return_to=/api/v1/invite/complete）→ Refresh Cookie認証後にTransactionで unused→consumed を確定し registration_source=admin_invite を記録。既存ユーザーは紐付けのみ（プラン変更・重複作成なし）。
 - [x] 検証: 品質ゲート178件・全unit（PostgreSQL Refresh Token除外）202件成功、compileall成功。管理API認証・CSRF否定系・route分離、クーポンコードと引き換れ、招待トークンと消費、要望・プラン上書き・上限フォールバックの単体テストを追加。
 - [x] 設計書10節の未決定事項を決定: 有料上限はbasic/pro別、招待URL既定有効期限72時間（1〜720時間で指定可）、既存ユーザーのURL使用は紐付けのみ、クーポンはapp内プラン付与のみ（Stripeプロモコード連携なし）、bonus_messagesを初回から含める、要望入口はquick reply＋postback併用、conversations保持期間は未決定維持（本文閲覧は初期版非表示）。
-- [ ] 管理サービス `chabot-admin` のデプロイ・deploy-admin.yml・IAP/LB設定は未実施（ユーザー指示により別作業）。`ADMIN_UI_ENABLED=False` 既定を維持。
+- [x] 2026-09-28: `chabot-admin` を初回デプロイ（リビジョン `chabot-admin-00001-6hv`・イメージ `chabot-repo/chabot:admin-b1d4959`）。管理エントポイント `app.admin_server:app` で起動し、`ADMIN_UI_ENABLED=True, ADMIN_AUTH_MODE=iap`、ingress `internal-and-cloud-load-balancing`（run.app URLへの直接アクセス遮断を404で確認）、IAMバインディングなし（プライベート）、Secret参照は JWT_SECRET_KEYS / LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN。必要API（iap・compute・cloudbuild・run・artifactregistry）はすべて有効だった。公開Bot側の `ADMIN_UI_ENABLED=False` 既定は維持。
+- [ ] HTTPS LB・サーバーレスNEG・IAP有効化・OAuthブランド・audience設定（ステップ3〜5）と deploy-admin.yml は未実施。管理サービスはLB経路の確立まで外部から到達できない。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
 
