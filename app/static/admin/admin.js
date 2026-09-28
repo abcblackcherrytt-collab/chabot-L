@@ -245,7 +245,7 @@ function bootstrapSession() {
       renderDevLogin(host);
     } else {
       setEnvBadge('未認証');
-      host.appendChild(errorCard('管理者として認証されていません。Cloud IAP経由でアクセスしてください。'));
+      host.appendChild(errorCard('管理者として認証されていません。Cloud IAPまたは管理プロキシ経由でアクセスしてください。'));
     }
   }).catch(function () {
     clearNode(host);

@@ -6,12 +6,22 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import app.admin_api as admin_api_module
+from app.core.admin_security import AdminAuthError, verify_run_iam_identity
 from app.admin_server import create_admin_app
 from app.core.config import settings
 from app.server import app as public_app
 
 
 DEV_EMAIL = "admin@example.com"
+
+
+@pytest.fixture
+def run_iam_admin_app(monkeypatch) -> MagicMock:
+    """run_iamモードの管理アプリを返す。"""
+    monkeypatch.setattr(settings, "admin_auth_mode", "run_iam")
+    monkeypatch.setattr(settings, "admin_run_iam_audiences", "https://admin-test.run.app")
+    monkeypatch.setattr(admin_api_module, "is_admin_allowed", AsyncMock(return_value=True))
+    return create_admin_app(enabled=True)
 
 
 @pytest.fixture
@@ -115,3 +125,47 @@ async def test_admin_api_rejects_csrf_mismatch(dev_admin_app) -> None:
         )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_run_iam_requires_bearer_token(run_iam_admin_app) -> None:
+    """run_iamモードでBearerトークンなしを401で拒否すること。"""
+    transport = ASGITransport(app=run_iam_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        response = await client.get("/api/v1/admin/session")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["mode"] == "run_iam"
+
+
+@pytest.mark.asyncio
+async def test_run_iam_session_issues_non_secure_cookies(run_iam_admin_app, monkeypatch) -> None:
+    """run_iamモードでトークン検証後にセッションを発行すること。"""
+    async def _fake_verify(token: str) -> str:
+        return DEV_EMAIL
+
+    monkeypatch.setattr(
+        "app.core.admin_security.verify_run_iam_identity",
+        _fake_verify,
+    )
+    transport = ASGITransport(app=run_iam_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        response = await client.get(
+            "/api/v1/admin/session",
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == DEV_EMAIL
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "chabot_admin_session" in set_cookie
+    assert "Secure" not in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_run_iam_rejects_when_audience_not_configured(monkeypatch) -> None:
+    """audience未設定のrun_iamモードでトークン検証を失敗させること。"""
+    monkeypatch.setattr(settings, "admin_run_iam_audiences", "")
+
+    with pytest.raises(AdminAuthError, match="run_iam_audience_not_configured"):
+        await verify_run_iam_identity("some-token")

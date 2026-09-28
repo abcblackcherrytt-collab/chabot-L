@@ -27,10 +27,14 @@ ADMIN_SESSION_COOKIE = "chabot_admin_session"
 ADMIN_CSRF_COOKIE = "chabot_admin_csrf"
 ADMIN_ADMINS_COLLECTION = "admin_admins"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key-v1"
+GOOGLE_OAUTH_CERTS_URL = "https://www.googleapis.com/oauth2/v1/certs"
 IAP_ISSUERS = ("https://cloud.google.com/iap", "accounts.google.com")
+GOOGLE_ID_TOKEN_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 
 _iap_certs_cache: Dict[str, Any] = {}
 _iap_certs_cached_at: float = 0.0
+_google_certs_cache: Dict[str, Any] = {}
+_google_certs_cached_at: float = 0.0
 _allowlist_cache: Dict[str, tuple[float, bool]] = {}
 _ALLOWLIST_CACHE_TTL_SECONDS = 60.0
 _IAP_CERTS_CACHE_TTL_SECONDS = 600.0
@@ -102,6 +106,24 @@ async def _fetch_iap_certs(force: bool = False) -> Dict[str, str]:
     return _iap_certs_cache
 
 
+async def _fetch_google_oauth_certs(force: bool = False) -> Dict[str, str]:
+    """Google OAuth IDトークン検証用公開鍵（PEM形式）を取得し、キャッシュする。"""
+    global _google_certs_cache, _google_certs_cached_at
+    if (
+        not force
+        and _google_certs_cache
+        and time.monotonic() - _google_certs_cached_at < _IAP_CERTS_CACHE_TTL_SECONDS
+    ):
+        return _google_certs_cache
+    async with httpx.AsyncClient() as client:
+        response = await client.get(GOOGLE_OAUTH_CERTS_URL)
+        response.raise_for_status()
+        certs = response.json()
+    _google_certs_cache = certs or {}
+    _google_certs_cached_at = time.monotonic()
+    return _google_certs_cache
+
+
 def _decode_iap_assertion(assertion: str, certs: Dict[str, str]) -> Dict[str, Any]:
     """IAPアサーションJWTの署名・発行者・audience・有効期限を検証する。"""
     from google.auth import jwt as google_jwt
@@ -135,8 +157,15 @@ async def extract_admin_identity(request: Request) -> str:
 
     - iapモード: x-goog-iap-jwt-assertion を検証する。
     - devモード: debug=True限定で X-Admin-Dev-Email を許可リストと照合する。
+    - run_iamモード: Authorization Bearer のGoogle IDトークンを検証する
+      （Cloud RunのIAM保護とcloud-run-proxy経由のブラウザ利用を想定）。
     """
     mode = settings.admin_auth_mode
+    if mode == "run_iam":
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.lower().startswith("bearer "):
+            raise AdminAuthError("missing_bearer_token")
+        return await verify_run_iam_identity(authorization[7:].strip())
     if mode == "dev":
         if not settings.debug:
             raise AdminAuthError("dev_mode_requires_debug")
@@ -155,6 +184,47 @@ async def extract_admin_identity(request: Request) -> str:
     certs = await _fetch_iap_certs()
     payload = _decode_iap_assertion(assertion, certs)
     return _validate_iap_payload(payload)
+
+
+async def verify_run_iam_identity(token: str) -> str:
+    """Cloud Run IAM呼び出し用のGoogle IDトークンを検証し、メールアドレスを返す。
+
+    cloud-run-proxy および gcloud auth print-identity-token --audiences が
+    サービスURLをaudienceとして発行したトークンを想定する。
+    """
+    from google.auth import jwt as google_jwt
+
+    audiences = [
+        item.strip()
+        for item in settings.admin_run_iam_audiences.split(",")
+        if item.strip()
+    ]
+    if not audiences:
+        raise AdminAuthError("run_iam_audience_not_configured")
+    certs = await _fetch_google_oauth_certs()
+    payload: Optional[Dict[str, Any]] = None
+    last_error: Optional[Exception] = None
+    for audience in audiences:
+        try:
+            payload = google_jwt.decode(
+                token,
+                certs=certs,
+                verify=True,
+                audience=audience,
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+    if payload is None:
+        raise AdminAuthError("invalid_bearer_token") from last_error
+    if payload.get("iss") not in GOOGLE_ID_TOKEN_ISSUERS:
+        raise AdminAuthError("invalid_id_token_issuer")
+    email = payload.get("email")
+    if not isinstance(email, str) or not email:
+        raise AdminAuthError("missing_id_token_email")
+    if payload.get("email_verified") is False:
+        raise AdminAuthError("email_not_verified")
+    return email
 
 
 async def is_admin_allowed(email: str) -> bool:

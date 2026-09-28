@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-28（管理UI本番実装＋chabot-admin初回デプロイ完了）
+> **更新日**: 2026-09-28（管理UI本番実装・chabot-adminデプロイ・run_iam認証と管理プロキシスキル追加）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -322,7 +322,11 @@ P0公開ゲート:
 - [x] 検証: 品質ゲート178件・全unit（PostgreSQL Refresh Token除外）202件成功、compileall成功。管理API認証・CSRF否定系・route分離、クーポンコードと引き換れ、招待トークンと消費、要望・プラン上書き・上限フォールバックの単体テストを追加。
 - [x] 設計書10節の未決定事項を決定: 有料上限はbasic/pro別、招待URL既定有効期限72時間（1〜720時間で指定可）、既存ユーザーのURL使用は紐付けのみ、クーポンはapp内プラン付与のみ（Stripeプロモコード連携なし）、bonus_messagesを初回から含める、要望入口はquick reply＋postback併用、conversations保持期間は未決定維持（本文閲覧は初期版非表示）。
 - [x] 2026-09-28: `chabot-admin` を初回デプロイ（リビジョン `chabot-admin-00001-6hv`・イメージ `chabot-repo/chabot:admin-b1d4959`）。管理エントポイント `app.admin_server:app` で起動し、`ADMIN_UI_ENABLED=True, ADMIN_AUTH_MODE=iap`、ingress `internal-and-cloud-load-balancing`（run.app URLへの直接アクセス遮断を404で確認）、IAMバインディングなし（プライベート）、Secret参照は JWT_SECRET_KEYS / LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN。必要API（iap・compute・cloudbuild・run・artifactregistry）はすべて有効だった。公開Bot側の `ADMIN_UI_ENABLED=False` 既定は維持。
-- [ ] HTTPS LB・サーバーレスNEG・IAP有効化・OAuthブランド・audience設定（ステップ3〜5）と deploy-admin.yml は未実施。管理サービスはLB経路の確立まで外部から到達できない。
+- [x] 2026-09-28（費用方針変更）: ドメイン取得とLB費用（月$20前後）を避けるためIAP＋HTTPS LB構成を不採用とし、Cloud Run IAM認証（`run_iam` モード）＋cloud-run-proxy に切り替えた。
+- [x] `run_iam` 認証モードを実装: Authorization Bearer のGoogle IDトークンをGoogle OAuth公開鍵で検証（署名・exp・iss・aud・email_verified）し、既存の admin_admins allowlist・監査・CSRFをそのまま利用。audienceは `ADMIN_RUN_IAM_AUDIENCES`（カンマ区切り）で指定。ローカルプロキシ経由のhttp://localhostを想定し、このモードのセッションCookieはSecure属性を付けない。単体テスト3件追加（全unit 205件成功）。
+- [x] 管理コンソールプロキシ起動スキル `chabot-admin-proxy` を `.agents/skills/` と `.claude/skills/` の両方へ作成。「管理画面を開いて」等の自然言語指示から `scripts/start_admin_proxy.sh`（npx cloud-run-proxy）を起動する。プロジェクトの両配置同一性ルールに従う。
+- [ ] chabot-adminの再デプロイ（run_iamモード・ingress=all・audience設定）と管理者Firestore `admin_admins` 登録、実E2E確認は本コミット後に実施する。
+- [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
 

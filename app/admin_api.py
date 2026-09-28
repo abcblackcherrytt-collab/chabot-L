@@ -133,13 +133,16 @@ async def _require_admin_write(request: Request) -> Dict[str, Any]:
 
 def _set_session_cookies(response: Response, *, email: str, csrf_token: str) -> None:
     """管理セッションCookieとCSRF Cookieを設定する。"""
+    # run_iamモードはlocalhostの管理プロキシ経由を想定するためSecure属性を付けない。
+    # それ以外の本番モード（IAP）はSecureを付ける。
+    cookie_secure = not settings.debug and settings.admin_auth_mode != "run_iam"
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
         value=create_admin_session_token(email=email, csrf_token=csrf_token),
         max_age=settings.admin_session_ttl_seconds,
         path="/",
         httponly=True,
-        secure=not settings.debug,
+        secure=cookie_secure,
         samesite="strict",
     )
     response.set_cookie(
@@ -148,7 +151,7 @@ def _set_session_cookies(response: Response, *, email: str, csrf_token: str) -> 
         max_age=settings.admin_session_ttl_seconds,
         path="/",
         httponly=False,
-        secure=not settings.debug,
+        secure=cookie_secure,
         samesite="strict",
     )
     response.headers["Cache-Control"] = "no-store"

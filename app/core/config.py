@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     admin_iap_audience: str = ""
     # devモードで管理者として認めるメールアドレス（カンマ区切り・debug=True時のみ有効）。
     admin_dev_emails: str = ""
+    # run_iamモードで許容するIDトークンのaudience（カンマ区切り・サービスURL）。
+    admin_run_iam_audiences: str = ""
     # 管理セッションの有効期間（秒）。
     admin_session_ttl_seconds: int = 3600
     # 無料登録URLの既定有効期間（時間）。
