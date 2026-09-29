@@ -76,6 +76,6 @@ async def test_admin_shell_does_not_embed_user_data() -> None:
     async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
         response = await client.get("/admin")
 
-    assert "接続確認中" in response.text
+    assert "env-badge" not in response.text
     assert "u-00" not in response.text
     assert "lineId" not in response.text

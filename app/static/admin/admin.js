@@ -29,13 +29,6 @@ function clearNode(node) {
   while (node.firstChild) { node.removeChild(node.firstChild); }
 }
 
-function pageHead(title, description) {
-  return el('div', { class: 'page-head' }, [
-    el('h2', { text: title, tabindex: '-1' }, []),
-    el('p', { text: description }, [])
-  ]);
-}
-
 function badge(text, kind) {
   return el('span', { class: 'badge badge-' + kind, text: text }, []);
 }
@@ -74,17 +67,6 @@ var sectionTitles = {
   conversations: '会話保管',
   feedback: '要望',
   audit: '監査ログ'
-};
-
-var sectionMeta = {
-  overview: '期間別のアクティブユーザー数とメッセージ数を確認します。',
-  users: '登録ユーザーの検索・詳細・プラン変更を行います。',
-  settings: 'free/basic/proの日次回数上限を下書き・反映・ロールバックします。',
-  coupons: 'クーポンの発行・状況確認・失効を行います。コード平文は発行時のみ表示します。',
-  invites: '1回限りの無料登録URLを発行・失効します。URL平文は発行時のみ表示します。',
-  conversations: '保管済みの質問・回答ペアの件数とメタデータを確認します（本文は非表示）。',
-  feedback: 'LINEで受け付けた要望の確認と対応管理を行います。',
-  audit: '管理操作の履歴を確認します。'
 };
 
 var toastRegion = null;
@@ -196,11 +178,6 @@ function loadInto(container, fetchFn, renderFn) {
 
 /* ---------- セッション ---------- */
 
-function setEnvBadge(text) {
-  var node = document.getElementById('env-badge-text');
-  if (node) { node.textContent = text; }
-}
-
 function renderDevLogin(host) {
   var error = el('p', { class: 'error-note', role: 'alert' }, []);
   var email = el('input', { type: 'email', autocomplete: 'username', placeholder: 'admin@example.com' }, []);
@@ -229,7 +206,7 @@ function renderDevLogin(host) {
 function bootstrapSession() {
   var host = document.getElementById('section-host');
   clearNode(host);
-  host.appendChild(pageHead('Chabot 管理', 'セッションを確認しています…'));
+  host.appendChild(el('p', { class: 'sub', text: 'セッションを確認しています…' }, []));
   apiRequest('GET', '/api/v1/admin/session').then(function (result) {
     if (result.ok) {
       session.email = result.data.email;
@@ -244,7 +221,6 @@ function bootstrapSession() {
     if (session.authMode === 'dev') {
       renderDevLogin(host);
     } else {
-      setEnvBadge('未認証');
       host.appendChild(errorCard('管理者として認証されていません。Cloud IAPまたは管理プロキシ経由でアクセスしてください。'));
     }
   }).catch(function () {
@@ -1051,19 +1027,14 @@ function currentSectionFromHash() {
   return renderers[name] ? name : 'overview';
 }
 
-function renderSection(target, focusHeading) {
+function renderSection(target) {
   var host = document.getElementById('section-host');
   clearNode(host);
-  host.appendChild(pageHead(sectionTitles[target], sectionMeta[target]));
   renderers[target](host);
-  if (focusHeading) {
-    var heading = host.querySelector('.page-head h2');
-    if (heading) { heading.focus(); }
-  }
 }
 
 function refreshSection() {
-  renderSection(currentSectionFromHash(), false);
+  renderSection(currentSectionFromHash());
 }
 
 var renderedSection = null;
@@ -1082,11 +1053,10 @@ function setSection(name) {
     window.location.hash = target;
   }
   document.title = sectionTitles[target] + ' | Chabot 管理';
-  renderSection(target, true);
+  renderSection(target);
 }
 
 function startApp() {
-  setEnvBadge('ログイン中: ' + session.email);
   setSection(currentSectionFromHash());
 }
 

@@ -36,7 +36,6 @@ ADMIN_PAGE_HTML = """<!doctype html>
         <p class='brand-sub'>Chabot 管理コンソール</p>
       </div>
     </div>
-    <p class='env-badge' id='env-badge'><span aria-hidden='true'>●</span> <span id='env-badge-text'>接続確認中…</span></p>
   </header>
   <div class='app-body'>
     <nav class='section-nav' aria-label='管理メニュー'>

@@ -331,6 +331,7 @@ P0公開ゲート:
 - [x] 2026-09-30: 実UI利用で無料登録URL発行が `origin_mismatch`（403）になる問題を修正。原因は2つで、（1）プロキシがブラウザのOrigin（http://localhost:8080）をそのまま転送していた、（2）アプリがコンテナ転送のHTTPを基にオリジンを http スキームで計算していた。プロキシはOriginを転送先オリジンへ書き換え、アプリは `X-Forwarded-Proto`（Cloud Runが設定）で外部スキームを復元して比較するようにした。書込み経路E2E（招待URL発行→失効）で確認済み。
 - [x] 2026-09-30: 修正を `chabot-admin-00003-f4p`（`admin-ff76d7b`）へ本番反映。テスト用に発行した招待URL（inv_d656e9aa21b9）は検証直後に失効済み。併せて発行レスポンスへ保存用 `token_sha256` が含まれていた問題をコード修正（応答から除去・コミット済み・次回デプロイで反映）。
 - [x] 2026-09-30（ユーザー指示）: プラン変更UI/APIを簡素化。選択肢はfree/basic/proのみ（free選択でoverride解除）、変更理由の入力必須と期間指定を廃止。監査はbefore/afterのみ記録。設計書6.4節・7節も更新。
+- [x] 2026-09-30（ユーザー指示）: 全タブの見出し（h2）と説明文を削除し、ヘッダーの「ログイン中: サービスアカウント」バッジ表示も削除。各カード・テーブルの内容は従来どおり。
 - [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
