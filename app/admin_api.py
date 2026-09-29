@@ -80,9 +80,7 @@ class InviteIssueRequest(BaseModel):
 class UserPlanRequest(BaseModel):
     """プラン変更リクエスト。"""
 
-    plan: Optional[str] = None
-    reason: str = Field(min_length=1, max_length=200)
-    duration_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    plan: str = Field(pattern="^(free|basic|pro)$")
 
 
 class UserDeactivateRequest(BaseModel):
@@ -235,8 +233,6 @@ async def change_user_plan(
         _admin_service().change_user_plan,
         user_id=user_id,
         plan=request_data.plan,
-        reason=request_data.reason,
-        duration_days=request_data.duration_days,
         actor=session["sub"],
     )
     return Response(status_code=204)

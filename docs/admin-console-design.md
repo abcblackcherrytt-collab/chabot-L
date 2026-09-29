@@ -92,7 +92,7 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 ### 6.4 登録ユーザー一覧・プラン変更
 
 - 一覧: Firestore pageToken逐次取得（offset禁止）。表示: 表示名 / プラン / 有効状態 / 当日利用回数 / 登録日。検索は表示名前方一致。LINE user ID・emailは詳細画面のみ、一覧ではマスク
-- プラン変更: POST /users/{id}/plan（plan + reason必須）。plan_override を書き換え、監査へbefore/afterとreasonを記録。Stripe契約中ユーザーには確認ダイアログで競合警告
+- プラン変更: POST /users/{id}/plan（free/basic/proの選択のみ・2026-09-30に簡素化、理由入力と期間指定は廃止）。plan_override を書き換え、監査へbefore/afterを記録。free選択はoverride解除。Stripe契約中ユーザーには競合警告を表示
 - 禁止: 会話本文・Stripe内部値の編集。ユーザーの削除は行わず is_active=false の無効化のみ（unfollowと同じ扱い）
 
 ### 6.5 個別集計（アクティブユーザー数・メッセージ数）
@@ -130,7 +130,7 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 |---|---|---|
 | GET | /users | 一覧（pageToken / q / plan / status） |
 | GET | /users/{id} | 詳細（PIIは管理者のみ・監査記録） |
-| POST | /users/{id}/plan | プラン変更（reason必須） |
+| POST | /users/{id}/plan | プラン変更（free/basic/pro選択のみ） |
 | POST | /users/{id}/deactivate | 無効化 |
 | GET | /plan-settings | 上限設定一覧 |
 | PUT | /plan-settings/{plan} | 下書き保存 |

@@ -269,29 +269,23 @@ class AdminService:
         self,
         *,
         user_id: str,
-        plan: Optional[str],
-        reason: str,
-        duration_days: Optional[int],
+        plan: str,
         actor: str,
     ) -> None:
-        """プラン変更（plan_override）を行い、監査へ理由を残す。"""
-        if plan is not None and plan not in VALID_PLANS:
+        """プラン変更（plan_override）を行い、監査へ記録する。
+
+        freeを選択した場合はplan_overrideを解除する（Stripe契約は常に優先）。
+        """
+        if plan not in VALID_PLANS:
             raise ValueError("invalid_plan")
-        if not reason or not reason.strip():
-            raise ValueError("reason_required")
         detail = await self.admin_user_repository.get_user_detail(user_id)
         if detail is None:
             raise LookupError("user_not_found")
-        before = (detail.get("plan_override") or {}).get("plan")
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(days=duration_days)
-            if duration_days
-            else None
-        )
+        before = (detail.get("plan_override") or {}).get("plan") or "free"
         await self.admin_user_repository.set_plan_override(
             user_id=user_id,
-            plan=plan,
-            expires_at=expires_at,
+            plan=None if plan == "free" else plan,
+            expires_at=None,
             source="admin",
         )
         await self._audit(
@@ -299,7 +293,7 @@ class AdminService:
             action="user.plan_change",
             target_type="users",
             target_id=user_id,
-            detail=f"before={before} after={plan} reason={reason.strip()}",
+            detail=f"before={before} after={plan}",
         )
 
     async def deactivate_user(self, *, user_id: str, reason: str, actor: str) -> None:

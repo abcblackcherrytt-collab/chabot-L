@@ -128,6 +128,44 @@ async def test_admin_api_rejects_csrf_mismatch(dev_admin_app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_plan_change_needs_only_plan(dev_admin_app) -> None:
+    """プラン変更はプラン選択だけで完了すること（理由・期間は不要）。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        session = await client.get(
+            "/api/v1/admin/session",
+            headers={"X-Admin-Dev-Email": DEV_EMAIL},
+        )
+        csrf_token = session.json()["csrf_token"]
+
+        service = MagicMock()
+        service.change_user_plan = AsyncMock()
+        original_service = admin_api_module._admin_service
+        admin_api_module._admin_service = lambda: service
+        try:
+            response = await client.post(
+                "/api/v1/admin/users/user-1/plan",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"plan": "basic"},
+            )
+            assert response.status_code == 204
+            service.change_user_plan.assert_awaited_once_with(
+                user_id="user-1",
+                plan="basic",
+                actor=DEV_EMAIL,
+            )
+
+            invalid = await client.post(
+                "/api/v1/admin/users/user-1/plan",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"plan": "gold"},
+            )
+            assert invalid.status_code == 422
+        finally:
+            admin_api_module._admin_service = original_service
+
+
+@pytest.mark.asyncio
 async def test_run_iam_requires_bearer_token(run_iam_admin_app) -> None:
     """run_iamモードでBearerトークンなしを401で拒否すること。"""
     transport = ASGITransport(app=run_iam_admin_app)

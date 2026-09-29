@@ -358,19 +358,15 @@ function renderUserDetail(host) {
     if (!user.is_active) { return; }
     var error = el('p', { class: 'error-note', role: 'alert' }, []);
     var planSelect = el('select', {}, [
-      el('option', { value: '', text: '既定（free）へ戻す' }, []),
+      el('option', { value: 'free', text: 'free' }, []),
       el('option', { value: 'basic', text: 'basic' }, []),
       el('option', { value: 'pro', text: 'pro' }, [])
     ]);
-    var days = el('input', { type: 'number', min: '1', max: '3650', placeholder: '日数（未入力で無期限）' }, []);
-    var reason = el('textarea', { 'aria-label': '変更理由（必須）' }, []);
-    reason.placeholder = '変更理由を入力（必須）';
+    planSelect.value = (user.plan_override && user.plan_override.plan) || user.subscription_plan || 'free';
     var form = el('form', {}, [
       el('h4', { text: 'プラン変更' }, []),
       el('div', { class: 'toolbar' }, [
-        el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
-        el('div', { class: 'field' }, [el('label', { text: '期間（日）' }, []), days]),
-        el('div', { class: 'field grow' }, [el('label', { text: '理由' }, []), reason])
+        el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect])
       ]),
       el('div', { class: 'btn-row' }, [
         el('button', { class: 'btn btn-primary', type: 'submit', text: 'プランを変更' }, [])
@@ -380,14 +376,11 @@ function renderUserDetail(host) {
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       clearNode(error);
-      if (!reason.value.trim()) { error.textContent = '変更理由は必須です。'; return; }
-      if (stripeActive && planSelect.value) {
+      if (stripeActive && planSelect.value !== 'free') {
         toast('Stripe契約中のため、Bot側はStripeプランを優先します。', 'info');
       }
       apiRequest('POST', '/api/v1/admin/users/' + encodeURIComponent(user.id) + '/plan', {
-        plan: planSelect.value || null,
-        reason: reason.value.trim(),
-        duration_days: days.value ? parseInt(days.value, 10) : null
+        plan: planSelect.value
       }).then(function (result2) {
         if (!result2.ok && result2.status !== 204) { error.textContent = apiError(result2); return; }
         toast('プランを変更しました。', 'success');
