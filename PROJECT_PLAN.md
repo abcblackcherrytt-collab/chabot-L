@@ -328,6 +328,7 @@ P0公開ゲート:
 - [x] 2026-09-28: `chabot-admin` を run_iam モードへ再デプロイ（リビジョン `chabot-admin-00002-x6r`・イメージ `admin-264fff7`・ingress `all`）。未認証アクセスは403で拒否。IAM権限として ユーザーアカウントへ chabot-sa の `iam.serviceAccountTokenCreator`、chabot-sa へ `run.invoker` を付与（いずれも取り消し可能）。Firestore `admin_admins` へ ユーザーメールと `chabot-sa@...` を登録。
 - [x] 2026-09-28: cloud-run-proxy はnpm/リリースバイナリが提供されていないため、同梱のローカルプロキシ `scripts/admin_proxy.py`（chabot-sa権限借用のgenerateIdToken・トークンキャッシュ・Set-Cookie中継対応）を実装し `scripts/start_admin_proxy.sh` から起動する方式へ確定。実E2Eで プロキシ経由 /health 200・/api/v1/admin/session 200（email+csrf発行）・/admin 200 を確認。管理コンソールはブラウザで http://localhost:8080/admin から利用可能。
 - [ ] 運用メモ: gcloudの `print-identity-token --audiences` はユーザーアカウントでは使えない（サービスアカウント専用）。ユーザートークンはaudがgcloudクライアントIDになるためアプリ側で拒否される仕様（Cloud RunのIAMは受理する）。トークン発行の429レート制限が発生した場合は数分待って再試行する（プロキシは約1時間キャッシュするため通常発生しない）。
+- [x] 2026-09-30: 実UI利用で無料登録URL発行が `origin_mismatch`（403）になる問題を修正。原因は2つで、（1）プロキシがブラウザのOrigin（http://localhost:8080）をそのまま転送していた、（2）アプリがコンテナ転送のHTTPを基にオリジンを http スキームで計算していた。プロキシはOriginを転送先オリジンへ書き換え、アプリは `X-Forwarded-Proto`（Cloud Runが設定）で外部スキームを復元して比較するようにした。書込み経路E2E（招待URL発行→失効）で確認済み。
 - [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。

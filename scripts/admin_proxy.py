@@ -109,6 +109,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP
         }
+        # ブラウザのOrigin（localhost）を転送先オリジンへ書き換える。
+        # アプリのOrigin検証は「リクエストHostと同一オリジンか」を見るため、
+        # プロキシ経由でも同一オリジンとして成立させる。CSRFトークン検証は
+        # 元のまま機能する（トークンはセッションCookieと紐づいている）。
+        if "Origin" in headers:
+            headers["Origin"] = SERVICE_URL
         try:
             headers["Authorization"] = "Bearer " + get_id_token()
         except Exception as exc:

@@ -169,3 +169,35 @@ async def test_run_iam_rejects_when_audience_not_configured(monkeypatch) -> None
 
     with pytest.raises(AdminAuthError, match="run_iam_audience_not_configured"):
         await verify_run_iam_identity("some-token")
+
+
+@pytest.mark.asyncio
+async def test_csrf_accepts_forwarded_https_origin(dev_admin_app, monkeypatch) -> None:
+    """X-Forwarded-Proto復元後のオリジンと一致するOriginを受理すること。"""
+    monkeypatch.setattr(settings, "admin_auth_mode", "dev")
+    service = MagicMock()
+    service.save_plan_draft = AsyncMock(return_value={"plan": "free"})
+    original_service = admin_api_module._admin_service
+    admin_api_module._admin_service = lambda: service
+    transport = ASGITransport(app=dev_admin_app)
+    try:
+        async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+            session = await client.get(
+                "/api/v1/admin/session",
+                headers={"X-Admin-Dev-Email": DEV_EMAIL},
+            )
+            csrf_token = session.json()["csrf_token"]
+
+            response = await client.put(
+                "/api/v1/admin/plan-settings/free",
+                headers={
+                    "X-CSRF-Token": csrf_token,
+                    "Origin": "https://admin.test",
+                    "X-Forwarded-Proto": "https",
+                },
+                json={"daily_message_limit": 5, "base_revision": 0},
+            )
+    finally:
+        admin_api_module._admin_service = original_service
+
+    assert response.status_code in (200, 422)

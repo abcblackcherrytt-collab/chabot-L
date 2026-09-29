@@ -259,7 +259,11 @@ def verify_csrf(request: Request, session_payload: Dict[str, Any]) -> None:
         raise AdminAuthError("csrf_mismatch")
     origin = request.headers.get("Origin")
     if origin:
-        base = str(request.base_url).rstrip("/")
+        # Cloud RunはコンテナへHTTPで転送するため、外部スキームは
+        # X-Forwarded-Proto（Cloud Runが必ず設定する）から復元する。
+        proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+        host = request.headers.get("Host", request.url.netloc)
+        base = f"{proto}://{host}"
         if origin != base:
             raise AdminAuthError("origin_mismatch")
 
