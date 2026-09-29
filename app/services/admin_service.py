@@ -210,6 +210,8 @@ class AdminService:
             expires_at=expires_at,
             created_by=actor,
         )
+        # 保存用ハッシュは応答へ含めない（平文トークンはURLfragmentでのみ返す）。
+        invite.pop("token_sha256", None)
         await self._audit(
             actor=actor,
             action="invite.issue",
