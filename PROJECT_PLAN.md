@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-02（LINE回答プロンプトを500字程度・3段落へ変更）
+> **更新日**: 2026-10-02（assessment専用プロンプト・代表回答機能・RAG登録修正の本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -48,7 +48,7 @@
   5. 管理UIの本番実装は完了（単体テスト済み）。管理サービスのIAP・IAM・デプロイは別作業として保留する
 - **freeプラン上限超過メッセージ（本番反映済み・実端末未確認）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL（SUBSCRIPTION_PLAN_SELECTION_URL）、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した。コミット 248c7ed、Cloud Run chabot-service-00035-drg、GitHub Actions run 35690378112 成功、品質ゲート139件成功、/health・選択画面・select.css・Basic導線303を確認済み
 - **回答出力構成変更（2026-09-22本番反映済み・実端末表示未確認）**: RAG回答の「回答：／要約：」ラベル付き2ブロックを廃止し、最重要点をまとめた要約1文を最初に置き、2行の空行を挟んで回答本文を続ける構成へ変更した。free/basic/pro別の本文構成指示（結論→理由→確認点／結論→根拠→適用→限界）と文字数制限（全体は原則500字以内）は維持。ローカルでデプロイ品質ゲート133件成功。初回pushはHEADのdocs [skip ci]で起動しなかったため、空コミット b8401f5 で再起動した。GitHub Actions run 35698220400 成功（2m43s）、Cloud Run chabot-service-00036-g8v（GIT_SHA=b8401f5）へ100%トラフィックで反映、/health 200、デプロイ後ERRORログ0件を確認。実LINE端末での新形式表示と保存本文の形式確認が残課題
-- **回答プロンプト再構成（2026-10-02ローカル実装・本番未反映）**: 上限「500字以内」を「500字程度（目安450〜550字）」へ変更。LINE表示を要約1文→空行1行→具体的な評価方法/確認手順→空行1行→その評価を選ぶ専門的理由、の3段落へ統一した。freeは基本的な確認手順とコーパス内の基礎根拠、basic/pro/serviceは肢位・操作・観察点・判定要点と解剖/バイオメカニクス/病態/文献に基づく理由・限界を指示。ラベル・見出し・Markdownは禁止を維持し、LINE経路の改行保持を含む関連unit 62件成功。実モデル出力と実LINE端末表示のE2E確認は未実施。
+- **回答プロンプト再構成（2026-10-02本番反映）**: 上限「500字以内」を「500字程度（目安450〜550字）」へ変更。既定構成は「要約1文→空行1行→直接的回答」の2段落とし、Jev前段分類で question_type=assessment のときだけ専用指示を追加して「要約→①②③の評価方法（肢位・操作・観察点・仮説の重み変化）→選ぶ理由（文献的事実/推論/経験則の境界を尊重）」の3段落へ差し替える設計にした。assessment指示は資料の reasoning_steps・priority_order・decision_thresholds・evidence_boundary を活用し、網羅列挙と検査名列挙・確定診断的表現を禁止する。関連unit 30件成功。
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧
@@ -341,6 +341,9 @@ P0公開ゲート:
 - [ ] 2026-09-30: 管理UI要望タブがHTTP 500になる障害を本番ログで確認（9/29 22:57・23:25、9/30 04:22 UTC）。原因は `FirestoreFeedbackRepository.list()` が `where(status == open)` + `order_by(created_at DESC)` を発行し、Firestore `chabotline` に複合インデックス `(status ASC, created_at DESC)` が存在しないため FailedPrecondition（index required）となること。「すべて」タブはstatusフィルタなしのため自動単一フィールドインデックスで動作。修正案は（A）複合インデックス作成（コード変更不要・推奨）、（B）リポジトリでwhereのみ+Python側ソート、（C）`list_feedback` エンドポイントの `_run_service` 化とFailedPrecondition時の読み取り可能エラー返却。Bot側要望受付 `count_today_feedback` の `(user_id, created_at)` 複合インデックスも未作成で、実ユーザーが「要望を送る」を押した初回に同種エラーになる潜在リスク。ユーザー指示により分析・提案のみでスクリプト修正は未実施。
 - [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
 - [ ] 2026-10-02: service招待URLのはずが登録後もfreeのまま、という報告を精査。実データでは `inv_be4d9ca9db48`（created_by=chabot-sa・本番管理UI経由で発行）に `invite_type` フィールドが無くfree招待として消費済み（消費ユーザー `1bb770d9`・plan_override無し・registration_source=admin_invite）。原因はservice招待の発行UI/API・消費時override書込み・serviceプラン解決のすべてが未コミット・未デプロイで、本番（chabot-service 00039-ts2 / chabot-admin）には旧コードのみ存在すること。修正は（1）該当ユーザーへ管理UIからservice override設定、（2）bot・admin両方へデプロイ、（3）新規service招待でE2E再検証。修正実施はユーザー指示待ち。
+- [x] 2026-10-02: 上記service招待の修正コード一式（招待invite_type・消費時override書込み・service→pro解決・管理UI実効プラン表示）を含む変更をmainへ反映（コミット 349a013・4aa5530、GitHub Actions run 36966949723 成功）。chabot-service 00040-hhl・chabot-admin 00006-8qd（CI構築イメージ 4aa5530）へ100%トラフィック反映し、/health 200・管理UI直接403/プロキシ経由200を確認。残課題: 消費済み招待 inv_be4d9ca9db48 は使い切りのため、該当ユーザー 1bb770d9 へ管理UIからservice override設定（または新規service招待の再消費）が必要。
+- [x] 2026-10-02: 管理UI会話保管へ質問抽出と代表回答入力を実装・本番反映。GET /admin/conversations/{id}/question は質問本文のみ返し（answer_text不含）、POST /admin/conversations/{id}/representative-answer はCSRF付きで representative_answers コレクションへ1会話1件のupsert（監査付き）。会話保管タブに行ごとの「質問」ボタン・代表回答入力フォーム・保存済み一覧を追加。プロキシ経由で実データ1件（assessment分類「初回評価は何やる？」）の抽出と空一覧応答を確認。
+- [x] 2026-10-02: RAGソース整備。shoulder YAML 14件の構文検証で 2026-05-12 炎症評価ファイル19行目の未エスケープ引用符を発見し、question_interpretation をブロックスカラー（>-）化して全14件パース可能に修正。scripts/upload_shoulder_corpus.py の固定13件リストを md_for_rag/*.md 全件自動列挙へ変更し、未登録だった 2026-08-03 3rd回旋資料を本番コーパス（1495705249682292736・ragFiles/5799928585885215237）へ追記（1回目はVertex AI内部のインデックス化403で失敗、再試行で成功。既存13件はdisplay_name重複でSKIP）。
 - [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2Eは未実施。Firestore複合インデックスは 2026-09-30 に要望タブ500の原因として実在が確認済み（上記）。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
 
