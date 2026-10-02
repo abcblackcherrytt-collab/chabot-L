@@ -8,6 +8,7 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
@@ -38,6 +39,7 @@ _google_certs_cached_at: float = 0.0
 _allowlist_cache: Dict[str, tuple[float, bool]] = {}
 _ALLOWLIST_CACHE_TTL_SECONDS = 60.0
 _IAP_CERTS_CACHE_TTL_SECONDS = 600.0
+_allowed_networks_cache: tuple[str, tuple[Any, ...]] = ("", ())
 
 
 class AdminAuthError(Exception):
@@ -85,6 +87,62 @@ def verify_admin_session_token(token: str) -> Optional[Dict[str, Any]]:
 def issue_csrf_token() -> str:
     """CSRFトークンを生成する。"""
     return secrets.token_urlsafe(32)
+
+
+def _parse_admin_allowed_networks() -> tuple[Any, ...]:
+    """ADMIN_ALLOWED_IPS（単一IPまたはCIDR・カンマ区切り）を解析してキャッシュする。"""
+    global _allowed_networks_cache
+    raw = settings.admin_allowed_ips
+    if _allowed_networks_cache[0] == raw:
+        return _allowed_networks_cache[1]
+    networks: list[Any] = []
+    for item in raw.split(","):
+        entry = item.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            logger.warning("Ignoring invalid admin allowed IP entry")
+    _allowed_networks_cache = (raw, tuple(networks))
+    return tuple(networks)
+
+
+def _normalize_client_ip(raw: str) -> str:
+    """IPv4:port / [IPv6]:port / zone-id付きIPv6からアドレス部分だけを取り出す。"""
+    value = raw.strip()
+    if value.startswith("[") and "]" in value:
+        value = value[1 : value.index("]")]
+    elif value.count(":") == 1 and "." in value:
+        value = value.split(":", 1)[0]
+    return value.split("%", 1)[0]
+
+
+def resolve_client_ip(request: Request) -> str:
+    """Cloud Runが追記したクライアントIP（X-Forwarded-Forの最後尾）を取り出す。"""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    candidates = [item.strip() for item in forwarded.split(",") if item.strip()]
+    raw_ip = (
+        candidates[-1]
+        if candidates
+        else (request.client.host if request.client else "")
+    )
+    return _normalize_client_ip(raw_ip)
+
+
+def is_client_ip_allowed(request: Request) -> bool:
+    """リクエスト元IPが管理UIの許可リストに含まれるかを判定する。"""
+    networks = _parse_admin_allowed_networks()
+    if not networks:
+        return False
+    try:
+        client_ip = ipaddress.ip_address(resolve_client_ip(request))
+    except ValueError:
+        return False
+    return any(
+        client_ip.version == network.version and client_ip in network
+        for network in networks
+    )
 
 
 async def _fetch_iap_certs(force: bool = False) -> Dict[str, str]:
@@ -161,6 +219,12 @@ async def extract_admin_identity(request: Request) -> str:
       （Cloud RunのIAM保護とcloud-run-proxy経由のブラウザ利用を想定）。
     """
     mode = settings.admin_auth_mode
+    if mode == "ip":
+        if not settings.admin_allowed_ips or not settings.admin_ip_auth_email:
+            raise AdminAuthError("ip_auth_not_configured")
+        if not is_client_ip_allowed(request):
+            raise AdminAuthError("client_ip_not_allowed")
+        return settings.admin_ip_auth_email
     if mode == "run_iam":
         authorization = request.headers.get("Authorization", "")
         if not authorization.lower().startswith("bearer "):
