@@ -19,7 +19,6 @@ from app.core.admin_security import (
     AdminAuthError,
     create_admin_session_token,
     extract_admin_identity,
-    is_client_ip_allowed,
     is_admin_allowed,
     issue_csrf_token,
     verify_admin_session_token,
@@ -117,8 +116,6 @@ def _admin_service() -> AdminService:
 
 async def _require_admin_session(request: Request) -> Dict[str, Any]:
     """管理セッションCookieを検証し、allowlistを再確認する。"""
-    if settings.admin_auth_mode == "ip" and not is_client_ip_allowed(request):
-        raise HTTPException(status_code=403, detail="Client IP not allowed")
     token = request.cookies.get(ADMIN_SESSION_COOKIE, "")
     payload = verify_admin_session_token(token) if token else None
     if payload is None:

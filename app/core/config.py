@@ -35,10 +35,6 @@ class Settings(BaseSettings):
     admin_dev_emails: str = ""
     # run_iamモードで許容するIDトークンのaudience（カンマ区切り・サービスURL）。
     admin_run_iam_audiences: str = ""
-    # ipモードで許可するクライアントIP（カンマ区切り・単一IPまたはCIDR）。
-    admin_allowed_ips: str = ""
-    # ipモードで許可IPに紐付ける管理者メールアドレス（admin_adminsに登録済み）。
-    admin_ip_auth_email: str = ""
     # 管理セッションの有効期間（秒）。
     admin_session_ttl_seconds: int = 3600
     # 無料登録URLの既定有効期間（時間）。

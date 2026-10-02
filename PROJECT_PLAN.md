@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-02（管理UI IP直接アクセス・interpretation・knowledge/evidence専用プロンプト・代表回答機能の本番反映）
+> **更新日**: 2026-10-02（interpretation・knowledge/evidence専用プロンプト・代表回答機能の本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -51,7 +51,6 @@
 - **回答プロンプト再構成（2026-10-02本番反映）**: 上限「500字以内」を「500字程度（目安450〜550字）」へ変更。既定構成は「要約1文→空行1行→直接的回答」の2段落とし、Jev前段分類で question_type=assessment のときだけ専用指示を追加して「要約→①②③の評価方法（肢位・操作・観察点・仮説の重み変化）→選ぶ理由（文献的事実/推論/経験則の境界を尊重）」の3段落へ差し替える設計にした。assessment指示は資料の reasoning_steps・priority_order・decision_thresholds・evidence_boundary を活用し、網羅列挙と検査名列挙・確定診断的表現を禁止する。関連unit 30件成功。
 - **knowledge/evidence専用プロンプト（2026-10-02本番反映・コミット 7537aaa・run 36969278415・chabot-service 00041-gfh）**: Jev分類が knowledge または evidence のときだけ、事実回答専用の簡潔指示へ差し替え。要約文・前置き・見出し・辛口表現を廃止し、筋の起始・停止・支配神経・筋形状、参考可動域、専門用語の定義、効果量・感度・特異度・推奨度などの問いには項目改行の「・」箇条書きで数値・単位・分類名を資料表記どおり提示。コーパス由来の事実と確立した既知の事実のみとし、装飾・背景展開・臨床助言を禁止、不足時は確認不能範囲の明示と推測禁止、全体50〜250字程度・1項目なら1文。品質ゲート199件成功、デプロイ後ERRORログ0件・/health 200確認済み。実端末での出力確認は未実施。
 - **interpretation専用プロンプト（2026-10-02本番反映・コミット e9dd9e9・run 36971411926・chabot-service 00042-qwc）**: Jev前段分類で question_type=interpretation のときだけ専用指示を追加し、既定2段落を「要約1文（最も妥当な所見解釈）→具体的指標（①②③最大3項目・肢位/反応/仮説の重み変化）→専門職向け推論ガイド（資料の判断の流れ・優先順位・経験則・例外条件に沿う重みづけ）→根拠と理由の解説（文献との整合・衝突、根拠の境界、個人経験則の境界を優先）」の4段落へ差し替える設計にした。md_for_rag資料の核となる立場・重要な変数・判断基準・根拠の境界を優先利用し、資料にない数値・判定基準の作成禁止、単一所見での病態/組織確定禁止、文献事実と症例推論・経験則の混同禁止、フローチャート形式禁止を明記。Jevキー未設定・分類失敗時は従来の汎用2段落構成を維持。関連unit 2件追加を含む全体unit 225件成功、compileall成功、CIデプロイ成功（2m57s）。リビジョン 00042-qwc へ100%トラフィック、/health 200確認済み。実端末での4段落出力とJev interpretation分類との組み合わせ確認は未実施。
-- **管理UI IP直接アクセス（2026-10-02本番反映・コミット d65c321・run 36974035163・chabot-admin 00008-nwc）**: 管理認証にipモードを追加。`ADMIN_ALLOWED_IPS`（単一IP/CIDR・IPv4/IPv6・カンマ区切り）に一致するX-Forwarded-For最後尾（Cloud Runが追記した実クライアントIPのみ信任）からのアクセスに対し、`ADMIN_IP_AUTH_EMAIL`（admin_admins登録済み）でセッションとCSRF Cookieを発行する。許可IP以外はUIシェル（/admin・css・js）を403、/sessionを401で拒否し、発行済みセッションも以後の要求元IPを再検証する。ipモードのCookieはHTTPS用にSecure属性を付与し、設定欠損時はfail-closed。単体テスト6件追加、全体unit 231件成功、compileall成功。Cloud Runを未認証アクセス許可へ変更し、許可IP 150.91.246.66・管理者 abc.blackcherry.tt@gmail.com で `chabot-admin-00008-nwc` へ100%トラフィック反映。許可IPから `/health`・`/admin`・`/session` が200、セッション+CSRF Cookie（Secure）発行、Cookie付き `/users` 200、新リビジョンERRORログ0件を確認。失敗リビジョン00007（args指定崩れ）はトラフィック0%。残課題: 同一Wi-Fiのスマホ実機で https://chabot-admin-742113528510.asia-northeast1.run.app/admin を開く確認。許可IPは自宅回線IPv4のため回線IP変更時は `ADMIN_ALLOWED_IPS` の更新が必要。キャリア回線のIPは不特定多数のため許可対象外。旧run_iamモードへは環境変数のモード切替で復帰可能。
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧

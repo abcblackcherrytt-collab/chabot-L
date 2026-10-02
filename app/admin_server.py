@@ -6,11 +6,10 @@
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse, HTMLResponse
 
 from app.admin_api import router as admin_api_router
-from app.core.admin_security import is_client_ip_allowed
 from app.core.config import settings
 from app.core.http_security import SecurityHeadersMiddleware
 
@@ -108,27 +107,21 @@ def create_admin_app(*, enabled: bool | None = None) -> FastAPI:
         return {"status": "healthy"}
 
     @admin_app.get("/admin", response_class=HTMLResponse)
-    async def admin_home(request: Request) -> HTMLResponse:
+    async def admin_home() -> HTMLResponse:
         """ローカル開発用の管理コンソールHTMLを返す。"""
         _ensure_enabled()
-        if settings.admin_auth_mode == "ip" and not is_client_ip_allowed(request):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return HTMLResponse(ADMIN_PAGE_HTML)
 
     @admin_app.get("/admin.css")
-    async def admin_stylesheet(request: Request) -> FileResponse:
+    async def admin_stylesheet() -> FileResponse:
         """CSP準拠で管理画面のスタイルを同一オリジン配信する。"""
         _ensure_enabled()
-        if settings.admin_auth_mode == "ip" and not is_client_ip_allowed(request):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return FileResponse(_STATIC_DIR / "admin.css", media_type="text/css")
 
     @admin_app.get("/admin.js")
-    async def admin_script(request: Request) -> FileResponse:
+    async def admin_script() -> FileResponse:
         """CSP準拠で管理画面のスクリプトを同一オリジン配信する。"""
         _ensure_enabled()
-        if settings.admin_auth_mode == "ip" and not is_client_ip_allowed(request):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return FileResponse(_STATIC_DIR / "admin.js", media_type="text/javascript")
 
     return admin_app
