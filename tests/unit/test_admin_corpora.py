@@ -24,6 +24,7 @@ def _service(get_by_plan) -> AdminService:
         admin_user_repository=MagicMock(),
         user_repository=MagicMock(),
         conversation_repository=MagicMock(),
+        representative_answer_repository=MagicMock(),
         rag_permission_repository=repo,
     )
 
