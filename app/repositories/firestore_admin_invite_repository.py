@@ -20,6 +20,7 @@ ADMIN_INVITES_COLLECTION = "admin_invites"
 INVITE_STATUS_UNUSED = "unused"
 INVITE_STATUS_CONSUMED = "consumed"
 INVITE_STATUS_REVOKED = "revoked"
+INVITE_TYPES = ("free", "service")
 
 
 def _parse_iso(value: Any) -> Optional[datetime]:
@@ -59,14 +60,18 @@ class FirestoreAdminInviteRepository:
         token_sha256: str,
         expires_at: datetime,
         created_by: str,
+        invite_type: str = "free",
     ) -> Dict[str, Any]:
         """新しい招待を作成し、ハッシュのみ保存する。"""
+        if invite_type not in INVITE_TYPES:
+            raise ValueError("invalid_invite_type")
         now = datetime.now(timezone.utc)
         invite_id = f"inv_{uuid.uuid4().hex[:12]}"
         data = {
             "id": invite_id,
             "token_sha256": token_sha256,
             "status": INVITE_STATUS_UNUSED,
+            "invite_type": invite_type,
             "expires_at": expires_at.astimezone(timezone.utc).isoformat(),
             "created_by": created_by,
             "created_at": now.isoformat(),
@@ -125,7 +130,7 @@ class FirestoreAdminInviteRepository:
         return None
 
     async def consume(self, *, invite_id: str, user_id: str) -> bool:
-        """Transactionで unused -> consumed を確定する。同時利用では1件だけ成功する。"""
+        """招待消費とservice権限付与を同一Transactionで確定する。"""
         ref = self.db.collection(ADMIN_INVITES_COLLECTION).document(invite_id)
         transaction = self.db.transaction()
 
@@ -148,6 +153,19 @@ class FirestoreAdminInviteRepository:
                     "consumed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
+            if data.get("invite_type", "free") == "service":
+                tx.set(
+                    self.db.collection("users").document(user_id),
+                    {
+                        "plan_override": {
+                            "plan": "service",
+                            "source": "service_invite",
+                            "expires_at": None,
+                        },
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    merge=True,
+                )
             return True
 
         return await _consume(transaction)
@@ -158,7 +176,7 @@ class FirestoreAdminInviteRepository:
         invite_id: str,
         user_id: str,
     ) -> None:
-        """ユーザー文書へ招待経由登録を記録する（プラン変更は行わない）。"""
+        """ユーザー文書へ招待経由登録を記録する。"""
         await self.db.collection("users").document(user_id).update(
             {
                 "registration_source": "admin_invite",

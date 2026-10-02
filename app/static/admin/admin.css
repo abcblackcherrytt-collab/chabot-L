@@ -369,3 +369,63 @@ dialog::backdrop { background: rgba(23, 32, 51, 0.45); }
   html { scroll-behavior: auto; }
   * { transition: none !important; animation: none !important; }
 }
+
+/* コーパス: 日次上限エディタ */
+.limit-editor { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 2px 0 4px; }
+.limit-label { color: var(--muted); font-size: 0.72rem; font-weight: 700; }
+.limit-editor .stepper { display: inline-flex; align-items: center; gap: 5px; margin: 0; }
+.limit-editor .stepper-btn { width: 26px; height: 26px; padding: 0; font-size: 0.9rem; line-height: 1; border-radius: 7px; }
+.limit-editor .stepper-value { min-width: 28px; text-align: center; font-size: 0.88rem; font-weight: 700; }
+.limit-editor .btn-primary { min-height: 26px; padding: 3px 10px; font-size: 0.74rem; border-radius: 7px; }
+.limit-editor .limit-input {
+  width: 52px;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  text-align: center;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.limit-editor .limit-input:focus-visible { outline: var(--focus); outline-offset: 1px; }
+.limit-editor .limit-input::-webkit-outer-spin-button,
+.limit-editor .limit-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* コーパス: プラン別カード＋ファイル一覧 */
+.corpus-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+.corpus-details { margin-top: 2px; }
+.corpus-details summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--canvas);
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.corpus-details summary:hover { background: var(--accent-soft); }
+.corpus-details summary:focus-visible { outline: var(--focus); outline-offset: 2px; }
+.corpus-details[open] summary { margin-bottom: 10px; }
+.corpus-details .sub { margin: 0 2px 10px; }
+.corpus-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.corpus-files li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+.corpus-files code {
+  color: var(--faint);
+  font-size: 0.72rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  word-break: break-all;
+}

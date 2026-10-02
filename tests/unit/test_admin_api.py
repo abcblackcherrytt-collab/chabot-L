@@ -239,3 +239,129 @@ async def test_csrf_accepts_forwarded_https_origin(dev_admin_app, monkeypatch) -
         admin_api_module._admin_service = original_service
 
     assert response.status_code in (200, 422)
+
+
+@pytest.mark.asyncio
+async def test_corpora_requires_admin_session(dev_admin_app) -> None:
+    """未認証のコーパス一覧取得を401で拒否すること。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        response = await client.get("/api/v1/admin/corpora")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_corpora_returns_service_payload(dev_admin_app) -> None:
+    """認証済みのコーパス一覧取得へサービス応答をそのまま返すこと。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        session = await client.get(
+            "/api/v1/admin/session",
+            headers={"X-Admin-Dev-Email": DEV_EMAIL},
+        )
+        assert session.status_code == 200
+
+        payload = {"location": "us-central1", "items": []}
+        service = MagicMock()
+        service.list_corpora = AsyncMock(return_value=payload)
+        original_service = admin_api_module._admin_service
+        admin_api_module._admin_service = lambda: service
+        try:
+            response = await client.get("/api/v1/admin/corpora")
+        finally:
+            admin_api_module._admin_service = original_service
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    service.list_corpora.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_conversation_question_and_representative_answer(dev_admin_app) -> None:
+    """会話から質問のみ抽出し、CSRF付きで代表回答を保存できること。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        session = await client.get(
+            "/api/v1/admin/session",
+            headers={"X-Admin-Dev-Email": DEV_EMAIL},
+        )
+        csrf_token = session.json()["csrf_token"]
+
+        service = MagicMock()
+        service.get_conversation_question = AsyncMock(
+            return_value={
+                "id": "conv-1",
+                "question_text": "2nd肢位の外旋制限をどう評価しますか",
+                "question_type": "assessment",
+                "answer_aspects": ["rom"],
+                "plan": "free",
+                "denied": False,
+                "pii_suspected": False,
+                "created_at": "2026-10-02T10:00:00+09:00",
+            }
+        )
+        service.save_representative_answer = AsyncMock(return_value={"id": "rep-1"})
+        service.list_representative_answers = AsyncMock(
+            return_value={"items": [{"id": "rep-1"}], "count": 1}
+        )
+        original_service = admin_api_module._admin_service
+        admin_api_module._admin_service = lambda: service
+        try:
+            question = await client.get("/api/v1/admin/conversations/conv-1/question")
+            assert question.status_code == 200
+            assert question.json()["question_text"].startswith("2nd肢位")
+            assert "answer_text" not in question.json()
+
+            no_csrf = await client.post(
+                "/api/v1/admin/conversations/conv-1/representative-answer",
+                json={"representative_answer": "代表回答"},
+            )
+            assert no_csrf.status_code == 403
+
+            saved = await client.post(
+                "/api/v1/admin/conversations/conv-1/representative-answer",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"representative_answer": "代表回答"},
+            )
+            assert saved.status_code == 200
+            service.save_representative_answer.assert_awaited_once_with(
+                conversation_id="conv-1",
+                representative_answer="代表回答",
+                actor=DEV_EMAIL,
+            )
+
+            listed = await client.get("/api/v1/admin/representative-answers")
+            assert listed.status_code == 200
+            assert listed.json()["count"] == 1
+        finally:
+            admin_api_module._admin_service = original_service
+
+
+@pytest.mark.asyncio
+async def test_conversation_question_error_mapping(dev_admin_app) -> None:
+    """存在しない会話は404、質問なしは422へ変換すること。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        await client.get(
+            "/api/v1/admin/session",
+            headers={"X-Admin-Dev-Email": DEV_EMAIL},
+        )
+
+        service = MagicMock()
+        service.get_conversation_question = AsyncMock(
+            side_effect=LookupError("conversation_not_found")
+        )
+        original_service = admin_api_module._admin_service
+        admin_api_module._admin_service = lambda: service
+        try:
+            missing = await client.get("/api/v1/admin/conversations/conv-404/question")
+            assert missing.status_code == 404
+
+            service.get_conversation_question = AsyncMock(
+                side_effect=ValueError("question_unavailable")
+            )
+            denied = await client.get("/api/v1/admin/conversations/conv-denied/question")
+            assert denied.status_code == 422
+        finally:
+            admin_api_module._admin_service = original_service

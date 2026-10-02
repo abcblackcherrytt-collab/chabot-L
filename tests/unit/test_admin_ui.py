@@ -17,7 +17,7 @@ async def test_admin_shell_contains_all_sections_and_external_assets() -> None:
     for label in (
         "集計",
         "ユーザー",
-        "回数上限設定",
+        "コーパス",
         "クーポン",
         "無料登録URL",
         "会話保管",

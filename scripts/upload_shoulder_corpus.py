@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-shoulder 知識ファイル（thinking 推論メモ 13件）を実RAGコーパスへ登録する。
+shoulder 知識ファイル（thinking 推論メモ）を実RAGコーパスへ登録する。
 
 ローカル1回限りの実行を想定（shoulder ソースはローカルパス）。
 Secret Manager で使用中のコーパス（1495705249682292736）へ追記する。
@@ -12,6 +12,7 @@ Secret Manager で使用中のコーパス（1495705249682292736）へ追記す�
 
 import os
 import sys
+from pathlib import Path
 
 import vertexai
 from vertexai import rag
@@ -21,23 +22,11 @@ LOCATION = "us-central1"
 CORPUS_ID = "1495705249682292736"
 CORPUS_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/ragCorpora/{CORPUS_ID}"
 
-# shoulder 知識ソース（thinking 推論メモ 12件）
+# shoulder 知識ソース（thinking 推論メモ）。ディレクトリ内の .md を全件対象にする。
 SOURCE_DIR = "/Users/takahashiyoshiki/Desktop/local dev/rag_source/source_self/shoulder/md_for_rag"
-FILES = [
-    "thinking_2026-05-04_shoulder_frozen-stage_fibrosis-assessment-and-remodeling-strategy.md",
-    "thinking_2026-05-04_shoulder_lateral-pain-passive-assessment_differential-reasoning.md",
-    "thinking_2026-05-07_sab_manual_intervention.md",
-    "thinking_2026-05-07_shoulder_outpatient_initial_assessment.md",
-    "thinking_2026-05-12_shoulder_inflammation_assessment.md",
-    "thinking_2026-05-19_shoulder_postop_dynamic_strain_fibrosis.md",
-    "thinking_2026-05-23_rotator-cuff-tear-pain-source-stage-reasoning.md",
-    "thinking_2026-05-28_shoulder_capsule-contracture-rehab-reasoning.md",
-    "thinking_2026-05-28_shoulder_type-e-rupture-conservative-compensation.md",
-    "thinking_2026-06-11_shoulder_murakami-instability-eccentric-setting.md",
-    "thinking_2026-07-24_shoulder_rotator-cuff-motor-learning-dynamic-function.md",
-    "thinking_2026-07-27_shoulder_first-external-rotation-trajectory-and-restriction.md",
-    "thinking_2026-07-27_shoulder_second-position-rotation-muscular-soft-tissue-differential.md",
-]
+FILES = sorted(
+    path.name for path in Path(SOURCE_DIR).glob("*.md")
+)
 
 
 def main() -> int:

@@ -5,6 +5,7 @@ HTTPの関心事（ステータスコード等）は持たない。
 """
 
 import hashlib
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,11 @@ from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.pricing import DAILY_MESSAGE_LIMITS
+from app.clients.vertex_ai_rag import (
+    VertexRagCorpusError,
+    get_corpus_overview,
+    is_valid_corpus_id,
+)
 from app.repositories.firestore_admin_invite_repository import (
     FirestoreAdminInviteRepository,
 )
@@ -27,9 +33,15 @@ from app.repositories.firestore_audit_log_repository import (
 from app.repositories.firestore_conversation_repository import (
     FirestoreConversationRepository,
 )
+from app.repositories.firestore_representative_answer_repository import (
+    FirestoreRepresentativeAnswerRepository,
+)
 from app.repositories.firestore_coupon_repository import FirestoreCouponRepository
 from app.repositories.firestore_feedback_repository import (
     FirestoreFeedbackRepository,
+)
+from app.repositories.firestore_rag_permission_repository import (
+    FirestoreRagPermissionRepository,
 )
 from app.repositories.firestore_plan_settings_repository import (
     FirestorePlanSettingsRepository,
@@ -56,6 +68,10 @@ class AdminService:
         admin_user_repository: Optional[FirestoreAdminUserRepository] = None,
         user_repository: Optional[FirestoreUserRepository] = None,
         conversation_repository: Optional[FirestoreConversationRepository] = None,
+        representative_answer_repository: Optional[
+            FirestoreRepresentativeAnswerRepository
+        ] = None,
+        rag_permission_repository: Optional[FirestoreRagPermissionRepository] = None,
         line_client: Optional[Any] = None,
     ):
         """依存リポジトリを注入する。未指定時は既定実装を使う。"""
@@ -71,6 +87,13 @@ class AdminService:
         self.user_repository = user_repository or FirestoreUserRepository()
         self.conversation_repository = (
             conversation_repository or FirestoreConversationRepository()
+        )
+        self.representative_answer_repository = (
+            representative_answer_repository
+            or FirestoreRepresentativeAnswerRepository()
+        )
+        self.rag_permission_repository = (
+            rag_permission_repository or FirestoreRagPermissionRepository()
         )
         self._line_client = line_client
 
@@ -195,10 +218,18 @@ class AdminService:
 
     # ---- 無料登録URL ----
 
-    async def issue_invite(self, *, actor: str, ttl_hours: Optional[int] = None) -> Dict[str, Any]:
-        """1回限りの無料登録URLを発行する。平文トークンは応答にのみ載せる。"""
+    async def issue_invite(
+        self,
+        *,
+        actor: str,
+        ttl_hours: Optional[int] = None,
+        invite_type: str = "free",
+    ) -> Dict[str, Any]:
+        """1回限りの登録URLを発行する（serviceは無期限pro相当）。"""
         if not settings.public_base_url:
             raise ValueError("public_base_url_not_configured")
+        if invite_type not in ("free", "service"):
+            raise ValueError("invalid_invite_type")
         hours = int(ttl_hours or settings.admin_invite_default_ttl_hours)
         if not 1 <= hours <= 24 * 30:
             raise ValueError("invalid_ttl")
@@ -209,6 +240,7 @@ class AdminService:
             token_sha256=token_sha256,
             expires_at=expires_at,
             created_by=actor,
+            invite_type=invite_type,
         )
         # 保存用ハッシュは応答へ含めない（平文トークンはURLfragmentでのみ返す）。
         invite.pop("token_sha256", None)
@@ -276,7 +308,7 @@ class AdminService:
 
         freeを選択した場合はplan_overrideを解除する（Stripe契約は常に優先）。
         """
-        if plan not in VALID_PLANS:
+        if plan not in (*VALID_PLANS, "service"):
             raise ValueError("invalid_plan")
         detail = await self.admin_user_repository.get_user_detail(user_id)
         if detail is None:
@@ -397,6 +429,131 @@ class AdminService:
     async def list_conversations(self, *, limit: int = 100) -> Dict[str, Any]:
         """会話メタデータ（本文なし）を返す。"""
         return await self.conversation_repository.list_metadata(limit=limit)
+
+    async def get_conversation_question(self, *, conversation_id: str) -> Dict[str, Any]:
+        """代表回答入力用に会話から質問本文だけを抽出する。"""
+        question = await self.conversation_repository.get_question(conversation_id)
+        if question is None:
+            raise LookupError("conversation_not_found")
+        if question.get("denied") or not question.get("question_text"):
+            raise ValueError("question_unavailable")
+        return question
+
+    async def save_representative_answer(
+        self,
+        *,
+        conversation_id: str,
+        representative_answer: str,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """会話の質問へ管理者の代表回答を紐付けて保存する。"""
+        answer = (representative_answer or "").strip()
+        if not answer:
+            raise ValueError("answer_required")
+        question = await self.get_conversation_question(
+            conversation_id=conversation_id,
+        )
+        saved = await self.representative_answer_repository.upsert(
+            conversation_id=conversation_id,
+            question_text=question.get("question_text"),
+            question_type=question.get("question_type"),
+            plan=question.get("plan"),
+            representative_answer=answer,
+            updated_by=actor,
+        )
+        await self._audit(
+            actor=actor,
+            action="conversation.representative_answer",
+            target_type="conversations",
+            target_id=conversation_id,
+        )
+        return saved
+
+    async def list_representative_answers(
+        self, *, limit: int = 100
+    ) -> Dict[str, Any]:
+        """保存済み代表回答の一覧を返す。"""
+        items = await self.representative_answer_repository.list(limit=limit)
+        return {"items": items, "count": len(items)}
+
+    async def list_corpora(self) -> Dict[str, Any]:
+        """プラン別のコーパス設定と実体メタデータを返す。
+
+        rag_permissions読取やVertex AI参照が失敗しても表示を継続できるよう、
+        失敗情報を各エントリに載せて応答する。
+        """
+        fallbacks: Dict[str, str] = {
+            "free": settings.google_corpus_id,
+            "basic": settings.google_corpus_id_plan1,
+            "pro": settings.google_corpus_id_plan1,
+        }
+        items: List[Dict[str, Any]] = []
+        for plan in VALID_PLANS:
+            entry: Dict[str, Any] = {
+                "plan": plan,
+                "configured": False,
+                "source": "fallback",
+                "rag_corpus_id": fallbacks.get(plan),
+                "fallback_corpus_id": fallbacks.get(plan),
+                "model_name": None,
+                "daily_message_limit": None,
+                "enabled": None,
+                "updated_at": None,
+                "firestore_error": None,
+            }
+            try:
+                perm = await self.rag_permission_repository.get_by_plan(plan)
+            except Exception as exc:
+                logger.warning(
+                    "corpora: rag_permissions read failed: plan=%s error_type=%s",
+                    plan,
+                    type(exc).__name__,
+                )
+                entry["firestore_error"] = type(exc).__name__
+                perm = None
+            if perm:
+                entry.update(
+                    {
+                        "configured": True,
+                        "source": "firestore",
+                        "rag_corpus_id": perm.get("rag_corpus_id"),
+                        "model_name": perm.get("model_name"),
+                        "daily_message_limit": perm.get("daily_message_limit"),
+                        "enabled": bool(perm.get("enabled", True)),
+                        "updated_at": perm.get("updated_at"),
+                    }
+                )
+            items.append(entry)
+
+        corpus_ids = list(
+            dict.fromkeys(
+                item["rag_corpus_id"]
+                for item in items
+                if item["rag_corpus_id"] and is_valid_corpus_id(item["rag_corpus_id"])
+            )
+        )
+        overviews = await asyncio.gather(
+            *(self._corpus_overview(corpus_id) for corpus_id in corpus_ids)
+        )
+        overview_map = dict(zip(corpus_ids, overviews))
+        for item in items:
+            corpus_id = item["rag_corpus_id"]
+            if corpus_id and is_valid_corpus_id(corpus_id):
+                item["corpus"] = overview_map.get(corpus_id)
+            else:
+                item["corpus"] = {"status": "unconfigured", "error": None}
+        return {"location": settings.google_location, "items": items}
+
+    @staticmethod
+    async def _corpus_overview(corpus_id: str) -> Dict[str, Any]:
+        """コーパス実体のメタデータを取得し、失敗をstatusへ変換する。"""
+        try:
+            overview = await get_corpus_overview(corpus_id)
+        except VertexRagCorpusError as exc:
+            return {"status": "error", "error": str(exc)}
+        overview["status"] = "ok"
+        overview["error"] = None
+        return overview
 
     async def list_feedback(
         self, *, status: Optional[str] = None

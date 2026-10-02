@@ -61,7 +61,7 @@ function fmtDate(value) {
 var sectionTitles = {
   overview: '集計',
   users: 'ユーザー',
-  settings: '回数上限設定',
+  corpora: 'コーパス',
   coupons: 'クーポン',
   invites: '無料登録URL',
   conversations: '会話保管',
@@ -293,12 +293,18 @@ function renderOverview(host) {
 var usersFilter = { q: '', plan: 'all', status: 'all' };
 var selectedUserId = null;
 
-function sourceLabel(user) {
+function effectivePlan(user) {
+  var sub = user.subscription_plan || 'free';
+  if (sub === 'basic' || sub === 'pro') { return sub; }
   var override = user.plan_override;
-  if (override && override.plan) {
-    return '管理者・クーポン指定（' + override.plan + '・期限 ' + (override.expires_at ? fmtDate(override.expires_at) : '未設定') + '）';
+  if (override && (override.plan === 'basic' || override.plan === 'pro' || override.plan === 'service')) {
+    var valid = true;
+    if (override.expires_at) {
+      valid = new Date(override.expires_at) > new Date();
+    }
+    if (valid) { return override.plan; }
   }
-  return '既定（free）';
+  return 'free';
 }
 
 function renderUserDetail(host) {
@@ -325,8 +331,7 @@ function renderUserDetail(host) {
       ['ユーザーID', user.id],
       ['LINE ID', user.line_user_id || '未取得'],
       ['メール', user.email || '未取得'],
-      ['プラン', user.subscription_plan || 'free'],
-      ['判定経路', sourceLabel(user)],
+      ['プラン', effectivePlan(user)],
       ['状態', user.is_active ? '有効' : '無効（unfollow等）'],
       ['登録日', fmtDate(user.created_at)],
       ['更新日', fmtDate(user.updated_at)]
@@ -336,9 +341,10 @@ function renderUserDetail(host) {
     var planSelect = el('select', {}, [
       el('option', { value: 'free', text: 'free' }, []),
       el('option', { value: 'basic', text: 'basic' }, []),
-      el('option', { value: 'pro', text: 'pro' }, [])
+      el('option', { value: 'pro', text: 'pro' }, []),
+      el('option', { value: 'service', text: 'service（pro相当・無期限）' }, [])
     ]);
-    planSelect.value = (user.plan_override && user.plan_override.plan) || user.subscription_plan || 'free';
+    planSelect.value = effectivePlan(user);
     var form = el('form', {}, [
       el('h4', { text: 'プラン変更' }, []),
       el('div', { class: 'toolbar' }, [
@@ -500,132 +506,6 @@ function renderUsers(host) {
   host.appendChild(el('div', { class: 'card' }, [createForm]));
 }
 
-/* ---------- 回数上限設定 ---------- */
-
-function parseLimit(value) {
-  if (!/^[0-9]+$/.test(value)) { return null; }
-  var parsed = parseInt(value, 10);
-  if (parsed < 1 || parsed > 999) { return null; }
-  return parsed;
-}
-
-function renderSettings(host) {
-  var holder = el('div', {}, []);
-  host.appendChild(holder);
-  loadInto(holder, function () {
-    return apiRequest('GET', '/api/v1/admin/plan-settings');
-  }, function (target, data) {
-    var grid = el('div', { class: 'settings-grid' }, []);
-    (data.items || []).forEach(function (setting) {
-      var plan = setting.plan;
-      var error = el('p', { class: 'error-note', role: 'alert' }, []);
-      var draftInput = el('input', { type: 'number', min: '1', max: '999', step: '1', value: String(setting.draft_daily_message_limit), 'aria-label': plan + ' の下書き上限' }, []);
-      var configuredNote = setting.configured
-        ? '公開中 ' + setting.daily_message_limit + ' 回/日・revision ' + setting.published_revision + '・' + fmtDate(setting.updated_at)
-        : '未設定（コード既定値 ' + setting.daily_message_limit + ' 回/日で運用中）';
-
-      var saveDraft = function () {
-        clearNode(error);
-        var parsed = parseLimit(draftInput.value);
-        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-        apiRequest('PUT', '/api/v1/admin/plan-settings/' + plan, {
-          daily_message_limit: parsed,
-          base_revision: setting.published_revision
-        }).then(function (result) {
-          if (!result.ok) { error.textContent = apiError(result); return; }
-          toast(plan + ' の下書きを保存しました。Bot挙動は変わりません。', 'success');
-          refreshSection();
-        });
-      };
-      var showDiff = function () {
-        var parsed = parseLimit(draftInput.value);
-        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-        confirmDialog({
-          title: '差分確認',
-          lines: ['公開中: ' + setting.daily_message_limit + ' 回/日', '入力中: ' + parsed + ' 回/日'],
-          okLabel: '差分を確認しました'
-        });
-      };
-      var publish = function () {
-        clearNode(error);
-        var parsed = parseLimit(draftInput.value);
-        if (parsed === null) { error.textContent = '1〜999の整数を入力してください。'; return; }
-        if (parsed === setting.daily_message_limit) { toast('公開値と同じため、反映しません。'); return; }
-        confirmDialog({
-          title: plan + ' の上限を反映します',
-          lines: [setting.daily_message_limit + ' 回/日 → ' + parsed + ' 回/日', 'Botへの適用は最大60秒です。'],
-          okLabel: '反映する'
-        }).then(function (ok) {
-          if (!ok) { return; }
-          apiRequest('PUT', '/api/v1/admin/plan-settings/' + plan, {
-            daily_message_limit: parsed,
-            base_revision: setting.published_revision
-          }).then(function (draftResult) {
-            if (!draftResult.ok) { error.textContent = apiError(draftResult); return null; }
-            return apiRequest('POST', '/api/v1/admin/plan-settings/' + plan + '/publish', {
-              revision: setting.published_revision
-            });
-          }).then(function (result) {
-            if (!result) { return; }
-            if (!result.ok) { error.textContent = apiError(result); return; }
-            toast(plan + ' を反映しました（Bot適用は最大60秒）。', 'success');
-            refreshSection();
-          });
-        });
-      };
-
-      var card = el('div', { class: 'card' }, [
-        el('h3', { text: plan + (plan === 'free' ? '（必須）' : '') }, []),
-        el('p', { class: 'sub', text: configuredNote }, []),
-        el('div', { class: 'field' }, [el('label', { text: '下書き上限（1日あたり）' }, []), draftInput]),
-        el('div', { class: 'btn-row' }, [
-          el('button', { class: 'btn', type: 'button', text: '下書き保存', onclick: saveDraft }, []),
-          el('button', { class: 'btn', type: 'button', text: '差分確認', onclick: showDiff }, []),
-          el('button', { class: 'btn btn-primary', type: 'button', text: '反映', onclick: publish }, [])
-        ]),
-        error
-      ]);
-
-      var historyList = el('ul', { class: 'timeline', 'aria-label': plan + ' の公開履歴' }, []);
-      (setting.history || []).slice().reverse().forEach(function (entry) {
-        historyList.appendChild(el('li', {}, [
-          el('div', { class: 'head' }, [
-            el('time', { text: fmtDate(entry.published_at) }, []),
-            el('span', { class: 'action', text: 'rev ' + entry.revision + '・' + entry.daily_message_limit + ' 回/日' }, [])
-          ])
-        ]));
-      });
-      if (!historyList.childNodes.length) {
-        historyList.appendChild(el('li', {}, [el('p', { class: 'meta', text: '公開履歴はまだありません。' }, [])]));
-      }
-      var rollback = el('button', { class: 'btn', type: 'button', text: '直前のrevisionへ戻す' }, []);
-      rollback.addEventListener('click', function () {
-        confirmDialog({
-          title: '設定をロールバックします',
-          lines: ['直前の公開値へ戻します。戻した値も新しいrevisionとして記録されます。'],
-          okLabel: 'ロールバック'
-        }).then(function (ok) {
-          if (!ok) { return; }
-          apiRequest('POST', '/api/v1/admin/plan-settings/' + plan + '/rollback', {}).then(function (result) {
-            if (!result.ok) { toast(apiError(result)); return; }
-            toast('ロールバックしました（rev ' + result.data.published_revision + '）。', 'success');
-            refreshSection();
-          });
-        });
-      });
-      var historyCard = el('div', { class: 'card' }, [
-        el('h3', { text: plan + ' の公開履歴' }, []),
-        el('p', { class: 'sub', text: '直前のrevisionへ戻せます。' }, []),
-        historyList,
-        el('div', { class: 'btn-row' }, [rollback])
-      ]);
-      grid.appendChild(el('div', {}, [card, historyCard]));
-    });
-    target.appendChild(grid);
-    target.appendChild(el('p', { class: 'help', text: '下書き保存ではBot挙動が変わりません。反映はFirestore Transactionで公開revisionを切り替え、Botへの適用は最大60秒です。' }, []));
-  });
-}
-
 /* ---------- クーポン ---------- */
 
 function couponSummary(coupon) {
@@ -774,12 +654,17 @@ function renderInvites(host) {
   var reveal = el('div', { class: 'callout', 'aria-live': 'polite' }, []);
   var error = el('p', { class: 'error-note', role: 'alert' }, []);
   var hours = el('input', { type: 'number', min: '1', max: '720', value: '72' }, []);
+  var inviteType = el('select', {}, [
+    el('option', { value: 'free', text: '無料アカウント' }, []),
+    el('option', { value: 'service', text: 'サービスアカウント（pro相当・無期限）' }, [])
+  ]);
   var issueButton = el('button', { class: 'btn btn-primary', type: 'button', text: 'URLを発行' }, []);
   issueButton.addEventListener('click', function () {
     clearNode(reveal);
     clearNode(error);
     apiRequest('POST', '/api/v1/admin/invites', {
-      ttl_hours: parseInt(hours.value, 10)
+      ttl_hours: parseInt(hours.value, 10),
+      invite_type: inviteType.value
     }).then(function (result) {
       if (!result.ok) { error.textContent = apiError(result); return; }
       var url = result.data.url;
@@ -795,6 +680,7 @@ function renderInvites(host) {
     el('h3', { text: '無料登録URL発行' }, []),
     el('p', { class: 'sub', text: '1回限り。LINE Login成功時に消費されます。' }, []),
     el('div', { class: 'toolbar' }, [
+      el('div', { class: 'field' }, [el('label', { text: 'アカウント種別' }, []), inviteType]),
       el('div', { class: 'field' }, [el('label', { text: '有効期間（時間）' }, []), hours]),
       el('div', { class: 'field' }, [el('label', { text: '' }, []), issueButton])
     ]),
@@ -835,6 +721,7 @@ function renderInvites(host) {
         }[invite.effective_status] || badge(invite.effective_status || '?', 'inactive');
         return el('tr', {}, [
           el('td', { text: shortId(invite.id) }, []),
+          el('td', { text: invite.invite_type === 'service' ? 'サービス（pro相当）' : '無料' }, []),
           el('td', {}, [statusLabel]),
           el('td', { text: fmtDate(invite.expires_at) }, []),
           el('td', { text: fmtDate(invite.created_at) }, []),
@@ -848,6 +735,7 @@ function renderInvites(host) {
         el('table', {}, [
           el('thead', {}, [el('tr', {}, [
             el('th', { scope: 'col', text: 'ID' }, []),
+            el('th', { scope: 'col', text: '種別' }, []),
             el('th', { scope: 'col', text: '状態' }, []),
             el('th', { scope: 'col', text: '期限' }, []),
             el('th', { scope: 'col', text: '発行日時' }, []),
@@ -865,23 +753,115 @@ function renderInvites(host) {
 
 /* ---------- 会話保管 ---------- */
 
+var selectedConversationId = null;
+
+function renderQuestionForm(panel, question, onSaved) {
+  var error = el('p', { class: 'error-note', role: 'alert' }, []);
+  var textarea = el('textarea', { rows: '10' }, []);
+  textarea.style.width = '100%';
+  var questionText = el('p', { class: 'code', text: question.question_text || '' }, []);
+  questionText.style.whiteSpace = 'pre-wrap';
+  var save = el('button', { class: 'btn btn-primary', type: 'button', text: '代表回答を保存' }, []);
+  save.addEventListener('click', function () {
+    clearNode(error);
+    apiRequest('POST', '/api/v1/admin/conversations/' + encodeURIComponent(question.id) + '/representative-answer', {
+      representative_answer: textarea.value
+    }).then(function (result) {
+      if (!result.ok) { error.textContent = apiError(result); return; }
+      toast('代表回答を保存しました。', 'success');
+      onSaved();
+    });
+  });
+  panel.appendChild(el('h3', { text: '質問と代表回答' }, []));
+  panel.appendChild(questionText);
+  panel.appendChild(el('p', { class: 'sub', text: '主目的 ' + (question.question_type || '—') + ' ・ ' + fmtDate(question.created_at) + (question.pii_suspected ? ' ・ PII検知あり' : '') }, []));
+  panel.appendChild(el('div', { class: 'field' }, [el('label', { text: '代表回答（あなたの回答を入力）' }, []), textarea]));
+  panel.appendChild(el('div', { class: 'btn-row' }, [save]));
+  panel.appendChild(error);
+}
+
 function renderConversations(host) {
-  host.appendChild(el('p', { class: 'notice', text: '初期版では本文を表示しません。件数とメタデータのみ確認できます。' }, []));
+  var questionPanel = el('section', { class: 'panel', 'aria-label': '質問と代表回答' }, []);
   var holder = el('div', {}, []);
+  var answersHolder = el('div', {}, []);
+  host.appendChild(questionPanel);
   host.appendChild(holder);
+  host.appendChild(answersHolder);
+
+  function refreshQuestionPanel() {
+    clearNode(questionPanel);
+    if (!selectedConversationId) {
+      questionPanel.appendChild(el('h3', { text: '質問と代表回答' }, []));
+      questionPanel.appendChild(el('p', { class: 'sub', text: '一覧の「質問」を選ぶと、質問本文と代表回答入力欄が表示されます。' }, []));
+      return;
+    }
+    questionPanel.appendChild(loadingCard());
+    apiRequest('GET', '/api/v1/admin/conversations/' + encodeURIComponent(selectedConversationId) + '/question').then(function (result) {
+      clearNode(questionPanel);
+      if (!result.ok) {
+        questionPanel.appendChild(errorCard(apiError(result)));
+        return;
+      }
+      renderQuestionForm(questionPanel, result.data, refreshAnswers);
+    });
+  }
+
+  function refreshAnswers() {
+    clearNode(answersHolder);
+    loadInto(answersHolder, function () {
+      return apiRequest('GET', '/api/v1/admin/representative-answers?limit=50');
+    }, function (target, data) {
+      var items = data.items || [];
+      if (!items.length) {
+        target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '保存済みの代表回答はまだありません。' }, [])]));
+        return;
+      }
+      var rows = items.map(function (item) {
+        return el('tr', {}, [
+          el('td', { text: fmtDate(item.updated_at) }, []),
+          el('td', { text: (item.question_text || '').slice(0, 40) }, []),
+          el('td', { text: item.question_type || '—' }, []),
+          el('td', { text: (item.representative_answer || '').slice(0, 40) }, [])
+        ]);
+      });
+      target.appendChild(el('div', { class: 'card table-wrap' }, [
+        el('h3', { text: '代表回答済み（直近' + items.length + '件）' }, []),
+        el('table', {}, [
+          el('thead', {}, [el('tr', {}, [
+            el('th', { scope: 'col', text: '更新日時' }, []),
+            el('th', { scope: 'col', text: '質問（抜粋）' }, []),
+            el('th', { scope: 'col', text: '主目的' }, []),
+            el('th', { scope: 'col', text: '代表回答（抜粋）' }, [])
+          ])]),
+          el('tbody', {}, rows)
+        ])
+      ]));
+    });
+  }
+
   loadInto(holder, function () {
     return apiRequest('GET', '/api/v1/admin/conversations?limit=100');
   }, function (target, data) {
     var items = data.items || [];
     var piiCount = items.filter(function (row) { return row.pii_suspected; }).length;
     var rows = items.map(function (row) {
+      var action = el('span', {}, []);
+      if (!row.denied) {
+        var questionButton = el('button', { class: 'btn btn-small', type: 'button', text: '質問' }, []);
+        questionButton.addEventListener('click', function () {
+          selectedConversationId = row.id;
+          refreshQuestionPanel();
+        });
+        action.appendChild(questionButton);
+      }
       return el('tr', {}, [
         el('td', { text: fmtDate(row.created_at) }, []),
         el('td', { text: shortId(row.user_id) }, []),
         el('td', {}, [planBadge(row.plan || 'free')]),
         el('td', { text: row.question_type || '—' }, []),
         el('td', {}, [row.denied ? badge('拒否', 'danger') : document.createTextNode('—')]),
-        el('td', {}, [row.pii_suspected ? badge('検知', 'warning') : document.createTextNode('—')])
+        el('td', {}, [row.pii_suspected ? badge('検知', 'warning') : document.createTextNode('—')]),
+        el('td', {}, [action])
       ]);
     });
     if (!rows.length) {
@@ -898,11 +878,117 @@ function renderConversations(host) {
           el('th', { scope: 'col', text: 'プラン' }, []),
           el('th', { scope: 'col', text: '主目的' }, []),
           el('th', { scope: 'col', text: '上限拒否' }, []),
-          el('th', { scope: 'col', text: 'PII検知' }, [])
+          el('th', { scope: 'col', text: 'PII検知' }, []),
+          el('th', { scope: 'col', text: '操作' }, [])
         ])]),
         el('tbody', {}, rows)
       ])
     ]));
+  });
+  refreshQuestionPanel();
+  refreshAnswers();
+}
+
+/* ---------- コーパス ---------- */
+
+function renderCorpora(host) {
+  var holder = el('div', {}, []);
+  host.appendChild(holder);
+  loadInto(holder, function () {
+    return apiRequest('GET', '/api/v1/admin/corpora').then(function (result) {
+      if (!result.ok) { return result; }
+      return apiRequest('GET', '/api/v1/admin/plan-settings').then(function (settings) {
+        if (!settings.ok) { return settings; }
+        return { ok: true, status: 200, data: { corpora: result.data, settings: settings.data } };
+      });
+    });
+  }, function (target, data) {
+    var items = (data.corpora || {}).items || [];
+    var settingsByPlan = {};
+    ((data.settings || {}).items || []).forEach(function (setting) {
+      settingsByPlan[setting.plan] = setting;
+    });
+    items.forEach(function (entry) {
+      var corpus = entry.corpus || {};
+      var card = el('div', { class: 'card' }, [
+        el('div', { class: 'corpus-head' }, [
+          planBadge(entry.plan)
+        ]),
+        kv([
+          ['モデル', entry.model_name || '既定'],
+          ['設定更新日時', fmtDate(entry.updated_at)]
+        ])
+      ]);
+      var setting = settingsByPlan[entry.plan];
+      if (setting) {
+        var value = setting.draft_daily_message_limit;
+        var clamp = function (next) { return Math.min(999, Math.max(1, next)); };
+        var input = el('input', { class: 'limit-input', type: 'number', min: '1', max: '999', step: '1', value: String(value), 'aria-label': entry.plan + ' の日次上限' }, []);
+        var syncInput = function () { input.value = String(value); };
+        input.addEventListener('input', function () {
+          var parsed = parseInt(input.value, 10);
+          if (!isNaN(parsed)) { value = clamp(parsed); }
+        });
+        input.addEventListener('blur', syncInput);
+        var minus = el('button', { class: 'btn stepper-btn', type: 'button', text: '−', 'aria-label': entry.plan + ' の回数を減らす' }, []);
+        var plus = el('button', { class: 'btn stepper-btn', type: 'button', text: '＋', 'aria-label': entry.plan + ' の回数を増やす' }, []);
+        minus.addEventListener('click', function () { value = clamp(value - 1); syncInput(); });
+        plus.addEventListener('click', function () { value = clamp(value + 1); syncInput(); });
+        var publishButton = el('button', { class: 'btn btn-small btn-primary', type: 'button', text: '反映' }, []);
+        publishButton.addEventListener('click', function () {
+          var parsed = parseInt(input.value, 10);
+          if (isNaN(parsed) || String(parsed) !== input.value.trim() || parsed < 1 || parsed > 999) { toast('1〜999の整数を入力してください。'); return; }
+          var next = clamp(parsed);
+          if (next === setting.daily_message_limit) { toast('変更はありません。'); return; }
+          publishButton.disabled = true;
+          apiRequest('PUT', '/api/v1/admin/plan-settings/' + entry.plan, {
+            daily_message_limit: next,
+            base_revision: setting.published_revision
+          }).then(function (draftResult) {
+            if (!draftResult.ok) { toast(apiError(draftResult)); publishButton.disabled = false; return; }
+            return apiRequest('POST', '/api/v1/admin/plan-settings/' + entry.plan + '/publish', {
+              revision: setting.published_revision
+            }).then(function (pubResult) {
+              if (!pubResult.ok) { toast(apiError(pubResult)); publishButton.disabled = false; return; }
+              toast(entry.plan + ' の上限を反映しました。', 'success');
+              refreshSection();
+            });
+          }).catch(function () {
+            publishButton.disabled = false;
+            toast('通信エラーが発生しました。');
+          });
+        });
+        card.appendChild(el('div', { class: 'limit-editor' }, [
+          el('span', { class: 'limit-label', text: '日次上限' }, []),
+          el('div', { class: 'stepper' }, [minus, input, plus]),
+          publishButton
+        ]));
+        card.appendChild(el('p', { class: 'sub', text: '公開中 ' + setting.daily_message_limit + ' 回/日' + (setting.configured ? '' : '（未設定）') }, []));
+      }
+      if (entry.firestore_error) {
+        card.appendChild(el('p', { class: 'error-note', role: 'alert', text: 'rag_permissionsの読取に失敗しました（' + entry.firestore_error + '）。既定値を表示中。' }, []));
+      }
+      if (corpus.status === 'ok') {
+        var files = corpus.files || [];
+        var summary = el('summary', { text: corpus.display_name || '名称未設定' }, []);
+        var list = el('ul', { class: 'corpus-files' }, []);
+        files.forEach(function (item) {
+          list.appendChild(el('li', {}, [
+            el('span', { text: item.display_name || '(名称未設定)' }, []),
+            item.gcs_uri ? el('code', { text: item.gcs_uri }, []) : null
+          ]));
+        });
+        var details = el('details', { class: 'corpus-details' }, [summary]);
+        if (corpus.description) {
+          details.appendChild(el('p', { class: 'sub', text: corpus.description }, []));
+        }
+        details.appendChild(list);
+        card.appendChild(details);
+      } else if (corpus.status === 'error') {
+        card.appendChild(el('p', { class: 'error-note', role: 'alert', text: 'Vertex AIコーパス参照に失敗しました（' + (corpus.error || '不明なエラー') + '）。設定表示は継続しています。' }, []));
+      }
+      target.appendChild(card);
+    });
   });
 }
 
@@ -1014,7 +1100,7 @@ function renderAudit(host) {
 var renderers = {
   overview: renderOverview,
   users: renderUsers,
-  settings: renderSettings,
+  corpora: renderCorpora,
   coupons: renderCoupons,
   invites: renderInvites,
   conversations: renderConversations,

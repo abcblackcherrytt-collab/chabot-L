@@ -1,0 +1,94 @@
+"""Vertex AI RAGコーパス参照クライアント（管理UI読み取り専用）。
+
+`vertexai.rag` の同期APIを `asyncio.to_thread` 経由で呼び出し、
+コーパスメタデータとファイル一覧を管理コンソールへ提供する。
+書込み操作は提供しない。
+"""
+
+import asyncio
+import logging
+from typing import Any, Dict
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+_MAX_FILES = 200
+_INVALID_CORPUS_IDS = {
+    "",
+    "your-corpus-id",
+    "your-free-corpus-id",
+    "your-paid-corpus-id",
+}
+
+
+class VertexRagCorpusError(Exception):
+    """コーパス参照の失敗を表す。"""
+
+
+def is_valid_corpus_id(corpus_id: str) -> bool:
+    """プレースホルダ・空値でない実在可能性のあるIDかを返す。"""
+    return corpus_id not in _INVALID_CORPUS_IDS
+
+
+def _fetch_corpus_sync(corpus_id: str) -> Dict[str, Any]:
+    """同期文脈でコーパスメタデータとファイル一覧を取得する。"""
+    import vertexai
+    from vertexai import rag
+
+    vertexai.init(project=settings.google_project_id, location=settings.google_location)
+    corpus_name = (
+        f"projects/{settings.google_project_id}"
+        f"/locations/{settings.google_location}/ragCorpora/{corpus_id}"
+    )
+    corpus = rag.get_corpus(name=corpus_name)
+    files = []
+    for item in rag.list_files(corpus_name=corpus_name):
+        files.append(
+            {
+                "display_name": getattr(item, "display_name", "") or "",
+                "gcs_uri": getattr(item, "gcs_uri", "") or "",
+            }
+        )
+        if len(files) >= _MAX_FILES:
+            break
+    return {
+        "display_name": getattr(corpus, "display_name", "") or "",
+        "description": getattr(corpus, "description", "") or "",
+        "create_time": str(getattr(corpus, "create_time", "") or ""),
+        "file_count": len(files),
+        "files": files,
+    }
+
+
+async def get_corpus_overview(
+    corpus_id: str, *, timeout_seconds: float = 20.0
+) -> Dict[str, Any]:
+    """コーパスメタデータとファイル一覧を非同期で返す。
+
+    Args:
+        corpus_id: RAGコーパスID（数値ID）。
+        timeout_seconds: 1コーパスあたりの上限待ち時間。
+
+    Returns:
+        display_name / description / create_time / file_count / files を含む辞書。
+
+    Raises:
+        VertexRagCorpusError: タイムアウトまたはAPI失敗時。エラー種別のみを保持し、
+            内部詳細はログに留める。
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_fetch_corpus_sync, corpus_id),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError as exc:
+        logger.warning("RAG corpus overview timed out: corpus_id=%s", corpus_id)
+        raise VertexRagCorpusError("timeout") from exc
+    except Exception as exc:
+        logger.warning(
+            "RAG corpus overview failed: corpus_id=%s error_type=%s",
+            corpus_id,
+            type(exc).__name__,
+        )
+        raise VertexRagCorpusError(type(exc).__name__) from exc

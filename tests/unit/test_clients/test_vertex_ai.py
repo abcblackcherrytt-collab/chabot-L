@@ -19,16 +19,20 @@ class TestVertexAIClient:
         """Phase 1回答方針プロンプトが要約先行構成と辛口表現を保持することを確認する。"""
         from app.clients.vertex_ai import DEFAULT_SYSTEM_INSTRUCTION
 
-        # 要約先行・2行空行・ラベルなし構成
-        assert "出力は必ず次の構成だけにしてください" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "2行の空行" in DEFAULT_SYSTEM_INSTRUCTION
+        # 要約先行・空行1行・2段落・ラベルなし構成（assessment以外の既定）
+        assert "出力はLINEのテキスト画面で読みやすい" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "次の2段落だけ" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "段落の間には空行を1行だけ" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "質問への直接的な回答本文" in DEFAULT_SYSTEM_INSTRUCTION
         assert "回答：" not in DEFAULT_SYSTEM_INSTRUCTION
         assert "要約：" not in DEFAULT_SYSTEM_INSTRUCTION
 
-        # 文字数制限（現在の仕様）
-        assert "全体は原則500字以内" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "本文は通常100〜400字" in DEFAULT_SYSTEM_INSTRUCTION
-        assert "要約は20〜60字" in DEFAULT_SYSTEM_INSTRUCTION
+        # 文字数は上限ではなく、LINEで読みやすい500字程度を目安にする
+        assert "全体は500字程度（目安450〜550字）" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "要約は30〜60字" in DEFAULT_SYSTEM_INSTRUCTION
+        assert "500字以内" not in DEFAULT_SYSTEM_INSTRUCTION
+        # assessment専用構成は分離された指示にだけ存在する
+        assert "①" not in DEFAULT_SYSTEM_INSTRUCTION
 
         # 辛口表現
         assert "少し毒舌で辛口" in DEFAULT_SYSTEM_INSTRUCTION
@@ -55,22 +59,42 @@ class TestVertexAIClient:
 
         for instruction in (free_instruction, basic_instruction, pro_instruction):
             assert "です・ます" in instruction
-            assert "本文は通常100〜400字" in instruction
-            assert "全体は原則500字以内" in instruction
+            assert "全体は500字程度（目安450〜550字）" in instruction
             assert "辛口表現は1回答につき原則1か所" in instruction
-            assert "2行の空行" in instruction
+            assert "段落の間には空行を1行だけ" in instruction
+            assert "次の2段落だけ" in instruction
             assert "回答：" not in instruction
             assert "要約：" not in instruction
+            assert "①" not in instruction
 
         assert "free用コーパス" in free_instruction
         assert "ユーザーの質問と関連する情報" in free_instruction
         assert "質問に直接対応する回答" in free_instruction
         assert "一般知識や推測で補完せず" in free_instruction
-        assert "結論、基礎的な理由、次に確認する所見" in free_instruction
+        assert "安全に使える基本事項" in free_instruction
         assert "有料用コーパス" in basic_instruction
         assert "根拠または機序、評価・介入への具体的な適用" in basic_instruction
         assert basic_instruction == pro_instruction
         assert free_instruction != basic_instruction
+
+    def test_assessment_question_type_appends_assessment_instruction(self):
+        """assessment分類のときだけ専用の3段落構成指示を追加すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        for plan in ("free", "basic", "pro"):
+            instruction = client._get_system_instruction(plan, "assessment")
+            assert "assessment）専用の回答方針" in instruction
+            assert "次の3段落だけ" in instruction
+            assert "①②③" in instruction
+            assert "質問への識別力が高い評価" in instruction
+            assert "候補・示唆・重みづけ" in instruction
+            assert "文献的事実、症例への推論、個人の臨床経験や操作的定義を混同せず" in instruction
+
+        for question_type in (None, "knowledge", "intervention", "other"):
+            instruction = client._get_system_instruction("pro", question_type)
+            assert "assessment）専用の回答方針" not in instruction
+            assert "①②③" not in instruction
 
     def test_default_corpus_is_free_plan_secret(self):
         """コーパス未指定時はfree用GOOGLE_CORPUS_IDを使用する。"""
@@ -148,7 +172,11 @@ class TestVertexAIClient:
         """RAG回答生成モデルへ既定のシステムプロンプトが渡されることを確認する。"""
 
         class MockResponse:
-            text = "所見を統合してください。\n\n\n評価所見を整理します。"
+            text = (
+                "外転制限は肩甲上腕関節と肩甲帯を分けて評価します。\n\n"
+                "自動・他動外転を比較し、肩甲骨を固定して可動域とエンドフィールを確認します。\n\n"
+                "両者を分けることで、関節包性制限と代償運動を判別しやすくなるためです。"
+            )
             candidates = []
 
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -173,8 +201,12 @@ class TestVertexAIClient:
         assert call_kwargs["config"].system_instruction == client._get_system_instruction(
             "free"
         )
-        # _strip_markdown()はMarkdownのみ削除し、要約先行の本文はそのまま返す
-        assert result["answer"] == "所見を統合してください。\n\n\n評価所見を整理します。"
+        # _strip_markdown()はMarkdownのみ削除し、LINE向け3段落と空行を保つ
+        assert result["answer"] == (
+            "外転制限は肩甲上腕関節と肩甲帯を分けて評価します。\n\n"
+            "自動・他動外転を比較し、肩甲骨を固定して可動域とエンドフィールを確認します。\n\n"
+            "両者を分けることで、関節包性制限と代償運動を判別しやすくなるためです。"
+        )
 
     @pytest.mark.asyncio
     async def test_query_log_does_not_include_question_or_answer(self, caplog):

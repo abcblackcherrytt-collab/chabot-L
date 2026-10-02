@@ -772,7 +772,7 @@ class LineService:
         if not isinstance(override, dict):
             return plan
         override_plan = override.get("plan")
-        if override_plan not in ("basic", "pro"):
+        if override_plan not in ("basic", "pro", "service"):
             return plan
         expires_at = override.get("expires_at")
         if isinstance(expires_at, str):
@@ -783,7 +783,8 @@ class LineService:
         else:
             still_valid = expires_at is None
         if still_valid and plan not in ("basic", "pro"):
-            return override_plan
+            # serviceは実行時にpro相当（同一コーパス・日次上限）として解決する。
+            return "pro" if override_plan == "service" else override_plan
         return plan
 
     async def health_check(self) -> Dict[str, Any]:

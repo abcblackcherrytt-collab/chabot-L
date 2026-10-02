@@ -72,15 +72,16 @@ class CouponIssueRequest(BaseModel):
 
 
 class InviteIssueRequest(BaseModel):
-    """無料登録URL発行リクエスト。"""
+    """登録URL発行リクエスト。"""
 
     ttl_hours: Optional[int] = Field(default=None, ge=1, le=720)
+    invite_type: str = Field(default="free", pattern="^(free|service)$")
 
 
 class UserPlanRequest(BaseModel):
     """プラン変更リクエスト。"""
 
-    plan: str = Field(pattern="^(free|basic|pro)$")
+    plan: str = Field(pattern="^(free|basic|pro|service)$")
 
 
 class UserDeactivateRequest(BaseModel):
@@ -100,6 +101,12 @@ class FeedbackStatusRequest(BaseModel):
 
     status: str
     admin_note: Optional[str] = Field(default=None, max_length=500)
+
+
+class RepresentativeAnswerRequest(BaseModel):
+    """代表回答保存リクエスト。"""
+
+    representative_answer: str = Field(min_length=1, max_length=4000)
 
 
 def _admin_service() -> AdminService:
@@ -380,6 +387,7 @@ async def issue_invite(
         _admin_service().issue_invite,
         actor=session["sub"],
         ttl_hours=request_data.ttl_hours,
+        invite_type=request_data.invite_type,
     )
 
 
@@ -415,6 +423,54 @@ async def list_conversations(
 ) -> Dict[str, Any]:
     """会話メタデータ（本文なし）を返す。"""
     return await _admin_service().list_conversations(limit=min(limit, 500))
+
+
+@router.get("/conversations/{conversation_id}/question")
+async def get_conversation_question(
+    conversation_id: str,
+    session: Dict[str, Any] = Depends(_require_admin_session),
+) -> Dict[str, Any]:
+    """会話から質問本文だけを抽出して返す（回答本文は返さない）。"""
+    return await _run_service(
+        _admin_service().get_conversation_question,
+        conversation_id=conversation_id,
+    )
+
+
+@router.post("/conversations/{conversation_id}/representative-answer")
+async def save_representative_answer(
+    conversation_id: str,
+    request_data: RepresentativeAnswerRequest,
+    request: Request,
+    session: Dict[str, Any] = Depends(_require_admin_write),
+) -> Dict[str, Any]:
+    """会話の質問へ管理者の代表回答を保存する。"""
+    return await _run_service(
+        _admin_service().save_representative_answer,
+        conversation_id=conversation_id,
+        representative_answer=request_data.representative_answer,
+        actor=session["sub"],
+    )
+
+
+@router.get("/representative-answers")
+async def list_representative_answers(
+    limit: int = 100,
+    session: Dict[str, Any] = Depends(_require_admin_session),
+) -> Dict[str, Any]:
+    """保存済み代表回答の一覧を返す。"""
+    return await _run_service(
+        _admin_service().list_representative_answers,
+        limit=min(limit, 500),
+    )
+
+
+@router.get("/corpora")
+async def list_corpora(
+    session: Dict[str, Any] = Depends(_require_admin_session),
+) -> Dict[str, Any]:
+    """プラン別コーパス設定と実体メタデータを返す。"""
+    return await _admin_service().list_corpora()
 
 
 @router.get("/feedback")

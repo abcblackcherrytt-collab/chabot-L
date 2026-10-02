@@ -188,6 +188,36 @@ async def test_plan_override_upgrades_free_user(flow_service, monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_service_override_resolves_to_pro(flow_service) -> None:
+    """無期限serviceのplan_overrideをpro相当（コーパス・上限）で解決すること。"""
+    user_repo = flow_service._get_user_repository()
+    user_repo.find_by_line_user_id = AsyncMock(return_value={
+        "id": "user-123",
+        "line_user_id": "U_test123",
+        "is_active": True,
+        "subscription_plan": "free",
+        "plan_override": {
+            "plan": "service",
+            "expires_at": None,
+            "source": "service_invite",
+        },
+    })
+    rag_repo = flow_service._get_rag_permission_repository()
+    flow_service._test_plan_settings_repo.get_published_daily_limit = AsyncMock(
+        return_value=500
+    )
+
+    result = await flow_service.process_webhook_event(_message_event("通常の質問"))
+
+    assert result["status"] == "processed"
+    assert result["plan"] == "pro"
+    rag_repo.get_by_plan.assert_awaited_once_with("pro")
+    flow_service._test_usage_repo.increment_with_limit_check.assert_awaited_once_with(
+        "user-123", "pro", 500
+    )
+
+
+@pytest.mark.asyncio
 async def test_stripe_plan_wins_over_override(flow_service) -> None:
     """Stripe契約中のプランをplan_overrideより優先すること。"""
     user_repo = flow_service._get_user_repository()

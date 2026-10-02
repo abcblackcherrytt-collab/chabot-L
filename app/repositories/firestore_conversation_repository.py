@@ -115,3 +115,20 @@ class FirestoreConversationRepository:
                 }
             )
         return {"items": items, "count": len(items)}
+
+    async def get_question(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """代表回答入力用に質問本文だけを返す（回答本文は含めない）。"""
+        doc = await self.db.collection(self.collection_name).document(conversation_id).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict()
+        return {
+            "id": doc.id,
+            "question_text": data.get("question_text"),
+            "question_type": data.get("question_type"),
+            "answer_aspects": list(data.get("answer_aspects") or []),
+            "plan": data.get("plan"),
+            "denied": bool(data.get("denied")),
+            "pii_suspected": bool(data.get("pii_suspected")),
+            "created_at": data.get("created_at"),
+        }

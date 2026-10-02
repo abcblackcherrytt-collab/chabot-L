@@ -238,7 +238,7 @@ async def invite_complete(request: Request) -> Response:
             )
         response = _result_page(
             "登録が完了しました",
-            "<p>Chabotの無料アカウントとして登録されました。"
+            "<p>Chabotのアカウントとして登録されました。"
             "LINEに戻って、そのままご質問ください。</p>",
         )
     else:

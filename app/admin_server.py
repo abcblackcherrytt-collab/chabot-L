@@ -42,7 +42,7 @@ ADMIN_PAGE_HTML = """<!doctype html>
       <ul>
         <li><button type='button' data-section='overview'>集計</button></li>
         <li><button type='button' data-section='users'>ユーザー</button></li>
-        <li><button type='button' data-section='settings'>回数上限設定</button></li>
+        <li><button type='button' data-section='corpora'>コーパス</button></li>
         <li><button type='button' data-section='coupons'>クーポン</button></li>
         <li><button type='button' data-section='invites'>無料登録URL</button></li>
         <li><button type='button' data-section='conversations'>会話保管</button></li>

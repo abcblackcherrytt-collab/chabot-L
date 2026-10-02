@@ -13,6 +13,12 @@ from app.repositories.firestore_admin_invite_repository import (
 from app.repositories.firestore_feedback_repository import (
     FirestoreFeedbackRepository,
 )
+from app.repositories.firestore_conversation_repository import (
+    FirestoreConversationRepository,
+)
+from app.repositories.firestore_representative_answer_repository import (
+    FirestoreRepresentativeAnswerRepository,
+)
 from app.repositories.firestore_plan_settings_repository import (
     FirestorePlanSettingsRepository,
 )
@@ -197,3 +203,106 @@ class TestFeedbackRepository:
             await repository.update_status(
                 "fb-1", status="unknown", admin_note=None, handled_by="admin"
             )
+
+
+class TestConversationQuestionExtraction:
+    """conversationsの質問抽出テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_get_question_returns_question_only(self) -> None:
+        """質問本文とメタデータだけを返し、回答本文を含めないこと。"""
+        document = MagicMock()
+        document.get = AsyncMock(
+            return_value=_snapshot(
+                {
+                    "question_text": "2nd肢位の外旋制限をどう評価しますか",
+                    "answer_text": "botの回答",
+                    "question_type": "assessment",
+                    "plan": "free",
+                    "denied": False,
+                    "pii_suspected": False,
+                    "created_at": "2026-10-02T10:00:00+09:00",
+                }
+            )
+        )
+        collection = MagicMock()
+        collection.document.return_value = document
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreConversationRepository(client=client)
+
+        question = await repository.get_question("conv-1")
+
+        assert question is not None
+        assert question["question_text"].startswith("2nd肢位")
+        assert "answer_text" not in question
+
+    @pytest.mark.asyncio
+    async def test_get_question_returns_none_for_missing(self) -> None:
+        """存在しない会話IDではNoneを返すこと。"""
+        document = MagicMock()
+        document.get = AsyncMock(return_value=_snapshot({}, exists=False))
+        collection = MagicMock()
+        collection.document.return_value = document
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreConversationRepository(client=client)
+
+        assert await repository.get_question("conv-404") is None
+
+
+class TestRepresentativeAnswerRepository:
+    """representative_answersの読み書きテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_upsert_creates_when_absent(self) -> None:
+        """既存がない場合は新規作成すること。"""
+        collection = MagicMock()
+        collection.where.return_value.limit.return_value.get = AsyncMock(return_value=[])
+        created_ref = MagicMock()
+        created_ref.id = "rep-1"
+        collection.add = AsyncMock(return_value=(MagicMock(), created_ref))
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreRepresentativeAnswerRepository(client=client)
+
+        saved = await repository.upsert(
+            conversation_id="conv-1",
+            question_text="質問",
+            question_type="assessment",
+            plan="free",
+            representative_answer="代表回答",
+            updated_by="admin",
+        )
+
+        assert saved["id"] == "rep-1"
+        assert saved["conversation_id"] == "conv-1"
+        assert saved["representative_answer"] == "代表回答"
+        collection.add.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_upsert_updates_existing_document(self) -> None:
+        """既存がある場合は同じドキュメントを更新すること。"""
+        existing = MagicMock()
+        existing.id = "rep-1"
+        existing.reference.update = AsyncMock()
+        collection = MagicMock()
+        collection.where.return_value.limit.return_value.get = AsyncMock(return_value=[existing])
+        collection.add = AsyncMock()
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreRepresentativeAnswerRepository(client=client)
+
+        saved = await repository.upsert(
+            conversation_id="conv-1",
+            question_text="質問",
+            question_type=None,
+            plan=None,
+            representative_answer="更新後",
+            updated_by="admin",
+        )
+
+        assert saved["id"] == "rep-1"
+        assert saved["representative_answer"] == "更新後"
+        existing.reference.update.assert_awaited_once()
+        collection.add.assert_not_awaited()

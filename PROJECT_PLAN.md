@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-09-28（管理UI本番実装・chabot-adminデプロイ・run_iam認証と管理プロキシスキル追加）
+> **更新日**: 2026-10-02（LINE回答プロンプトを500字程度・3段落へ変更）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -48,6 +48,7 @@
   5. 管理UIの本番実装は完了（単体テスト済み）。管理サービスのIAP・IAM・デプロイは別作業として保留する
 - **freeプラン上限超過メッセージ（本番反映済み・実端末未確認）**: 絵文字と個別プランURLの案内を廃止し、Basic/Pro選択画面URL（SUBSCRIPTION_PLAN_SELECTION_URL）、翌日まで待つ案内、継続課金中の料金据え置き案内を表示する文面へ変更した。コミット 248c7ed、Cloud Run chabot-service-00035-drg、GitHub Actions run 35690378112 成功、品質ゲート139件成功、/health・選択画面・select.css・Basic導線303を確認済み
 - **回答出力構成変更（2026-09-22本番反映済み・実端末表示未確認）**: RAG回答の「回答：／要約：」ラベル付き2ブロックを廃止し、最重要点をまとめた要約1文を最初に置き、2行の空行を挟んで回答本文を続ける構成へ変更した。free/basic/pro別の本文構成指示（結論→理由→確認点／結論→根拠→適用→限界）と文字数制限（全体は原則500字以内）は維持。ローカルでデプロイ品質ゲート133件成功。初回pushはHEADのdocs [skip ci]で起動しなかったため、空コミット b8401f5 で再起動した。GitHub Actions run 35698220400 成功（2m43s）、Cloud Run chabot-service-00036-g8v（GIT_SHA=b8401f5）へ100%トラフィックで反映、/health 200、デプロイ後ERRORログ0件を確認。実LINE端末での新形式表示と保存本文の形式確認が残課題
+- **回答プロンプト再構成（2026-10-02ローカル実装・本番未反映）**: 上限「500字以内」を「500字程度（目安450〜550字）」へ変更。LINE表示を要約1文→空行1行→具体的な評価方法/確認手順→空行1行→その評価を選ぶ専門的理由、の3段落へ統一した。freeは基本的な確認手順とコーパス内の基礎根拠、basic/pro/serviceは肢位・操作・観察点・判定要点と解剖/バイオメカニクス/病態/文献に基づく理由・限界を指示。ラベル・見出し・Markdownは禁止を維持し、LINE経路の改行保持を含む関連unit 62件成功。実モデル出力と実LINE端末表示のE2E確認は未実施。
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧
@@ -76,6 +77,7 @@
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
 - [x] Stripe Basic / Proの商品・Price IDとCloud RunのStripe API鍵を同じアカウント・テストモードへ統一し、商品・継続課金・金額・通貨をAPIで確認する。
+- [x] 無期限serviceアカウントをStripeへ追加せず、招待URL消費時と管理UIプラン変更で`plan_override.plan=service`を付与する方式を実装。Bot側プラン解決はserviceをpro相当へ変換し、同一コーパス・pro日次上限を適用。Stripe契約 > service/basic/pro override > freeの優先度は従来どおり。招待・管理・LINEフローの単体テスト43件成功。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
 
 ---
@@ -332,8 +334,14 @@ P0公開ゲート:
 - [x] 2026-09-30: 修正を `chabot-admin-00003-f4p`（`admin-ff76d7b`）へ本番反映。テスト用に発行した招待URL（inv_d656e9aa21b9）は検証直後に失効済み。併せて発行レスポンスへ保存用 `token_sha256` が含まれていた問題をコード修正（応答から除去・コミット済み・次回デプロイで反映）。
 - [x] 2026-09-30（ユーザー指示）: プラン変更UI/APIを簡素化。選択肢はfree/basic/proのみ（free選択でoverride解除）、変更理由の入力必須と期間指定を廃止。監査はbefore/afterのみ記録。設計書6.4節・7節も更新。
 - [x] 2026-09-30（ユーザー指示）: 全タブの見出し（h2）と説明文を削除し、ヘッダーの「ログイン中: サービスアカウント」バッジ表示も削除。各カード・テーブルの内容は従来どおり。
+- [x] 2026-09-30: 管理UIへ「コーパス」タブを追加（ローカル実装・単体テストと実データ表示を確認済み・本番未反映）。読み取り専用 endpoint `GET /api/v1/admin/corpora`（`_require_admin_session` のみ・CSRF不要）が free/basic/pro ごとに、Firestore `rag_permissions` の実行時値（`get_by_plan` と同一解決）と設定fallback・有効ソース判定を返す。コーパスIDを重複排除してVertex AI RAG API（`app/clients/vertex_ai_rag.py`・`asyncio.to_thread`+20秒タイムアウト+1コーパス単位のエラー捕捉）から display_name/description/ファイル一覧を取得し、Vertex側障害時は status=error を載せてHTTP 200で降格表示（要望タブ500の再発防止設計）。検証: 新規unit 7件（プラン順序・Vertex重複排除・fallback・Vertex障害降格・Firestore読取失敗・プレースホルダID・API認証/透過）を含む全unit 214件成功（既知PostgreSQL Refresh Token 9件除外）。ローカル実ブラウザE2E（devモード+実Firestore/実Vertex・GRPC_DNS_RESOLVER=native必須はローカル既知の制約）で free=chabot_free 3ファイル・basic/pro=chabot_shoulder 16ファイルの表示、ファイル一覧展開、コンソールエラー0、Vertex無効プロジェクト指定時は「Vertex参照エラー」バッジ+エラー注記で設定表示継続を確認。デスクトップ1440px・モバイル390pxのスクリーンショットでレイアウト確認済み。副次知見: `vertexai.rag` は非推奨警告が出ており将来 `agentplatform` クライアントへの移行検討が必要。
+- [x] 2026-09-30（ユーザー指示）: コーパスタブの表示を簡素化。ロケーション説明文・Firestore設定/実体取得済み等の状態バッジ・コーパスID・ファイル件数表記を削除し、プラン名バッジ＋モデル/日次上限/設定更新日時＋コーパス名のみのファイル一覧トグルへ変更。障害時のerror-note表示と降格設計（HTTP 200継続）は維持。管理unit 21件成功、実ブラウザで修正後表示を再確認済み（本番未反映）。
+- [x] 2026-09-30（ユーザー指示）: 回数上限設定タブを廃止し、コーパスタブの各プランカードへ日次上限の変更・反映機能を統合。plan-settings API（下書きPUT/反映POST・監査・ロールバック）は維持し、nav/sectionTitles/renderSettingsを削除（#settingsハッシュは集計へフォールバック）。エディタは半分サイズの−/入力欄/＋/反映ボタン構成で数値直接入力可（1〜999整数バリデーション・blurで正規化）、「Botへの適用は最大60秒です」表記は削除。管理unit 21件成功、実ブラウザでnav更新・直接入力＋ステッパー動作・0入力の正規化を確認（本番値は変更せず・本番未反映）。
+- [x] 2026-10-02（ユーザー指示）: ユーザー詳細の「判定経路」行を廃止し、「プラン」へ実効プラン（Stripe契約 > 有効なplan_override（basic/pro/service） > free）を表示。プラン変更セレクトの初期値も実効プランへ同期（service選択肢付き）。管理unit 16件成功、ローカルdevサーバー（port 8000・dev-login）で動作確認。本番未反映。
+- [ ] 2026-09-30: 管理UI要望タブがHTTP 500になる障害を本番ログで確認（9/29 22:57・23:25、9/30 04:22 UTC）。原因は `FirestoreFeedbackRepository.list()` が `where(status == open)` + `order_by(created_at DESC)` を発行し、Firestore `chabotline` に複合インデックス `(status ASC, created_at DESC)` が存在しないため FailedPrecondition（index required）となること。「すべて」タブはstatusフィルタなしのため自動単一フィールドインデックスで動作。修正案は（A）複合インデックス作成（コード変更不要・推奨）、（B）リポジトリでwhereのみ+Python側ソート、（C）`list_feedback` エンドポイントの `_run_service` 化とFailedPrecondition時の読み取り可能エラー返却。Bot側要望受付 `count_today_feedback` の `(user_id, created_at)` 複合インデックスも未作成で、実ユーザーが「要望を送る」を押した初回に同種エラーになる潜在リスク。ユーザー指示により分析・提案のみでスクリプト修正は未実施。
 - [ ] IAP＋HTTPS LBはドメイン取得時に再検討する（現時点で保留）。deploy-admin.yml も作成しない。
-- [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2E、Firestore複合インデックス確認は未実施。
+- [ ] 2026-10-02: service招待URLのはずが登録後もfreeのまま、という報告を精査。実データでは `inv_be4d9ca9db48`（created_by=chabot-sa・本番管理UI経由で発行）に `invite_type` フィールドが無くfree招待として消費済み（消費ユーザー `1bb770d9`・plan_override無し・registration_source=admin_invite）。原因はservice招待の発行UI/API・消費時override書込み・serviceプラン解決のすべてが未コミット・未デプロイで、本番（chabot-service 00039-ts2 / chabot-admin）には旧コードのみ存在すること。修正は（1）該当ユーザーへ管理UIからservice override設定、（2）bot・admin両方へデプロイ、（3）新規service招待でE2E再検証。修正実施はユーザー指示待ち。
+- [ ] 管理者のFirestore `admin_admins/{email}` 初期登録、`ADMIN_IAP_AUDIENCE` / `PUBLIC_BASE_URL` 等の本番環境変数設定、IAP経由の実E2Eは未実施。Firestore複合インデックスは 2026-09-30 に要望タブ500の原因として実在が確認済み（上記）。
 - [ ] 設計との差異: 招待消費とfreeユーザー作成を同一Transactionにできず、ユーザー作成はLINE Login callback・消費は /invite/complete のTransactionで確定。同時利用でも1人だけ成功する保証は消費Transactionで維持する。
 
 - [x] `app/admin_server.py` を公開Botと分離し、管理機能を既定無効、OpenAPI/Swagger/ReDocを無効にした。
