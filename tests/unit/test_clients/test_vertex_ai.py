@@ -96,6 +96,41 @@ class TestVertexAIClient:
             assert "assessment）専用の回答方針" not in instruction
             assert "①②③" not in instruction
 
+    def test_interpretation_question_type_appends_interpretation_instruction(self):
+        """interpretation分類のときだけ専用の4段落構成指示を追加すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        for plan in ("free", "basic", "pro"):
+            instruction = client._get_system_instruction(plan, "interpretation")
+            assert "interpretation）専用の回答方針" in instruction
+            assert "次の4段落だけ" in instruction
+            assert "最も妥当な所見解釈" in instruction
+            assert "第2段落は解釈を支える具体的な指標" in instruction
+            assert "第3段落は専門職向けの推論ガイド" in instruction
+            assert "第4段落は根拠と理由の解説" in instruction
+            assert "①②③" in instruction
+            assert "仮説ごとの重みづけ" in instruction
+            assert "資料にない数値や判定基準を作らない" in instruction
+            assert "単一の所見で病態や組織を確定せず" in instruction
+            assert "候補・示唆・重みづけ" in instruction
+            assert (
+                "文献的事実、症例への推論、個人の操作的定義や経験則を混同しない"
+                in instruction
+            )
+
+        for question_type in (
+            None,
+            "knowledge",
+            "evidence",
+            "intervention",
+            "postoperative",
+            "other",
+        ):
+            instruction = client._get_system_instruction("pro", question_type)
+            assert "interpretation）専用の回答方針" not in instruction
+            assert "次の4段落だけ" not in instruction
+
     def test_knowledge_evidence_question_type_appends_fact_instruction(self):
         """knowledge/evidence分類のときだけ事実のみの簡潔指示を追加すること。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -228,6 +263,57 @@ class TestVertexAIClient:
             "自動・他動外転を比較し、肩甲骨を固定して可動域とエンドフィールを確認します。\n\n"
             "両者を分けることで、関節包性制限と代償運動を判別しやすくなるためです。"
         )
+
+    @pytest.mark.asyncio
+    async def test_query_passes_interpretation_instruction_to_model(self):
+        """interpretation分類時は専用の4段落構成プロンプトがRAG生成へ渡されること。"""
+
+        class MockResponse:
+            text = (
+                "外旋制限は下垂位での肢位別パターンから関節包性制限が主体と解釈するのが妥当です。\n\n"
+                "①0度外転位で制限が強く軽度外転で改善する所見は、前上方靱帯の重みを上げます。\n\n"
+                "肢位別の推移と自動・他動差を統合し、単一の所見で組織を確定せず重みづけとして解釈します。\n\n"
+                "靱帯の肢位依存性は文献知と整合しますが、感度・特異度は未検証の経験則を含みます。"
+            )
+            candidates = []
+
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            with (
+                patch.object(
+                    client,
+                    "_classify_query",
+                    new=AsyncMock(
+                        return_value={
+                            "question_type": "interpretation",
+                            "answer_aspects": ["rom"],
+                            "answer_focus": "可動域を優先して回答する。",
+                            "available": True,
+                        }
+                    ),
+                ),
+                patch.object(client, "_build_retrieval_tool", return_value=MagicMock()),
+            ):
+                generation_client = MagicMock()
+                generation_client.models.generate_content.return_value = MockResponse()
+                with patch.object(
+                    client,
+                    "_get_generation_client",
+                    return_value=generation_client,
+                ):
+                    result = await client.query(
+                        text="下垂位外旋制限の所見は何を示しますか？",
+                        include_context=False,
+                    )
+
+        call_kwargs = generation_client.models.generate_content.call_args.kwargs
+        assert call_kwargs["config"].system_instruction == client._get_system_instruction(
+            "free", "interpretation"
+        )
+        assert "[query_classification]" in call_kwargs["contents"]
+        assert "question_type: interpretation" in call_kwargs["contents"]
+        assert result["answer"].count("\n\n") == 3
 
     @pytest.mark.asyncio
     async def test_query_log_does_not_include_question_or_answer(self, caplog):

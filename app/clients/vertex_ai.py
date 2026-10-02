@@ -75,6 +75,17 @@ KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION = """以下は知識説明または根拠�
 全体はごく簡潔に50〜250字程度とし、質問が1項目なら1文で答えてください。"""
 
 
+INTERPRETATION_SYSTEM_INSTRUCTION = """以下は評価所見の意味、病態の推論、鑑別の方向づけを求める質問（interpretation）専用の回答方針です。前述の段落構成を差し替えます。
+
+出力は次の4段落だけにしてください。第1段落は最も妥当な所見解釈を1文にまとめた要約、第2段落は解釈を支える具体的な指標、第3段落は専門職向けの推論ガイド、第4段落は根拠と理由の解説です。各段落の間には空行を1行だけ入れてください。前置き、ラベル、見出しは付けません。
+
+第2段落は、取得資料に示された観察可能な指標から、この解釈への識別力が高いものを優先順に最大3項目示し、各項目の行頭に①②③を付け、行ごとに改行してください。各項目には、肢位や観察・触診の対象、得られる反応や所見、その所見がどの候補仮説の重みを上げ下げするかを含めてください。資料に数値・基準・優先順位の表記があればそれを尊重し、資料にない数値や判定基準を作らないでください。検査名や用語の列挙にしないでください。
+
+第3段落は、資料の判断の流れ、優先順位、経験則、例外条件に従い、指標を統合した仮説ごとの重みづけを専門職の視点で示してください。評価手順の説明は解釈に必要な範囲だけに絞り、単一の所見で病態や組織を確定せず、候補・示唆・重みづけとして表現してください。結論が変わる条件、避けるべき解釈、この解釈が適用できない条件は短く添えてください。箇条書きは第2段落だけにし、フローチャートや階層図の形式は使わないでください。
+
+第4段落は、この解釈の根拠と理由を解剖・バイオメカニクス・文献情報・臨床経験則を統合して簡潔に説明してください。資料に文献との整合、文献との衝突、根拠の境界、個人経験則の境界の記載があればそれを優先して反映し、文献的事実、症例への推論、個人の操作的定義や経験則を混同しないでください。データの適用対象が限られる場合や、感度・特異度などが未検証で重要な場合は短く明示してください。"""
+
+
 QUESTION_TYPES = {
     "knowledge": (
         "解剖、運動学、用語、または一般知識の説明を求める。測定手順、"
@@ -586,7 +597,7 @@ class VertexAIClient(BaseClient):
         plan: str,
         question_type: Optional[str] = None,
     ) -> str:
-        """共通の文体・文字数を維持し、プラン別参照方針とassessment専用構成を追加する。"""
+        """共通の文体・文字数を維持し、プラン別参照方針とassessment・interpretation専用構成を追加する。"""
         plan_instruction = (
             PAID_PLAN_SYSTEM_INSTRUCTION
             if plan in {"basic", "pro"}
@@ -595,6 +606,8 @@ class VertexAIClient(BaseClient):
         instruction = f"{self.system_instruction}\n\n{plan_instruction}"
         if question_type == "assessment":
             instruction = f"{instruction}\n\n{ASSESSMENT_SYSTEM_INSTRUCTION}"
+        elif question_type == "interpretation":
+            instruction = f"{instruction}\n\n{INTERPRETATION_SYSTEM_INSTRUCTION}"
         elif question_type in ("knowledge", "evidence"):
             instruction = (
                 f"{instruction}\n\n{KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION}"
