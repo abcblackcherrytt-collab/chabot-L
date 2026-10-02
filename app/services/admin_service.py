@@ -550,6 +550,8 @@ class AdminService:
         try:
             overview = await get_corpus_overview(corpus_id)
         except VertexRagCorpusError as exc:
+            if str(exc) == "unconfigured_project":
+                return {"status": "unconfigured", "error": None}
             return {"status": "error", "error": str(exc)}
         overview["status"] = "ok"
         overview["error"] = None

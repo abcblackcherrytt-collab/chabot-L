@@ -20,6 +20,10 @@ _INVALID_CORPUS_IDS = {
     "your-free-corpus-id",
     "your-paid-corpus-id",
 }
+_INVALID_PROJECT_IDS = {
+    "",
+    "your-project-id",
+}
 
 
 class VertexRagCorpusError(Exception):
@@ -29,6 +33,11 @@ class VertexRagCorpusError(Exception):
 def is_valid_corpus_id(corpus_id: str) -> bool:
     """プレースホルダ・空値でない実在可能性のあるIDかを返す。"""
     return corpus_id not in _INVALID_CORPUS_IDS
+
+
+def is_valid_project_id(project_id: str) -> bool:
+    """プレースホルダ・空値でない実在可能性のあるプロジェクトIDかを返す。"""
+    return project_id not in _INVALID_PROJECT_IDS
 
 
 def _fetch_corpus_sync(corpus_id: str) -> Dict[str, Any]:
@@ -77,6 +86,11 @@ async def get_corpus_overview(
         VertexRagCorpusError: タイムアウトまたはAPI失敗時。エラー種別のみを保持し、
             内部詳細はログに留める。
     """
+    if not is_valid_project_id(settings.google_project_id):
+        logger.warning(
+            "RAG corpus overview skipped: google_project_id is unconfigured"
+        )
+        raise VertexRagCorpusError("unconfigured_project")
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(_fetch_corpus_sync, corpus_id),
@@ -86,9 +100,14 @@ async def get_corpus_overview(
         logger.warning("RAG corpus overview timed out: corpus_id=%s", corpus_id)
         raise VertexRagCorpusError("timeout") from exc
     except Exception as exc:
+        # vertexai.rag はAPI失敗を RuntimeError へwrapする。元例外は __cause__ に
+        # 保持されるため、原因（NotFound / PermissionDenied 等）を優先して通知する。
+        cause = exc.__cause__ if isinstance(exc, RuntimeError) else None
+        error_type = type(cause).__name__ if cause is not None else type(exc).__name__
         logger.warning(
-            "RAG corpus overview failed: corpus_id=%s error_type=%s",
+            "RAG corpus overview failed: corpus_id=%s error_type=%s unwrapped=%s",
             corpus_id,
-            type(exc).__name__,
+            error_type,
+            cause is not None,
         )
-        raise VertexRagCorpusError(type(exc).__name__) from exc
+        raise VertexRagCorpusError(error_type) from exc
