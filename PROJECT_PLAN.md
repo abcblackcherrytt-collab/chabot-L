@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-02（interpretation・knowledge/evidence専用プロンプト・代表回答機能の本番反映）
+> **更新日**: 2026-10-03（管理UIコーパス参照エラー修正の本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -52,6 +52,7 @@
 - **knowledge/evidence専用プロンプト（2026-10-02本番反映・コミット 7537aaa・run 36969278415・chabot-service 00041-gfh）**: Jev分類が knowledge または evidence のときだけ、事実回答専用の簡潔指示へ差し替え。要約文・前置き・見出し・辛口表現を廃止し、筋の起始・停止・支配神経・筋形状、参考可動域、専門用語の定義、効果量・感度・特異度・推奨度などの問いには項目改行の「・」箇条書きで数値・単位・分類名を資料表記どおり提示。コーパス由来の事実と確立した既知の事実のみとし、装飾・背景展開・臨床助言を禁止、不足時は確認不能範囲の明示と推測禁止、全体50〜250字程度・1項目なら1文。品質ゲート199件成功、デプロイ後ERRORログ0件・/health 200確認済み。実端末での出力確認は未実施。
 - **interpretation専用プロンプト（2026-10-02本番反映・コミット e9dd9e9・run 36971411926・chabot-service 00042-qwc）**: Jev前段分類で question_type=interpretation のときだけ専用指示を追加し、既定2段落を「要約1文（最も妥当な所見解釈）→具体的指標（①②③最大3項目・肢位/反応/仮説の重み変化）→専門職向け推論ガイド（資料の判断の流れ・優先順位・経験則・例外条件に沿う重みづけ）→根拠と理由の解説（文献との整合・衝突、根拠の境界、個人経験則の境界を優先）」の4段落へ差し替える設計にした。md_for_rag資料の核となる立場・重要な変数・判断基準・根拠の境界を優先利用し、資料にない数値・判定基準の作成禁止、単一所見での病態/組織確定禁止、文献事実と症例推論・経験則の混同禁止、フローチャート形式禁止を明記。Jevキー未設定・分類失敗時は従来の汎用2段落構成を維持。関連unit 2件追加を含む全体unit 225件成功、compileall成功、CIデプロイ成功（2m57s）。リビジョン 00042-qwc へ100%トラフィック、/health 200確認済み。実端末での4段落出力とJev interpretation分類との組み合わせ確認は未実施。
 - **管理UI IP直接アクセスの完全撤去（2026-10-02ユーザー指示・本番反映）**: ipモード実装（d65c321）と反映記録（03b7223）をrevertし、元のrun_iam＋Cloud Run IAM保護＋ローカルプロキシ構成へ戻した。revertコミット 7e1af74（GitHub Actions run 36978316003 成功）でコード・テスト・.env.example・計画記録を復帰し、全体unit 225件成功。chabot-adminをイメージ 7e1af74・run_iamモードでリビジョン00009-glqへ再デプロイし、IAMポリシーからallUsersを除去、未認証の/health・/adminは403、プロキシと同じ権限借用IDトークンで/health・/sessionが200・セッション発行を確認。スマホからの直接アクセスは不可。
+- **管理UIコーパス参照エラー修正（2026-10-03本番反映）**: 管理UIコーパスタブでfree/basic/pro全プランに「Vertex AIコーパス参照に失敗しました（RuntimeError）」が表示される障害を修正。原因は chabot-admin にVertex AI用Secret参照（GOOGLE_PROJECT_ID/GOOGLE_LOCATION/GOOGLE_CORPUS_ID/GOOGLE_CORPUS_ID_PLAN1）が無く、corpus名がプレースホルダ `projects/your-project-id/...` で組み立てられNotFound→vertexai SDKのRuntimeError wrapとなること（chabot-sa権限借用・実コーパス参照はローカル再現で正常を確認）。修正は（1）同一イメージ7e1af74＋4 Secret参照で chabot-admin 00010-5bm へ再デプロイ、（2）防御として vertex_ai_rag へプロジェクトプレースホルダ検査（unconfigured_project→status=unconfigured扱い・API不呼出）とRuntimeErrorの`__cause__`原因ラベル化（NotFound/PermissionDenied等をUI・ログへ表示）を追加（コミット 7c18b8e・run 37076706781・品質ゲート201件成功・chabot-serviceへCI反映、chabot-admin 00011-5gnへ手動反映）。
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧
