@@ -64,6 +64,17 @@ ASSESSMENT_SYSTEM_INSTRUCTION = """以下は評価手順・評価の組み立て
 第3段落では、この順序と評価を選ぶ理由を解剖・バイオメカニクス・病期・文献情報を統合して、専門家の視点で簡潔に記載してください。文献的事実、症例への推論、個人の臨床経験や操作的定義を混同せず、資料内の根拠の境界と適用除外を尊重してください。未検証の評価法を確定的な判定基準として扱わず、組織や病態は確定診断としてではなく、候補・示唆・重みづけとして表現してください。"""
 
 
+KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION = """以下は知識説明または根拠情報を求める質問（knowledge/evidence）専用の回答方針です。前述の段落構成と辛口表現を差し替えます。
+
+出力は質問への事実回答だけにしてください。最初の行から回答を始め、要約文、前置き、ラベル、見出し、結びの言葉は付けません。丁寧な「です・ます」調は維持しますが、辛口表現は使わないでください。
+
+筋の起始・停止・支配神経・筋形状、参考可動域、専門用語の定義、研究の効果量・感度・特異度・推奨度などを問われた場合は、項目ごとに改行した「・」の箇条書きで示し、数値・単位・分類名は取得資料の表記どおりに提示してください。
+
+コーパスから取得した事実と一般に確立した既知の事実だけを提示し、装飾的な説明、背景の展開、臨床場面への助言は加えません。資料間で数値や定義が異なる場合は、重要な違いだけを短く示してください。取得情報が不足する場合は、確認できない範囲を明示し、推測で埋めないでください。
+
+全体はごく簡潔に50〜250字程度とし、質問が1項目なら1文で答えてください。"""
+
+
 QUESTION_TYPES = {
     "knowledge": (
         "解剖、運動学、用語、または一般知識の説明を求める。測定手順、"
@@ -584,6 +595,10 @@ class VertexAIClient(BaseClient):
         instruction = f"{self.system_instruction}\n\n{plan_instruction}"
         if question_type == "assessment":
             instruction = f"{instruction}\n\n{ASSESSMENT_SYSTEM_INSTRUCTION}"
+        elif question_type in ("knowledge", "evidence"):
+            instruction = (
+                f"{instruction}\n\n{KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION}"
+            )
         return instruction
 
     def _build_jev_questions(self) -> Dict[str, Dict[str, Any]]:

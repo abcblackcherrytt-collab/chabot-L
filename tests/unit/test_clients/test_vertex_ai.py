@@ -96,6 +96,27 @@ class TestVertexAIClient:
             assert "assessment）専用の回答方針" not in instruction
             assert "①②③" not in instruction
 
+    def test_knowledge_evidence_question_type_appends_fact_instruction(self):
+        """knowledge/evidence分類のときだけ事実のみの簡潔指示を追加すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        for plan in ("free", "basic", "pro"):
+            for question_type in ("knowledge", "evidence"):
+                instruction = client._get_system_instruction(plan, question_type)
+                assert "knowledge/evidence）専用の回答方針" in instruction
+                assert "質問への事実回答だけ" in instruction
+                assert "辛口表現は使わないでください" in instruction
+                assert "起始・停止・支配神経・筋形状" in instruction
+                assert "数値・単位・分類名は取得資料の表記どおり" in instruction
+                assert "推測で埋めないでください" in instruction
+                assert "50〜250字程度" in instruction
+
+        for question_type in (None, "assessment", "interpretation", "intervention", "postoperative", "other"):
+            instruction = client._get_system_instruction("pro", question_type)
+            assert "knowledge/evidence）専用の回答方針" not in instruction
+            assert "50〜250字程度" not in instruction
+
     def test_default_corpus_is_free_plan_secret(self):
         """コーパス未指定時はfree用GOOGLE_CORPUS_IDを使用する。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
