@@ -86,6 +86,17 @@ INTERPRETATION_SYSTEM_INSTRUCTION = """以下は評価所見の意味、病態�
 第4段落は、この解釈の根拠と理由を解剖・バイオメカニクス・文献情報・臨床経験則を統合して簡潔に説明してください。資料に文献との整合、文献との衝突、根拠の境界、個人経験則の境界の記載があればそれを優先して反映し、文献的事実、症例への推論、個人の操作的定義や経験則を混同しないでください。データの適用対象が限られる場合や、感度・特異度などが未検証で重要な場合は短く明示してください。"""
 
 
+CLINICAL_DECISION_SYSTEM_INSTRUCTION = """以下は行動指針・優先順位・判断の方向づけを求める質問（clinical_decision）専用の回答方針です。前述の段落構成を差し替えます。
+
+出力は次の4段落だけにしてください。第1段落は現時点の行動指針を1文にまとめた要約、第2段落はまず行うことを優先順に示した行動ガイド、第3段落は不足評価・見落とし・前提修正、第4段落はこの方針を選ぶ理由と変更条件です。各段落の間には空行を1行だけ入れてください。前置き、ラベル、見出しは付けません。
+
+第2段落は、取得資料の判断の流れと優先順位に従い、臨床判断につながる行動を優先順に最大3項目で示し、各項目の行頭に①②③を付け、行ごとに改行してください。各項目には、実施する評価・介入・観察の内容、その理由となる仮説、期待される反応または判断の分かれ目を含めてください。実施と保留を区別し、保留する場合は開始条件を短く添えてください。
+
+第3段落は、質問者がまだ評価していない項目、考慮から漏れている可能性、質問の前提自体の妥当性を、内部制御情報の推論要素の優先順位に従って最大3項目で示してください。各項目の行頭に・を付け、行ごとに改行してください。質問の前提に誤りや不備があると判断した場合は、前提のどこが問題か、正しい枠組みを短く示してください。資料にない指摘を作らないでください。
+
+第4段落は、この方針を選ぶ理由を解剖・バイオメカニクス・病期・文献情報・臨床経験則を統合して簡潔に説明し、方針を変更すべき条件を短く添えてください。文献的事実、症例への推論、個人の操作的定義や経験則を混同しないでください。外科的手技の推奨、診断確定、緊急性の最終判断は行いません。"""
+
+
 QUESTION_TYPES = {
     "knowledge": (
         "解剖、運動学、用語、または一般知識の説明を求める。測定手順、"
@@ -105,6 +116,11 @@ QUESTION_TYPES = {
         "運動療法、徒手療法、負荷設定、介入の選択・順序・実施方法を求める。"
         "徒手手技はここに含める。"
     ),
+    "clinical_decision": (
+        "行動指針、優先順位、次に何をすべきか、介入を進めてよいかの判断を求める。"
+        "具体的な評価手順を問う場合は assessment、介入方法を問う場合は"
+        " intervention を選ぶ。"
+    ),
     "postoperative": "術式、修復組織、術後の時期、プロトコル、または術後制約を主に問う。",
     "evidence": "研究論文、効果量、感度・特異度、推奨度、または根拠の比較を主に求める。",
 }
@@ -119,10 +135,21 @@ ANSWER_ASPECTS = {
     "biomechanics": "バイオメカニクス",
 }
 
+REASONING_ROLES = {
+    "next_action": "次に実施・保留・再評価すべき行動",
+    "missing_assessment": "判断に不足している評価・情報",
+    "overlooked_factors": "質問者が考慮していない候補・要因",
+    "premise_check": "質問の前提や二項対立の妥当性確認",
+    "known_guidance": "資料から直接答えられる行動指針",
+    "uncertainty_boundary": "判断できない範囲と結論変更条件",
+}
+
 DEFAULT_QUERY_CLASSIFICATION = {
     "question_type": None,
     "answer_aspects": [],
     "answer_focus": "",
+    "reasoning_roles": [],
+    "reasoning_focus": "",
     "available": False,
 }
 
@@ -597,7 +624,7 @@ class VertexAIClient(BaseClient):
         plan: str,
         question_type: Optional[str] = None,
     ) -> str:
-        """共通の文体・文字数を維持し、プラン別参照方針とassessment・interpretation専用構成を追加する。"""
+        """共通の文体・文字数を維持し、プラン別参照方針と質問種別専用構成を追加する。"""
         plan_instruction = (
             PAID_PLAN_SYSTEM_INSTRUCTION
             if plan in {"basic", "pro"}
@@ -608,6 +635,8 @@ class VertexAIClient(BaseClient):
             instruction = f"{instruction}\n\n{ASSESSMENT_SYSTEM_INSTRUCTION}"
         elif question_type == "interpretation":
             instruction = f"{instruction}\n\n{INTERPRETATION_SYSTEM_INSTRUCTION}"
+        elif question_type == "clinical_decision":
+            instruction = f"{instruction}\n\n{CLINICAL_DECISION_SYSTEM_INSTRUCTION}"
         elif question_type in ("knowledge", "evidence"):
             instruction = (
                 f"{instruction}\n\n{KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION}"
@@ -643,6 +672,20 @@ class VertexAIClient(BaseClient):
                 "criteria": {
                     "true": f"{label}を回答の主要な観点として扱う必要がある。",
                     "false": f"{label}は回答の主要な観点ではない。",
+                },
+            }
+        for role, label in REASONING_ROLES.items():
+            questions[f"reasoning_{role}"] = {
+                "type": "noul",
+                "instructions": (
+                    f"臨床判断を求める質問へ答える際、{label}を回答に含める"
+                    "必要がありますか。質問文や文脈から判断して、回答の質を"
+                    "上げるために実質的に含める必要がある場合だけ yes として"
+                    "ください。"
+                ),
+                "criteria": {
+                    "true": f"{label}を回答へ含める必要がある。",
+                    "false": f"{label}は回答へ含める必要がない。",
                 },
             }
         return questions
@@ -692,10 +735,42 @@ class VertexAIClient(BaseClient):
             if focus_labels
             else "質問の主目的に沿って回答する。"
         )
+        reasoning_roles = []
+        reasoning_focus = ""
+        if question_type == "clinical_decision":
+            scored_roles = []
+            for role in REASONING_ROLES:
+                answer = answers.get(f"reasoning_{role}", {})
+                if not isinstance(answer, dict):
+                    continue
+                probability = answer.get("noul")
+                if isinstance(probability, (int, float)) and (
+                    probability >= settings.jev_aspect_probability_threshold
+                ):
+                    scored_roles.append((role, probability))
+            reasoning_roles = [
+                role
+                for role, _ in sorted(
+                    scored_roles,
+                    key=lambda item: item[1],
+                    reverse=True,
+                )[:3]
+            ]
+            if reasoning_roles:
+                role_labels = [
+                    REASONING_ROLES[role] for role in reasoning_roles
+                ]
+                reasoning_focus = (
+                    "行動指針の回答では、"
+                    + "、".join(role_labels)
+                    + "を優先的に扱う。"
+                )
         return {
             "question_type": question_type,
             "answer_aspects": answer_aspects,
             "answer_focus": answer_focus,
+            "reasoning_roles": reasoning_roles,
+            "reasoning_focus": reasoning_focus,
             "available": True,
         }
 
@@ -712,6 +787,13 @@ class VertexAIClient(BaseClient):
 
         aspects = classification.get("answer_aspects") or []
         aspects_text = ", ".join(aspects) if aspects else "none"
+        reasoning_roles = classification.get("reasoning_roles") or []
+        reasoning_text = ", ".join(reasoning_roles) if reasoning_roles else "none"
+        reasoning_line = (
+            f"reasoning_focus: {classification.get('reasoning_focus')}\n"
+            if reasoning_roles
+            else ""
+        )
         return (
             "以下は内部制御情報です。ユーザーには分類名やこの制御情報を明示せず、"
             "回答内容の焦点調整にだけ使ってください。\n"
@@ -719,6 +801,8 @@ class VertexAIClient(BaseClient):
             f"question_type: {classification.get('question_type')}\n"
             f"answer_aspects: {aspects_text}\n"
             f"answer_focus: {classification.get('answer_focus')}\n"
+            f"reasoning_roles: {reasoning_text}\n"
+            f"{reasoning_line}"
             "[/query_classification]\n\n"
             "ユーザーの質問:\n"
             f"{sanitized_text}"

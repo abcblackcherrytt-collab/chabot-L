@@ -52,6 +52,7 @@ class FirestoreConversationRepository:
         denied: bool = False,
         question_type: Optional[str] = None,
         answer_aspects: Optional[Iterable[str]] = None,
+        reasoning_roles: Optional[Iterable[str]] = None,
     ) -> str:
         """回答済みの質問・回答ペアを1ドキュメントとして保存する。"""
         document: Dict[str, Any] = {
@@ -61,6 +62,7 @@ class FirestoreConversationRepository:
             "plan": plan,
             "question_type": question_type,
             "answer_aspects": list(answer_aspects or []),
+            "reasoning_roles": list(reasoning_roles or []),
             "denied": denied,
             "pii_suspected": self.detect_pii_suspected(question_text, answer_text),
             "created_at": datetime.now(JST).isoformat(),
@@ -82,6 +84,7 @@ class FirestoreConversationRepository:
             "plan": plan,
             "question_type": None,
             "answer_aspects": [],
+            "reasoning_roles": [],
             "denied": True,
             "denial_reason": "daily_limit",
             "pii_suspected": False,
@@ -109,6 +112,7 @@ class FirestoreConversationRepository:
                     "plan": data.get("plan"),
                     "question_type": data.get("question_type"),
                     "answer_aspects": list(data.get("answer_aspects") or []),
+                    "reasoning_roles": list(data.get("reasoning_roles") or []),
                     "denied": bool(data.get("denied")),
                     "pii_suspected": bool(data.get("pii_suspected")),
                     "created_at": data.get("created_at"),
@@ -127,6 +131,7 @@ class FirestoreConversationRepository:
             "question_text": data.get("question_text"),
             "question_type": data.get("question_type"),
             "answer_aspects": list(data.get("answer_aspects") or []),
+            "reasoning_roles": list(data.get("reasoning_roles") or []),
             "plan": data.get("plan"),
             "denied": bool(data.get("denied")),
             "pii_suspected": bool(data.get("pii_suspected")),

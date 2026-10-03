@@ -81,6 +81,7 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
         denied=False,
         question_type="evaluation",
         answer_aspects=["range_of_motion"],
+        reasoning_roles=None,
     )
 
 
@@ -162,6 +163,7 @@ async def test_pipeline_uses_real_rag_service_interface() -> None:
         denied=False,
         question_type=None,
         answer_aspects=None,
+        reasoning_roles=None,
     )
 
 

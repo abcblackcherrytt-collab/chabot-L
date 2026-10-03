@@ -33,6 +33,7 @@ async def test_save_conversation_writes_one_document() -> None:
         plan="basic",
         question_type="evaluation",
         answer_aspects=["range_of_motion", "strength"],
+        reasoning_roles=["next_action", "missing_assessment"],
     )
 
     assert saved_id == "conversation-1"
@@ -44,6 +45,7 @@ async def test_save_conversation_writes_one_document() -> None:
     assert document["plan"] == "basic"
     assert document["question_type"] == "evaluation"
     assert document["answer_aspects"] == ["range_of_motion", "strength"]
+    assert document["reasoning_roles"] == ["next_action", "missing_assessment"]
     assert document["denied"] is False
     assert document["pii_suspected"] is False
     assert document["created_at"]

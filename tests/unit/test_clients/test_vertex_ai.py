@@ -96,6 +96,37 @@ class TestVertexAIClient:
             assert "assessment）専用の回答方針" not in instruction
             assert "①②③" not in instruction
 
+    def test_clinical_decision_question_type_appends_decision_instruction(self):
+        """clinical_decision分類のときだけ行動指針専用の4段落構成指示を追加すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        for plan in ("free", "basic", "pro"):
+            instruction = client._get_system_instruction(plan, "clinical_decision")
+            assert "clinical_decision）専用の回答方針" in instruction
+            assert "次の4段落だけ" in instruction
+            assert "現時点の行動指針を1文にまとめた要約" in instruction
+            assert "まず行うことを優先順に示した行動ガイド" in instruction
+            assert "不足評価・見落とし・前提修正" in instruction
+            assert "この方針を選ぶ理由と変更条件" in instruction
+            assert "①②③" in instruction
+            assert "実施と保留を区別し" in instruction
+            assert "質問の前提に誤りや不備があると判断した場合は" in instruction
+            assert "外科的手技の推奨、診断確定、緊急性の最終判断は行いません" in instruction
+
+        for question_type in (
+            None,
+            "knowledge",
+            "evidence",
+            "assessment",
+            "interpretation",
+            "intervention",
+            "postoperative",
+            "other",
+        ):
+            instruction = client._get_system_instruction("pro", question_type)
+            assert "clinical_decision）専用の回答方針" not in instruction
+
     def test_interpretation_question_type_appends_interpretation_instruction(self):
         """interpretation分類のときだけ専用の4段落構成指示を追加すること。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -173,6 +204,18 @@ class TestVertexAIClient:
         assert questions["aspect_rom"]["type"] == "noul"
         assert questions["aspect_strength"]["type"] == "noul"
 
+    def test_jev_questions_include_reasoning_roles(self):
+        """Jevには行動指針用の推論役割を独立したNoulで渡す。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        questions = client._build_jev_questions()
+
+        assert questions["question_type"]["criteria"]["clinical_decision"]
+        assert "行動指針" in questions["question_type"]["criteria"]["clinical_decision"]
+        for role in ("next_action", "missing_assessment", "overlooked_factors", "premise_check", "known_guidance", "uncertainty_boundary"):
+            assert questions[f"reasoning_{role}"]["type"] == "noul"
+
     def test_parse_jev_response_uses_thresholds_and_top_three_aspects(self):
         """JevのChoice/Noul出力を回答生成用の分類へ安全に変換する。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
@@ -192,7 +235,61 @@ class TestVertexAIClient:
 
         assert classification["question_type"] == "intervention"
         assert classification["answer_aspects"] == ["rom", "strength", "biomechanics"]
+        assert classification["reasoning_roles"] == []
+        assert classification["reasoning_focus"] == ""
         assert classification["available"] is True
+
+    def test_parse_jev_response_collects_reasoning_roles_for_clinical_decision(self):
+        """clinical_decisionのときだけ推論役割を上位3件収集すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        classification = client._parse_jev_response(
+            {
+                "answers": {
+                    "question_type": {"choice": "clinical_decision", "confidence": 0.85},
+                    "aspect_pain": {"noul": 0.70},
+                    "reasoning_next_action": {"noul": 0.92},
+                    "reasoning_missing_assessment": {"noul": 0.88},
+                    "reasoning_premise_check": {"noul": 0.75},
+                    "reasoning_overlooked_factors": {"noul": 0.62},
+                    "reasoning_known_guidance": {"noul": 0.40},
+                    "reasoning_uncertainty_boundary": {"noul": 0.30},
+                }
+            }
+        )
+
+        assert classification["question_type"] == "clinical_decision"
+        assert classification["reasoning_roles"] == [
+            "next_action",
+            "missing_assessment",
+            "premise_check",
+        ]
+        assert "次に実施・保留・再評価すべき行動" in classification["reasoning_focus"]
+        assert "質問の前提や二項対立の妥当性確認" in classification["reasoning_focus"]
+        assert classification["available"] is True
+
+    def test_build_generation_prompt_includes_reasoning_focus(self):
+        """clinical_decisionの推論役割を生成プロンプトへ渡すこと。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        prompt = client._build_generation_prompt(
+            "発症1ヶ月、疼痛少ない。どうしたらいい？",
+            {
+                "question_type": "clinical_decision",
+                "answer_aspects": ["pain"],
+                "answer_focus": "疼痛を優先して回答する。",
+                "reasoning_roles": ["next_action", "missing_assessment"],
+                "reasoning_focus": "行動指針の回答では、次に実施・保留・再評価すべき行動、判断に不足している評価・情報を優先的に扱う。",
+                "available": True,
+            },
+        )
+
+        assert "question_type: clinical_decision" in prompt
+        assert "reasoning_roles: next_action, missing_assessment" in prompt
+        assert "reasoning_focus:" in prompt
+        assert "行動指針の回答では" in prompt
 
     @pytest.mark.asyncio
     async def test_query_classification_skips_jev_without_api_key(self):

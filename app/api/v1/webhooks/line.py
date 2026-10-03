@@ -155,6 +155,7 @@ async def _process_line_events(
                             denied=bool(rag_result.get("denied")),
                             question_type=classification.get("question_type"),
                             answer_aspects=classification.get("answer_aspects"),
+                            reasoning_roles=classification.get("reasoning_roles"),
                         )
                     except Exception as exc:
                         logger.error(

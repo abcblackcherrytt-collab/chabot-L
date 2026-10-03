@@ -159,6 +159,7 @@ async def test_public_chat_never_returns_contexts(monkeypatch) -> None:
         "denied": False,
         "question_type": "evaluation",
         "answer_aspects": ["range_of_motion"],
+        "reasoning_roles": [],
     }
     rag_service.query.assert_awaited_once_with(
         text="質問",
@@ -192,6 +193,7 @@ async def test_chat_conversation_save_failure_does_not_raise(monkeypatch) -> Non
         denied=False,
         question_type=None,
         answer_aspects=[],
+        reasoning_roles=[],
     )
 
     conversation_repository.save_conversation.assert_awaited_once()

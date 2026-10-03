@@ -96,6 +96,7 @@ async def save_chat_conversation(
     denied: bool,
     question_type: str | None,
     answer_aspects: list[str],
+    reasoning_roles: list[str],
 ) -> None:
     """チャットAPIの応答後に会話を保存する。保存失敗で応答は止めない。"""
     try:
@@ -108,6 +109,7 @@ async def save_chat_conversation(
             denied=denied,
             question_type=question_type,
             answer_aspects=answer_aspects,
+            reasoning_roles=reasoning_roles,
         )
     except Exception as exc:
         logger.error(
@@ -227,6 +229,7 @@ async def send_message(
             denied=bool(rag_result.get("denied")),
             question_type=classification.get("question_type"),
             answer_aspects=classification.get("answer_aspects") or [],
+            reasoning_roles=classification.get("reasoning_roles") or [],
         )
 
         return ChatResponse(
