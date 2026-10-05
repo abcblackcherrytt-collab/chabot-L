@@ -22,6 +22,9 @@ from app.repositories.firestore_representative_answer_repository import (
 from app.repositories.firestore_plan_settings_repository import (
     FirestorePlanSettingsRepository,
 )
+from app.repositories.firestore_admin_user_repository import (
+    FirestoreAdminUserRepository,
+)
 
 
 def _snapshot(data: dict, *, exists: bool = True) -> MagicMock:
@@ -167,6 +170,62 @@ class TestAdminInviteRepository:
         repository = FirestoreAdminInviteRepository(client=client)
 
         assert await repository.consume(invite_id="inv-1", user_id="u1") is False
+
+
+class TestAdminUserRepository:
+    """管理ユーザー一覧の実効プラン表示・絞り込みテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_summary_uses_effective_plan(self) -> None:
+        """service overrideを一覧の実効プランとして返すこと。"""
+        summary = FirestoreAdminUserRepository._summary(
+            {
+                "subscription_plan": "free",
+                "plan_override": {"plan": "service"},
+                "is_active": True,
+            },
+            "user-1",
+        )
+
+        assert summary["effective_plan"] == "pro"
+
+    @pytest.mark.asyncio
+    async def test_list_users_filters_by_effective_plan(self) -> None:
+        """一覧のプラン絞り込みがsubscription_planではなく実効プランを使うこと。"""
+        snapshots = [
+            _snapshot(
+                {
+                    "display_name": "service user",
+                    "subscription_plan": "free",
+                    "plan_override": {"plan": "service"},
+                    "is_active": True,
+                    "created_at": "2026-10-05T00:00:00+00:00",
+                }
+            ),
+            _snapshot(
+                {
+                    "display_name": "free user",
+                    "subscription_plan": "free",
+                    "is_active": True,
+                    "created_at": "2026-10-04T00:00:00+00:00",
+                }
+            ),
+        ]
+        query = MagicMock()
+        query.limit.return_value.get = AsyncMock(return_value=snapshots)
+        collection = MagicMock()
+        collection.order_by.return_value = query
+        usage_document = MagicMock()
+        usage_document.get = AsyncMock(return_value=_snapshot({}, exists=False))
+        collection.document.return_value = usage_document
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreAdminUserRepository(client=client)
+
+        result = await repository.list_users(plan="pro")
+
+        assert result["count"] == 1
+        assert result["users"][0]["effective_plan"] == "pro"
 
 
 class TestFeedbackRepository:

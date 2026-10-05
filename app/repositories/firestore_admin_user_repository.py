@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from google.cloud import firestore
 
 from app.core.firestore import get_firestore_client_sync
+from app.core.pricing import resolve_effective_plan
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class FirestoreAdminUserRepository:
             "id": doc_id,
             "display_name": data.get("display_name"),
             "subscription_plan": data.get("subscription_plan") or "free",
+            "effective_plan": resolve_effective_plan(data),
             "plan_override": override,
             "is_active": bool(data.get("is_active", True)),
             "created_at": data.get("created_at"),
@@ -79,8 +81,8 @@ class FirestoreAdminUserRepository:
                 name = data.get("display_name") or ""
                 if not name.startswith(prefix):
                     continue
-            if plan in ("free", "basic", "pro"):
-                if (data.get("subscription_plan") or "free") != plan:
+            if plan in ("free", "basic", "pro", "service"):
+                if resolve_effective_plan(data) != plan:
                     continue
             if status == "active" and not data.get("is_active", True):
                 continue

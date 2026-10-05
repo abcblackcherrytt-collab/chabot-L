@@ -308,13 +308,10 @@ function effectivePlan(user) {
 }
 
 function renderUserDetail(host) {
+  clearNode(host);
+  if (!selectedUserId) { return; }
   var panel = el('section', { class: 'panel', 'aria-label': 'ユーザー詳細' }, []);
   host.appendChild(panel);
-  if (!selectedUserId) {
-    panel.appendChild(el('h3', { text: 'ユーザー詳細' }, []));
-    panel.appendChild(el('p', { class: 'sub', text: '一覧の「詳細」を選ぶと、ここに情報が表示されます。' }, []));
-    return;
-  }
   panel.appendChild(loadingCard());
   apiRequest('GET', '/api/v1/admin/users/' + encodeURIComponent(selectedUserId)).then(function (result) {
     clearNode(panel);
@@ -325,7 +322,15 @@ function renderUserDetail(host) {
     var user = result.data;
     var stripeActive = (user.subscription_plan === 'basic' || user.subscription_plan === 'pro') &&
       user.subscription_status === 'active';
-    panel.appendChild(el('h3', { text: user.display_name || '(名称未取得)' }, []));
+    var closeButton = el('button', { class: 'btn btn-small', type: 'button', text: '閉じる' }, []);
+    closeButton.addEventListener('click', function () {
+      selectedUserId = null;
+      renderUserDetail(host);
+    });
+    panel.appendChild(el('div', { class: 'panel-heading' }, [
+      el('h3', { text: user.display_name || '(名称未取得)' }, []),
+      closeButton
+    ]));
     if (stripeActive) { panel.appendChild(el('p', {}, [badge('Stripe契約中', 'warning')])); }
     panel.appendChild(kv([
       ['ユーザーID', user.id],
@@ -342,7 +347,7 @@ function renderUserDetail(host) {
       el('option', { value: 'free', text: 'free' }, []),
       el('option', { value: 'basic', text: 'basic' }, []),
       el('option', { value: 'pro', text: 'pro' }, []),
-      el('option', { value: 'service', text: 'service（pro相当・無期限）' }, [])
+      el('option', { value: 'service', text: 'service' }, [])
     ]);
     planSelect.value = effectivePlan(user);
     var form = el('form', {}, [
@@ -413,7 +418,8 @@ function renderUsers(host) {
     el('option', { value: 'all', text: 'すべてのプラン' }, []),
     el('option', { value: 'free', text: 'free' }, []),
     el('option', { value: 'basic', text: 'basic' }, []),
-    el('option', { value: 'pro', text: 'pro' }, [])
+    el('option', { value: 'pro', text: 'pro' }, []),
+    el('option', { value: 'service', text: 'service' }, [])
   ]);
   planSelect.value = usersFilter.plan;
   planSelect.addEventListener('change', function () { usersFilter.plan = planSelect.value; refreshSection(); });
@@ -458,7 +464,7 @@ function renderUsers(host) {
       });
       return el('tr', {}, [
         el('td', { text: user.display_name || '(名称未取得)' }, []),
-        el('td', {}, [planBadge(user.subscription_plan || 'free')]),
+        el('td', {}, [planBadge(user.effective_plan || effectivePlan(user))]),
         el('td', {}, [user.is_active ? badge('有効', 'active') : badge('無効', 'inactive')]),
         el('td', { text: String(user.today_message_count || 0) }, []),
         el('td', { text: fmtDate(user.created_at) }, []),
