@@ -190,6 +190,34 @@ class TestAdminUserRepository:
         assert summary["effective_plan"] == "pro"
 
     @pytest.mark.asyncio
+    async def test_summary_admin_override_beats_subscription(self) -> None:
+        """管理者overrideをStripe契約より優先して表示すること。"""
+        summary = FirestoreAdminUserRepository._summary(
+            {
+                "subscription_plan": "basic",
+                "plan_override": {"plan": "service", "source": "admin"},
+                "is_active": True,
+            },
+            "user-2",
+        )
+
+        assert summary["effective_plan"] == "pro"
+
+    @pytest.mark.asyncio
+    async def test_summary_coupon_override_keeps_subscription(self) -> None:
+        """coupon由来のoverrideで有料契約の表示をdowngradeしないこと。"""
+        summary = FirestoreAdminUserRepository._summary(
+            {
+                "subscription_plan": "pro",
+                "plan_override": {"plan": "basic", "source": "coupon"},
+                "is_active": True,
+            },
+            "user-3",
+        )
+
+        assert summary["effective_plan"] == "pro"
+
+    @pytest.mark.asyncio
     async def test_list_users_filters_by_effective_plan(self) -> None:
         """一覧のプラン絞り込みがsubscription_planではなく実効プランを使うこと。"""
         snapshots = [

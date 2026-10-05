@@ -218,8 +218,8 @@ async def test_service_override_resolves_to_pro(flow_service) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stripe_plan_wins_over_override(flow_service) -> None:
-    """Stripe契約中のプランをplan_overrideより優先すること。"""
+async def test_admin_override_wins_over_stripe_plan(flow_service) -> None:
+    """管理者指定のplan_overrideをStripe契約より優先すること。"""
     user_repo = flow_service._get_user_repository()
     user_repo.find_by_line_user_id = AsyncMock(return_value={
         "id": "user-123",
@@ -231,6 +231,30 @@ async def test_stripe_plan_wins_over_override(flow_service) -> None:
             "expires_at": (
                 datetime.now(timezone.utc) + timedelta(days=5)
             ).isoformat(),
+            "source": "admin",
+        },
+    })
+
+    result = await flow_service.process_webhook_event(_message_event("通常の質問"))
+
+    assert result["plan"] == "basic"
+
+
+@pytest.mark.asyncio
+async def test_coupon_override_keeps_paid_contract(flow_service) -> None:
+    """coupon / service_invite由来のoverrideで有料契約をdowngradeしないこと。"""
+    user_repo = flow_service._get_user_repository()
+    user_repo.find_by_line_user_id = AsyncMock(return_value={
+        "id": "user-123",
+        "line_user_id": "U_test123",
+        "is_active": True,
+        "subscription_plan": "pro",
+        "plan_override": {
+            "plan": "basic",
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(days=5)
+            ).isoformat(),
+            "source": "coupon",
         },
     })
 

@@ -335,7 +335,7 @@ class LineService:
             await self._send_reply(reply_token, feedback_result["reply"])
             return {"status": "processed", "action": "feedback_saved"}
 
-        # プラン解決優先度: Stripe契約 > plan_override > free
+        # プラン解決優先度: 管理者override > Stripe契約 > free
         plan = self._resolve_effective_plan(user_dict)
 
         # データベースバックエンドに応じたRAG権限リポジトリを使用
@@ -765,7 +765,7 @@ class LineService:
 
     @staticmethod
     def _resolve_effective_plan(user_dict: Dict[str, Any]) -> str:
-        """プラン解決優先度（Stripe契約 > plan_override > free）を適用する。"""
+        """プラン解決優先度（管理者override > Stripe契約 > free）を適用する。"""
         return resolve_effective_plan(user_dict)
 
     async def health_check(self) -> Dict[str, Any]:

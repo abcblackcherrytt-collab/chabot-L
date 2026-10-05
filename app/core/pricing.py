@@ -84,7 +84,10 @@ def get_plan_config(plan: str) -> Dict[str, Any]:
 def resolve_effective_plan(user: Dict[str, Any]) -> str:
     """ユーザー文書から実効プランを解決する。
 
-    優先度は Stripe契約（subscription_plan の basic/pro）> plan_override > free。
+    優先度は 管理者指定のplan_override（source=admin）>
+    Stripe契約（subscription_plan の basic/pro）> free。
+    coupon / service_invite 由来のoverrideは従来どおり契約プランがfreeのときのみ
+    適用し、有料契約を自動的にdowngradeしない。
     serviceはpro相当（同一コーパス・日次上限）として解決する。
 
     Args:
@@ -108,8 +111,13 @@ def resolve_effective_plan(user: Dict[str, Any]) -> str:
             still_valid = False
     else:
         still_valid = expires_at is None
-    if still_valid and plan not in ("basic", "pro"):
-        return "pro" if override_plan == "service" else override_plan
+    if not still_valid:
+        return plan
+    resolved = "pro" if override_plan == "service" else override_plan
+    if override.get("source") == "admin":
+        return resolved
+    if plan not in ("basic", "pro"):
+        return resolved
     return plan
 
 

@@ -306,7 +306,8 @@ class AdminService:
     ) -> None:
         """プラン変更（plan_override）を行い、監査へ記録する。
 
-        freeを選択した場合はplan_overrideを解除する（Stripe契約は常に優先）。
+        管理者overrideはStripe契約より優先される。
+        freeを選択した場合はplan_overrideを解除し、Stripe契約があれば契約プランへ戻る。
         """
         if plan not in (*VALID_PLANS, "service"):
             raise ValueError("invalid_plan")
