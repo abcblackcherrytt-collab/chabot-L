@@ -448,7 +448,6 @@ class StripeClient(BaseClient):
             session_data = {
                 "customer": customer_id,
                 "mode": "subscription",
-                "payment_method_types": ["card"],
                 "line_items": [{"price": price_id, "quantity": 1}],
                 "success_url": success_url,
                 "cancel_url": cancel_url,

@@ -323,3 +323,10 @@ class TestStripeClient:
 
         assert isinstance(session, dict)
         assert session.get("url") == "https://checkout.stripe.com/c/pay/sdk"
+
+        # payment_method_typesはStripe APIで廃止され400を返すため
+        # 送らない（支払い方法はStripe Dashboard設定で管理される）。
+        call_kwargs = mock_session_create.call_args.kwargs
+        assert "payment_method_types" not in call_kwargs
+        assert call_kwargs["mode"] == "subscription"
+        assert call_kwargs["line_items"] == [{"price": "price_sdk", "quantity": 1}]

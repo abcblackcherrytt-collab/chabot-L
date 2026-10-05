@@ -68,6 +68,7 @@ jobs:
             tests/unit/test_stripe_webhook.py \
             tests/unit/test_core/test_line_id_token.py \
             tests/unit/test_clients/test_line.py \
+            tests/unit/test_clients/test_stripe.py \
             tests/unit/test_clients/test_vertex_ai.py \
             tests/unit/test_repositories/test_firestore_repositories.py \
             tests/unit/test_services/test_line_webhook_pipeline.py \
