@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-05（データアクセス・セキュリティレビュー対策の本番反映）
+> **更新日**: 2026-10-05（Stripe Checkout payment_method_types廃止対応の本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -54,6 +54,7 @@
 - **管理UI IP直接アクセスの完全撤去（2026-10-02ユーザー指示・本番反映）**: ipモード実装（d65c321）と反映記録（03b7223）をrevertし、元のrun_iam＋Cloud Run IAM保護＋ローカルプロキシ構成へ戻した。revertコミット 7e1af74（GitHub Actions run 36978316003 成功）でコード・テスト・.env.example・計画記録を復帰し、全体unit 225件成功。chabot-adminをイメージ 7e1af74・run_iamモードでリビジョン00009-glqへ再デプロイし、IAMポリシーからallUsersを除去、未認証の/health・/adminは403、プロキシと同じ権限借用IDトークンで/health・/sessionが200・セッション発行を確認。スマホからの直接アクセスは不可。
 - **管理UIコーパス参照エラー修正（2026-10-03本番反映）**: 管理UIコーパスタブでfree/basic/pro全プランに「Vertex AIコーパス参照に失敗しました（RuntimeError）」が表示される障害を修正。原因は chabot-admin にVertex AI用Secret参照（GOOGLE_PROJECT_ID/GOOGLE_LOCATION/GOOGLE_CORPUS_ID/GOOGLE_CORPUS_ID_PLAN1）が無く、corpus名がプレースホルダ `projects/your-project-id/...` で組み立てられNotFound→vertexai SDKのRuntimeError wrapとなること（chabot-sa権限借用・実コーパス参照はローカル再現で正常を確認）。修正は（1）同一イメージ7e1af74＋4 Secret参照で chabot-admin 00010-5bm へ再デプロイ、（2）防御として vertex_ai_rag へプロジェクトプレースホルダ検査（unconfigured_project→status=unconfigured扱い・API不呼出）とRuntimeErrorの`__cause__`原因ラベル化（NotFound/PermissionDenied等をUI・ログへ表示）を追加（コミット 7c18b8e・run 37076706781・品質ゲート201件成功・chabot-serviceへCI反映、chabot-admin 00011-5gnへ手動反映）。
 - **行動指針質問clinical_decision分類（2026-10-04本番反映・コミット 8889048・run 37161838425・chabot-service 00046-d7z）**: Jev前段分類のChoiceへ clinical_decision（行動指針・優先順位・次に何をすべきかの判断）を追加。clinical_decisionのときだけ、推論役割6種（next_action/missing_assessment/overlooked_factors/premise_check/known_guidance/uncertainty_boundary）を独立Noulで判定し、閾値0.60以上の上位3役割を回答生成プロンプトへ渡す。回答は「要約1文→行動ガイド①②③最大3項目（実施と保留の区別付き）→不足評価・見落とし・前提修正（最大3項目）→理由と変更条件」の4段落構成。assessment（評価方法を聞く質問）は従来どおり3段落の知識回答を維持し、clinical_decisionと明確に分離。conversationsへreasoning_rolesを保存。unit 229件成功、CI 2m58s成功、リビジョン00046-d7zへ100%トラフィック、/health 200、ERRORログ0件確認済み。実端末でのclinical_decision分類・4段落出力確認は未実施。
+- **Stripe Checkout 503障害（2026-10-05修正・本番反映・コミット 18a0ece・run 37263755263・chabot-service 00048-8p2）**: 実端末の登録URLクリックでStripe決済ページへ遷移せず「決済ページを準備中です」（503）となる障害。本番ログでLINE Login成功後のcheckout/basicが503、Stripe APIが「payment_method_types parameter is no longer supported」（Checkout Session作成の400 invalid_request_error）を返していることを確認。Stripe側の仕様変更であり、当日の旧リビジョン（00046-d7z・12:47 JST）でも同一エラーが発生済みだったため今日のセキュリティ対応デプロイ（00047-kj8）は無関係。修正は create_checkout_session から payment_method_types を削除（支払い方法はStripe Dashboard設定で管理）、送信パラメータの回帰unitテストを追加し、CI品質ゲートへ tests/unit/test_clients/test_stripe.py を新規追加（225件成功）。リビジョン00048-8p2で/health 200・Cookieなしcheckout 303・デプロイ後ERRORログ0件を確認。実端末でのStripe遷移E2Eは再試行待ち。Stripe Dashboardの支払い方法設定（カード等）の確認も残課題。
 - **会話保存の実データ確認（2026-09-22）**: 本番Firestore `chabotline` の `conversations` を読み取り専用で点検した。2026-09-22 15:51 JSTの実LINE質問1件が保存され、`user_id` で `users` 文書（free・アクティブ・LINE ID紐付）へ正しく関連付けられていた。質問・回答・プラン・分類（question_type）・PII検知falseも保存済みで、ユーザーごとのQ&A保存が本番で動作している。保存済み回答本文は旧「回答：」形式のまま（出力構成変更 `fc8c360` は本番未反映）。現状は users 1件・conversations 1件
 
 ### 0.1 フェーズ一覧
