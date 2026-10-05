@@ -221,6 +221,31 @@ class TestStripeService:
         events.mark_completed.assert_awaited_once_with("evt_paid")
 
     @pytest.mark.asyncio
+    async def test_invoice_paid_supports_current_stripe_subscription_shape(self):
+        """新形式Invoiceのparent.subscription_detailsからSubscription IDを取得すること。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, _, users, _ = _webhook_service(user=user)
+        event = {
+            "id": "evt_paid_new_shape",
+            "type": "invoice.paid",
+            "created": 1234567890,
+            "data": {"object": {
+                "id": "in_test123",
+                "customer": "cus_test123",
+                "parent": {
+                    "subscription_details": {"subscription": "sub_test123"}
+                },
+                "period_start": 100,
+                "period_end": 200,
+            }},
+        }
+
+        assert await service.process_webhook_event(event) is True
+        updates = users.update_subscription_data.await_args.args[1]
+        assert updates["stripe_subscription_id"] == "sub_test123"
+        assert updates["current_period_end"] == 200
+
+    @pytest.mark.asyncio
     async def test_process_webhook_event_payment_failed_updates_and_notifies(self):
         """支払い失敗を保存してLINE通知すること。"""
         user = {"id": "user-123", "line_user_id": "U_test123"}
@@ -278,6 +303,36 @@ class TestStripeService:
         assert second_updates["subscription_status"] == "past_due"
         line.send_subscription_notification.assert_awaited_once()
         assert events.mark_completed.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_subscription_created_supports_current_stripe_period_shape(self):
+        """新形式Subscriptionのitemsから請求期間を取得すること。"""
+        user = {"id": "user-123", "line_user_id": "U_test123"}
+        service, _, users, line = _webhook_service(user=user)
+        event = {
+            "id": "evt_created_new_shape",
+            "type": "customer.subscription.created",
+            "created": 1,
+            "data": {"object": {
+                "id": "sub_test123",
+                "customer": "cus_test123",
+                "status": "active",
+                "items": {"data": [{
+                    "price": {"id": "price_test_basic"},
+                    "current_period_start": 100,
+                    "current_period_end": 200,
+                }]},
+            }},
+        }
+
+        with patch("app.core.pricing.get_plan_from_price_id", return_value="basic"):
+            assert await service.process_webhook_event(event) is True
+
+        updates = users.update_subscription_data.await_args.args[1]
+        assert updates["subscription_plan"] == "basic"
+        assert updates["current_period_start"] == 100
+        assert updates["current_period_end"] == 200
+        line.send_subscription_notification.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_subscription_deleted_returns_user_to_free(self):

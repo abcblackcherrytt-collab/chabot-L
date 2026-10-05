@@ -147,8 +147,8 @@ class StripeService:
                     .get("price", {})
                     .get("id")
                 ),
-                "current_period_start": subscription.get("current_period_start"),
-                "current_period_end": subscription.get("current_period_end"),
+                "current_period_start": self._subscription_periods(subscription)[0],
+                "current_period_end": self._subscription_periods(subscription)[1],
                 "cancel_at_period_end": subscription.get("cancel_at_period_end"),
                 "created": subscription.get("created"),
                 "latest_invoice": {
@@ -189,7 +189,7 @@ class StripeService:
                 "status": subscription.get("status"),
                 "cancel_at": subscription.get("canceled_at"),
                 "cancel_at_period_end": subscription.get("cancel_at_period_end"),
-                "current_period_end": subscription.get("current_period_end"),
+                "current_period_end": self._subscription_periods(subscription)[1],
             }
 
         except StripeError as e:
@@ -266,8 +266,8 @@ class StripeService:
                         if sub.get("items", {}).get("data")
                         else None
                     ),
-                    "current_period_start": sub.get("current_period_start"),
-                    "current_period_end": sub.get("current_period_end"),
+                    "current_period_start": self._subscription_periods(sub)[0],
+                    "current_period_end": self._subscription_periods(sub)[1],
                     "cancel_at_period_end": sub.get("cancel_at_period_end"),
                 }
                 for sub in subscriptions.get("data", [])
@@ -403,7 +403,7 @@ class StripeService:
             処理が成功すればTrue
         """
         invoice = event.get("data", {}).get("object", {})
-        subscription_id = invoice.get("subscription")
+        subscription_id = self._invoice_subscription_id(invoice)
         customer_id = invoice.get("customer")
         if not subscription_id or not customer_id:
             logger.warning("Invoice paid event missing subscription or customer")
@@ -446,7 +446,7 @@ class StripeService:
             処理が成功すればTrue
         """
         invoice = event.get("data", {}).get("object", {})
-        subscription_id = invoice.get("subscription")
+        subscription_id = self._invoice_subscription_id(invoice)
         customer_id = invoice.get("customer")
         attempt_count = invoice.get("attempt_count", 0)
 
@@ -606,6 +606,30 @@ class StripeService:
         return items[0].get("price", {}).get("id")
 
     @staticmethod
+    def _subscription_periods(
+        subscription: Dict[str, Any],
+    ) -> tuple[Optional[int], Optional[int]]:
+        """Subscription期間を新旧Stripeイベント形式から取得する。"""
+        items = subscription.get("items", {}).get("data", [])
+        first_item = items[0] if items else {}
+        return (
+            subscription.get("current_period_start")
+            or first_item.get("current_period_start"),
+            subscription.get("current_period_end")
+            or first_item.get("current_period_end"),
+        )
+
+    @staticmethod
+    def _invoice_subscription_id(invoice: Dict[str, Any]) -> Optional[str]:
+        """InvoiceのSubscription IDを新旧Stripeイベント形式から取得する。"""
+        subscription_id = invoice.get("subscription")
+        if subscription_id:
+            return subscription_id
+        parent = invoice.get("parent") or {}
+        subscription_details = parent.get("subscription_details") or {}
+        return subscription_details.get("subscription")
+
+    @staticmethod
     def _subscription_updates(
         subscription: Dict[str, Any],
         plan: Optional[str],
@@ -614,8 +638,8 @@ class StripeService:
         updates = {
             "subscription_status": subscription.get("status", "active"),
             "stripe_subscription_id": subscription.get("id"),
-            "current_period_start": subscription.get("current_period_start"),
-            "current_period_end": subscription.get("current_period_end"),
+            "current_period_start": StripeService._subscription_periods(subscription)[0],
+            "current_period_end": StripeService._subscription_periods(subscription)[1],
             "cancel_at_period_end": bool(
                 subscription.get("cancel_at_period_end", False)
             ),
