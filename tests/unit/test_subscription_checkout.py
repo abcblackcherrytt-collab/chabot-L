@@ -301,3 +301,122 @@ async def test_plan_selection_page_lists_both_checkout_links() -> None:
     assert "999" in response.text
     assert "Stripe" in response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+def _plan_selection_auth_mocks(
+    monkeypatch,
+    user: dict,
+) -> None:
+    """選択画面の現在プラン解決に必要な認証・ユーザー取得をモックする。"""
+    auth_service = MagicMock()
+    auth_service.refresh = AsyncMock(
+        return_value={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+        }
+    )
+    user_repo = MagicMock()
+    user_repo.find_by_id = AsyncMock(return_value=user)
+    monkeypatch.setattr(subscription_api, "FirestoreAuthService", lambda: auth_service)
+    monkeypatch.setattr(
+        subscription_api, "FirestoreUserRepository", lambda: user_repo
+    )
+    monkeypatch.setattr(
+        subscription_api,
+        "decode_token",
+        lambda token: {"sub": "real-user-id"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_page_keeps_both_plans_without_session() -> None:
+    """未ログインでも選択画面は壊れず、現在プラン表示を出さないこと。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "現在のプラン" not in response.text
+    assert "href='/api/v1/subscription/checkout/basic'" in response.text
+    assert "href='/api/v1/subscription/checkout/pro'" in response.text
+    assert "aria-disabled" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_page_disables_registered_basic_plan(
+    monkeypatch,
+) -> None:
+    """basic登録済みユーザーには現在プランを表示し、同一プランを選択不可にすること。"""
+    _plan_selection_auth_mocks(
+        monkeypatch,
+        {"id": "real-user-id", "subscription_plan": "basic", "is_active": True},
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set(
+            REFRESH_TOKEN_COOKIE_NAME,
+            "saved-refresh",
+            path="/api/v1",
+        )
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "現在のプラン：<strong>ベーシックプラン</strong>" in response.text
+    assert "ご利用中のプラン" in response.text
+    assert "aria-disabled='true'" in response.text
+    assert "href='/api/v1/subscription/checkout/basic'" not in response.text
+    assert "href='/api/v1/subscription/checkout/pro'" in response.text
+    assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_page_disables_registered_pro_plan(
+    monkeypatch,
+) -> None:
+    """pro登録済みユーザーはproを選択不可にし、basicへの変更導線を残すこと。"""
+    _plan_selection_auth_mocks(
+        monkeypatch,
+        {"id": "real-user-id", "subscription_plan": "pro", "is_active": True},
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set(
+            REFRESH_TOKEN_COOKIE_NAME,
+            "saved-refresh",
+            path="/api/v1",
+        )
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "現在のプラン：<strong>プロプラン</strong>" in response.text
+    assert "href='/api/v1/subscription/checkout/pro'" not in response.text
+    assert "href='/api/v1/subscription/checkout/basic'" in response.text
+
+
+@pytest.mark.asyncio
+async def test_plan_selection_page_treats_service_override_as_pro(
+    monkeypatch,
+) -> None:
+    """service権限ユーザーはpro相当として扱い、proの再選択をさせないこと。"""
+    _plan_selection_auth_mocks(
+        monkeypatch,
+        {
+            "id": "real-user-id",
+            "subscription_plan": "free",
+            "plan_override": {"plan": "service"},
+            "is_active": True,
+        },
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set(
+            REFRESH_TOKEN_COOKIE_NAME,
+            "saved-refresh",
+            path="/api/v1",
+        )
+        response = await client.get("/api/v1/subscription/select")
+
+    assert response.status_code == 200
+    assert "現在のプラン：<strong>プロプラン</strong>" in response.text
+    assert "href='/api/v1/subscription/checkout/pro'" not in response.text
+    assert "href='/api/v1/subscription/checkout/basic'" in response.text

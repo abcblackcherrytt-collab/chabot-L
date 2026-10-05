@@ -4,9 +4,10 @@
 Stripe Checkoutとサブスクリプション管理のAPIエンドポイントを提供します。
 """
 
+import html
 import logging
 import urllib.parse
-from typing import Annotated
+from typing import Annotated, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,9 +18,15 @@ from app.core.auth_cookies import (
     set_refresh_token_cookie,
 )
 from app.core.config import settings
-from app.core.pricing import PLANS, get_plan_config, validate_plan_availability
+from app.core.pricing import (
+    PLANS,
+    get_plan_config,
+    resolve_effective_plan,
+    validate_plan_availability,
+)
 from app.core.security import decode_token
 from app.clients.stripe import StripeError
+from app.repositories.firestore_user_repository import FirestoreUserRepository
 from app.services.firestore_auth_service import FirestoreAuthService
 from app.services.subscription_service import SubscriptionService
 
@@ -37,12 +44,17 @@ PLAN_SELECTION_CSS = """
   .eyebrow { margin: 0 0 10px; color: #4967c5; font-size: .78rem; font-weight: 700; letter-spacing: .14em; }
   h1 { margin: 0; font-size: clamp(1.8rem, 7vw, 2.5rem); letter-spacing: -.04em; }
   .lead { margin: 14px 0 28px; color: #5d6880; line-height: 1.7; }
+  .current-plan { margin: 16px 0 0; padding: 12px 16px; border: 1px solid #d5def3; border-radius: 12px; background: #edf1fc; color: #414c68; font-size: .9rem; font-weight: 600; }
+  .current-plan strong { color: #172033; }
   .plans { display: grid; gap: 14px; }
   .plan { position: relative; display: block; padding: 22px; border: 1px solid #dce2ef; border-radius: 18px; background: #fff; color: inherit; text-decoration: none; box-shadow: 0 8px 24px rgba(32,48,88,.06); transition: transform .15s, box-shadow .15s; }
   .plan:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(32,48,88,.13); }
   .plan:focus-visible { outline: 3px solid #172033; outline-offset: 3px; box-shadow: 0 12px 30px rgba(32,48,88,.13); }
   .plan.pro { border: 2px solid #536bd0; padding: 21px; }
   .badge { position: absolute; top: -12px; right: 18px; padding: 5px 10px; border-radius: 99px; background: #536bd0; color: #fff; font-size: .72rem; font-weight: 700; }
+  .plan.current { border: 2px dashed #b7c1da; background: #f6f8fc; box-shadow: none; cursor: default; }
+  .plan.current:hover { transform: none; box-shadow: none; }
+  .badge-current { background: #276749; }
   .plan-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   h2 { margin: 0; font-size: 1.2rem; }
   .price { margin: 14px 0 4px; font-size: 1.65rem; font-weight: 800; letter-spacing: -.04em; }
@@ -58,7 +70,7 @@ PLAN_SELECTION_CSS = """
 """
 
 
-PLAN_SELECTION_PAGE = """<!doctype html>
+PLAN_SELECTION_TEMPLATE = """<!doctype html>
 <html lang='ja'>
 <head>
 <meta charset='utf-8'>
@@ -69,24 +81,84 @@ PLAN_SELECTION_PAGE = """<!doctype html>
 <body><main>
   <p class='eyebrow'>CHABOT SUBSCRIPTION</p>
   <h1>あなたに合うプランを選ぶ</h1>
+{current_plan_banner}
   <p class='lead'>専門的な回答を、必要な量に合わせて。登録後はStripeの安全な決済ページへ進みます。</p>
   <section class='plans' aria-label='プラン一覧'>
-    <a class='plan' href='/api/v1/subscription/checkout/basic'>
-      <div class='plan-head'><h2>ベーシックプラン</h2><span class='arrow' aria-hidden='true'>→</span></div>
-      <p class='price'>499円 <small>/ 月（税込）</small></p>
-      <p class='limit'>1日 100問まで</p>
-      <ul><li>有料コーパスによる詳しい回答</li><li>日々の学習・業務におすすめ</li></ul>
-    </a>
-    <a class='plan pro' href='/api/v1/subscription/checkout/pro'>
-      <span class='badge'>たくさん使う方へ</span>
-      <div class='plan-head'><h2>プロプラン</h2><span class='arrow' aria-hidden='true'>→</span></div>
-      <p class='price'>999円 <small>/ 月（税込）</small></p>
-      <p class='limit'>1日 500問まで</p>
-      <ul><li>有料コーパスによる詳しい回答</li><li>質問数が多い方におすすめ</li></ul>
-    </a>
+{basic_card}
+{pro_card}
   </section>
   <p class='note'><strong>お申し込みについて</strong><br>ボタンを押すとLINEログイン後、Stripeの決済ページへ移動します。プランの変更・解約はいつでも行えます。</p>
 </main></body></html>"""
+
+
+# 選択画面に表示するカード情報。金額はStripe側のPrice設定と合わせて運用する。
+PLAN_SELECTION_CARDS: Dict[str, Dict[str, Any]] = {
+    "basic": {
+        "title": "ベーシックプラン",
+        "price": "499円",
+        "limit": "1日 100問まで",
+        "features": ("有料コーパスによる詳しい回答", "日々の学習・業務におすすめ"),
+        "promo_badge": "",
+    },
+    "pro": {
+        "title": "プロプラン",
+        "price": "999円",
+        "limit": "1日 500問まで",
+        "features": ("有料コーパスによる詳しい回答", "質問数が多い方におすすめ"),
+        "promo_badge": "<span class='badge'>たくさん使う方へ</span>",
+    },
+}
+
+
+def _plan_selection_card(plan: str, *, is_current: bool) -> str:
+    """プラン選択画面のカードHTMLを組み立てる。
+
+    現在登録中のプランはリンクを持たない選択不可カードとして描画する。
+    """
+    card = PLAN_SELECTION_CARDS[plan]
+    extra_class = " pro" if plan == "pro" else ""
+    features = "".join(f"<li>{feature}</li>" for feature in card["features"])
+    if is_current:
+        badge = "      <span class='badge badge-current'>ご利用中のプラン</span>\n"
+        return (
+            f"    <div class='plan{extra_class} current' aria-disabled='true'>\n"
+            f"{badge}"
+            f"      <div class='plan-head'><h2>{card['title']}</h2></div>\n"
+            f"      <p class='price'>{card['price']} <small>/ 月（税込）</small></p>\n"
+            f"      <p class='limit'>{card['limit']}</p>\n"
+            f"      <ul>{features}</ul>\n"
+            f"    </div>"
+        )
+    promo_badge = f"      {card['promo_badge']}\n" if card["promo_badge"] else ""
+    return (
+        f"    <a class='plan{extra_class}' href='/api/v1/subscription/checkout/{plan}'>\n"
+        f"{promo_badge}"
+        f"      <div class='plan-head'><h2>{card['title']}</h2>"
+        "<span class='arrow' aria-hidden='true'>→</span></div>\n"
+        f"      <p class='price'>{card['price']} <small>/ 月（税込）</small></p>\n"
+        f"      <p class='limit'>{card['limit']}</p>\n"
+        f"      <ul>{features}</ul>\n"
+        f"    </a>"
+    )
+
+
+def _current_plan_banner(current_plan: str) -> str:
+    """ログイン済みユーザーの現在プラン表示を組み立てる。"""
+    plan_name = PLANS.get(current_plan, {}).get("name", current_plan)
+    return (
+        "  <p class='current-plan'>現在のプラン：<strong>"
+        f"{html.escape(plan_name, quote=False)}</strong></p>"
+    )
+
+
+def _render_plan_selection_page(current_plan: str | None) -> str:
+    """現在プランの有無に応じてプラン選択画面のHTMLを組み立てる。"""
+    banner = _current_plan_banner(current_plan) if current_plan else ""
+    return PLAN_SELECTION_TEMPLATE.format(
+        current_plan_banner=banner,
+        basic_card=_plan_selection_card("basic", is_current=current_plan == "basic"),
+        pro_card=_plan_selection_card("pro", is_current=current_plan == "pro"),
+    )
 
 
 # ========== 依存性注入 ==========
@@ -238,12 +310,42 @@ async def redirect_to_checkout(
 
 
 @router.get("/select", response_class=HTMLResponse)
-async def select_plan() -> HTMLResponse:
-    """リッチメニューから遷移する、basic/proのプラン選択画面を表示する。"""
-    return HTMLResponse(
-        content=PLAN_SELECTION_PAGE,
+async def select_plan(request: Request) -> HTMLResponse:
+    """リッチメニューから遷移する、basic/proのプラン選択画面を表示する。
+
+    保存済みLINE Loginセッションがある場合は現在のプランを表示し、
+    登録中の同一プランを選択不可カードとして描画する。セッションがない・
+    無効な場合は従来どおり全プランを選択できる画面を返す。
+    """
+    current_plan: str | None = None
+    rotated_refresh_token: str | None = None
+    refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    if refresh_token:
+        try:
+            tokens = await FirestoreAuthService().refresh(refresh_token)
+            if tokens:
+                # ローテーション成功で旧Tokenは失効するため、必ず新Tokenを載せ替える。
+                rotated_refresh_token = tokens["refresh_token"]
+                access_payload = decode_token(tokens["access_token"])
+                user_id = access_payload.get("sub") if access_payload else None
+                if user_id:
+                    user = await FirestoreUserRepository().find_by_id(user_id)
+                    if user:
+                        current_plan = resolve_effective_plan(user)
+        except Exception as exc:
+            logger.warning(
+                "Plan selection current-plan lookup failed: error_type=%s",
+                type(exc).__name__,
+            )
+            current_plan = None
+
+    response = HTMLResponse(
+        content=_render_plan_selection_page(current_plan),
         headers={"Cache-Control": "no-store"},
     )
+    if rotated_refresh_token:
+        set_refresh_token_cookie(response, rotated_refresh_token)
+    return response
 
 
 @router.get("/select.css")

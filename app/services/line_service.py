@@ -11,14 +11,13 @@ Phase 2: ユーザー管理・サブスクリプション連携を追加。詳�
 
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
-from app.core.pricing import get_daily_message_limit
+from app.core.pricing import get_daily_message_limit, resolve_effective_plan
 from app.repositories.base_user_repository import BaseUserRepository
 
 logger = logging.getLogger(__name__)
@@ -767,25 +766,7 @@ class LineService:
     @staticmethod
     def _resolve_effective_plan(user_dict: Dict[str, Any]) -> str:
         """プラン解決優先度（Stripe契約 > plan_override > free）を適用する。"""
-        plan = user_dict.get("subscription_plan") or "free"
-        override = user_dict.get("plan_override")
-        if not isinstance(override, dict):
-            return plan
-        override_plan = override.get("plan")
-        if override_plan not in ("basic", "pro", "service"):
-            return plan
-        expires_at = override.get("expires_at")
-        if isinstance(expires_at, str):
-            try:
-                still_valid = datetime.fromisoformat(expires_at) > datetime.now(timezone.utc)
-            except ValueError:
-                still_valid = False
-        else:
-            still_valid = expires_at is None
-        if still_valid and plan not in ("basic", "pro"):
-            # serviceは実行時にpro相当（同一コーパス・日次上限）として解決する。
-            return "pro" if override_plan == "service" else override_plan
-        return plan
+        return resolve_effective_plan(user_dict)
 
     async def health_check(self) -> Dict[str, Any]:
         """

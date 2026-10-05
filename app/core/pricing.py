@@ -5,6 +5,7 @@
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from app.core.config import settings
@@ -78,6 +79,38 @@ def get_plan_config(plan: str) -> Dict[str, Any]:
         plan_config["corpus_id"] = settings.google_corpus_id_plan1
 
     return plan_config
+
+
+def resolve_effective_plan(user: Dict[str, Any]) -> str:
+    """ユーザー文書から実効プランを解決する。
+
+    優先度は Stripe契約（subscription_plan の basic/pro）> plan_override > free。
+    serviceはpro相当（同一コーパス・日次上限）として解決する。
+
+    Args:
+        user: ユーザードキュメントの辞書
+
+    Returns:
+        実効プラン名（free, basic, pro）
+    """
+    plan = user.get("subscription_plan") or "free"
+    override = user.get("plan_override")
+    if not isinstance(override, dict):
+        return plan
+    override_plan = override.get("plan")
+    if override_plan not in ("basic", "pro", "service"):
+        return plan
+    expires_at = override.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            still_valid = datetime.fromisoformat(expires_at) > datetime.now(timezone.utc)
+        except ValueError:
+            still_valid = False
+    else:
+        still_valid = expires_at is None
+    if still_valid and plan not in ("basic", "pro"):
+        return "pro" if override_plan == "service" else override_plan
+    return plan
 
 
 def get_plan_from_price_id(price_id: str) -> str:
