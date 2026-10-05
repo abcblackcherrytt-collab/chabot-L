@@ -66,48 +66,61 @@ async def lifespan(app: FastAPI):
         await close_firestore_client()
 
 
+def create_app() -> FastAPI:
+    """FastAPIアプリケーションを生成する。
+
+    本番（APP_ENV=production）ではOpenAPIスキーマとdocs UIを無効化し、
+    エンドポイント構成の外部露出を防ぐ。管理アプリ（admin_server）と同じ方針。
+    """
+    docs_disabled = settings.app_env == "production"
+    fastapi_app = FastAPI(
+        title=settings.app_name,
+        description="Chabot LINE API",
+        version=settings.api_version,
+        debug=settings.debug,
+        lifespan=lifespan,
+        docs_url=None if docs_disabled else "/docs",
+        redoc_url=None if docs_disabled else "/redoc",
+        openapi_url=None if docs_disabled else "/openapi.json",
+    )
+
+    # CORSミドルウェア設定（環境変数から許可オリジンを取得）
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
+    # HTTPセキュリティヘッダーミドルウェア
+    fastapi_app.add_middleware(SecurityHeadersMiddleware)
+
+    # ルーター登録
+    fastapi_app.include_router(auth_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(line_auth_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(chat_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(subscription_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(invite_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(line_webhook_router, prefix=f"/api/{settings.api_version}")
+    fastapi_app.include_router(stripe_webhook_router, prefix=f"/api/{settings.api_version}")
+
+    @fastapi_app.get("/")
+    async def root():
+        """ルートエンドポイント"""
+        return {
+            "app": settings.app_name,
+            "version": settings.api_version,
+            "status": "running",
+        }
+
+    @fastapi_app.get("/health")
+    async def health_check():
+        """ヘルスチェックエンドポイント"""
+        return {"status": "healthy"}
+
+    return fastapi_app
+
+
 # FastAPIアプリケーション作成
-app = FastAPI(
-    title=settings.app_name,
-    description="Chabot LINE API",
-    version=settings.api_version,
-    debug=settings.debug,
-    lifespan=lifespan,
-)
-
-# CORSミドルウェア設定（環境変数から許可オリジンを取得）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins_list,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-# HTTPセキュリティヘッダーミドルウェア
-app.add_middleware(SecurityHeadersMiddleware)
-
-# ルーター登録
-app.include_router(auth_router, prefix=f"/api/{settings.api_version}")
-app.include_router(line_auth_router, prefix=f"/api/{settings.api_version}")
-app.include_router(chat_router, prefix=f"/api/{settings.api_version}")
-app.include_router(subscription_router, prefix=f"/api/{settings.api_version}")
-app.include_router(invite_router, prefix=f"/api/{settings.api_version}")
-app.include_router(line_webhook_router, prefix=f"/api/{settings.api_version}")
-app.include_router(stripe_webhook_router, prefix=f"/api/{settings.api_version}")
-
-
-@app.get("/")
-async def root():
-    """ルートエンドポイント"""
-    return {
-        "app": settings.app_name,
-        "version": settings.api_version,
-        "status": "running",
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """ヘルスチェックエンドポイント"""
-    return {"status": "healthy"}
+app = create_app()

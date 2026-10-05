@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Dict
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_admin, get_current_user
 from app.core.pricing import get_daily_message_limit
 from app.models.user import User
 from app.repositories.firestore_rag_permission_repository import (
@@ -282,11 +282,16 @@ async def health_check() -> HealthCheckResponse:
         500: {"model": ErrorResponse, "description": "サーバーエラー"},
     },
 )
-async def deep_health_check(http_request: Request) -> DeepHealthCheckResponse:
+async def deep_health_check(
+    http_request: Request,
+    current_user: Annotated[User, Depends(get_current_admin)],
+) -> DeepHealthCheckResponse:
     """
     チャットサービスの詳細ヘルスチェックを行います
 
     外部API（RAG/LINE）の疎通確認を行います。
+    疎通確認は実際にVertex AI・LINE APIを呼び出すため、管理者のみ実行できます。
+    未認証リクエストは依存関係の検証で拒否され、外部APIは呼び出されません。
     """
     rag_service = http_request.app.state.rag_service
     line_service = http_request.app.state.line_service
@@ -302,10 +307,20 @@ async def deep_health_check(http_request: Request) -> DeepHealthCheckResponse:
         )
 
         # 例外が発生した場合はunhealthyを返す
+        # 例外文字列にはプロジェクトID等の内部情報が含まれ得るため、
+        # 応答へは固定値のみを返し、詳細はログに留める。
         if isinstance(rag_health, Exception):
-            rag_health = {"status": "unhealthy", "error": str(rag_health)}
+            logger.error(
+                "RAG health check failed: error_type=%s",
+                type(rag_health).__name__,
+            )
+            rag_health = {"status": "unhealthy", "error": "RAG service unavailable"}
         if isinstance(line_health, Exception):
-            line_health = {"status": "unhealthy", "error": str(line_health)}
+            logger.error(
+                "LINE health check failed: error_type=%s",
+                type(line_health).__name__,
+            )
+            line_health = {"status": "unhealthy", "error": "LINE service unavailable"}
 
         overall_status = "healthy" if (
             rag_health.get("status") == "healthy" and

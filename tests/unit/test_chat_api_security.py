@@ -197,3 +197,93 @@ async def test_chat_conversation_save_failure_does_not_raise(monkeypatch) -> Non
     )
 
     conversation_repository.save_conversation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deep_health_rejects_unauthenticated_without_external_calls() -> None:
+    """未認証のdeep healthアクセスを拒否し、外部APIを呼び出させないこと。"""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.server import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/chat/health/deep")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_deep_health_rejects_non_admin_user(monkeypatch) -> None:
+    """一般ユーザーのdeep healthアクセスを403で拒否すること。"""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.deps import get_current_user
+    from app.server import app
+
+    async def _regular_user():
+        return SimpleNamespace(id="user-1", role="user")
+
+    app.dependency_overrides[get_current_user] = _regular_user
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/v1/chat/health/deep")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_deep_health_for_admin_hides_exception_details(monkeypatch) -> None:
+    """管理者のdeep healthで例外が発生しても、応答へ例外文字列を出さないこと。"""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.deps import get_current_user
+    from app.server import app
+
+    rag_service = MagicMock()
+    rag_service.health_check = AsyncMock(
+        side_effect=Exception("projects/secret-project/locations/us-central1 leaked")
+    )
+    line_service = MagicMock()
+    line_service.health_check = AsyncMock(
+        return_value={"status": "healthy", "service": "line"}
+    )
+    app.state.rag_service = rag_service
+    app.state.line_service = line_service
+
+    async def _admin_user():
+        return SimpleNamespace(id="admin-1", role="admin")
+
+    app.dependency_overrides[get_current_user] = _admin_user
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/v1/chat/health/deep")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unhealthy"
+    assert body["services"]["rag"]["error"] == "RAG service unavailable"
+    assert "secret-project" not in response.text
+
+
+def test_openapi_docs_are_hidden_only_in_production(monkeypatch) -> None:
+    """本番構成ではOpenAPIとdocs UIを無効化し、開発構成では有効に保つこと。"""
+    from app.core.config import settings
+    from app.server import create_app
+
+    monkeypatch.setattr(settings, "app_env", "development")
+    dev_app = create_app()
+    assert dev_app.docs_url == "/docs"
+    assert dev_app.openapi_url == "/openapi.json"
+
+    monkeypatch.setattr(settings, "app_env", "production")
+    prod_app = create_app()
+    assert prod_app.docs_url is None
+    assert prod_app.redoc_url is None
+    assert prod_app.openapi_url is None

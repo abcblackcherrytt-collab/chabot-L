@@ -87,6 +87,27 @@ async def test_line_login_preserves_safe_checkout_return_path() -> None:
 
 
 @pytest.mark.asyncio
+async def test_password_login_is_hidden_in_firestore_mode(monkeypatch) -> None:
+    """Firestore構成ではEmail/Passwordログインを404にし、PostgreSQLセッションを作らないこと。"""
+    monkeypatch.setattr(auth_api.settings, "database_backend", "firestore")
+
+    def _unexpected_session():
+        raise AssertionError("PostgreSQL session must not be created in firestore mode")
+
+    monkeypatch.setattr("app.db.session.async_session_maker", _unexpected_session)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "user@example.com", "password": "password123"},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not found"}
+
+
+@pytest.mark.asyncio
 async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> None:
     """Cookieだけで更新でき、新Refresh TokenをJSONへ露出しないこと。"""
     service = MagicMock()

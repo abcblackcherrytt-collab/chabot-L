@@ -18,7 +18,7 @@ from app.core.auth_cookies import (
 )
 from app.core.security import decode_token
 from app.core.deps import get_current_user
-from app.db.session import get_db, get_optional_db
+from app.db.session import get_optional_db
 from app.schemas.auth import (
     ErrorResponse,
     LoginRequest,
@@ -46,17 +46,30 @@ router = APIRouter(prefix="/auth", tags=["認証"])
             "model": ErrorResponse,
             "description": "認証失敗",
         },
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "Email/Password認証が無効な構成",
+        },
     },
 )
 async def login(
     request: LoginRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession | None, Depends(get_optional_db)],
 ) -> LoginResponse:
     """
     ユーザーログインを行います
 
     メールアドレスとパスワードで認証を行い、アクセストークンとリフレッシュトークンを返します。
+    DATABASE_BACKEND=postgresql の構成だけで有効です。Firestore構成では
+    Email/Passwordユーザーが存在しないため、PostgreSQLセッションを
+    作らせずに404を返してエンドポイントの存在を露出しません。
     """
+    if settings.database_backend != "postgresql" or db is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
     auth_service = AuthService(db)
 
     # ログイン処理

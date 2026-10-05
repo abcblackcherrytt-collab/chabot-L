@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-04（行動指針質問clinical_decision分類の本番反映）
+> **更新日**: 2026-10-05（データアクセス・セキュリティレビューと/auth/login構成ゲート）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -529,6 +529,10 @@ Gemini 3系（3.5/3.1 flash-lite）は `us-central1` のモデル一覧に表示
 
 ### P1-3. セキュリティ
 
+- [x] データアクセス周りのセキュリティレビュー（2026-10-05）: usersコレクションへのアクセス経路（LINE Webhook・LINE Login・チャットAPI・管理UI・デプロイ構成）を確認し、未認証での登録ユーザー情報の露呈経路なしを確認。ただしHigh 2件（下記2項目）を指摘
+- [x] /api/v1/chat/health/deep の未認証・一般ユーザーアクセス遮断と例外文字列の応答返却廃止（2026-10-05、コード実装・ローカル検証済み・本番未反映）: get_current_admin依存を追加し、未認証は401・role=userは403でハンドラ以前に拒否されるため外部APIは呼ばれない。例外発生時の応答は固定文字列（RAG/LINE service unavailable）のみで、詳細はログへerror_type記録。追加unit 4件（未認証401・非管理者403・管理者時の例外文字列非露出・docs無効化）を含む品質ゲート210件成功（レビュー指摘H-1）
+- [x] 公開BotのOpenAPI（/docs・/redoc・/openapi.json）を本番（APP_ENV=production）で無効化（2026-10-05、コード実装・ローカル検証済み・本番未反映）: server.pyをcreate_app()へ整理し、production構成でdocs_url/redoc_url/openapi_urlをNoneへ設定。管理アプリと同じ方針（レビュー指摘H-2）
+- [x] Firestore構成でEmail/Passwordログイン（POST /api/v1/auth/login）を404へ隠蔽（2026-10-05、コード実装・ローカル検証済み・本番未反映）: 依存をget_db→get_optional_dbへ変更しFirestore構成ではPostgreSQLセッション自体を作らないゲートを追加。追加unit含む品質ゲート206件成功
 - [x] LINE Login ID TokenをLINE公式検証APIで署名・audience・nonce検証（本番反映済み・実LINE callback E2E未確認）
 - [x] state / nonceをインメモリからHttpOnly / Secure短期Cookieへ移行し、Cloud Runインスタンス間の不整合を解消（本番開始endpoint確認済み）
 - [ ] LINE Webhookと認証APIへレート制限を追加
