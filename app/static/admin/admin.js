@@ -247,7 +247,6 @@ function renderOverview(host) {
   });
   host.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: '期間別の指標' }, []),
-    el('p', { class: 'sub', text: 'admin_daily_stats の範囲集計です。' }, []),
     segmented
   ]));
   var holder = el('div', {}, []);
@@ -433,7 +432,6 @@ function renderUsers(host) {
 
   left.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: '登録ユーザー' }, []),
-    el('p', { class: 'sub', text: '一覧ではLINE IDをマスク表示します。' }, []),
     el('div', { class: 'toolbar' }, [
       el('div', { class: 'field grow' }, [el('label', { text: '検索' }, []), search]),
       el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
@@ -491,7 +489,6 @@ function renderUsers(host) {
   var lineId = el('input', { type: 'text', placeholder: 'Uxxxxxxxx…' }, []);
   var createForm = el('form', {}, [
     el('h3', { text: 'LINE ID直指定でfree作成' }, []),
-    el('p', { class: 'sub', text: 'テスト・移行用。Messaging APIで実在確認します。' }, []),
     el('div', { class: 'toolbar' }, [
       el('div', { class: 'field grow' }, [el('label', { text: 'LINE user ID' }, []), lineId])
     ]),
