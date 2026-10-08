@@ -911,6 +911,7 @@ function renderCorpora(host) {
     ((data.settings || {}).items || []).forEach(function (setting) {
       settingsByPlan[setting.plan] = setting;
     });
+    var grid = el('div', { class: 'corpus-grid' }, []);
     items.forEach(function (entry) {
       var corpus = entry.corpus || {};
       var card = el('div', { class: 'card' }, [
@@ -919,7 +920,7 @@ function renderCorpora(host) {
         ]),
         kv([
           ['モデル', entry.model_name || '既定'],
-          ['設定更新日時', fmtDate(entry.updated_at)]
+          ['更新日時', fmtDate(entry.updated_at)]
         ])
       ]);
       var setting = settingsByPlan[entry.plan];
@@ -937,7 +938,15 @@ function renderCorpora(host) {
         var plus = el('button', { class: 'btn stepper-btn', type: 'button', text: '＋', 'aria-label': entry.plan + ' の回数を増やす' }, []);
         minus.addEventListener('click', function () { value = clamp(value - 1); syncInput(); });
         plus.addEventListener('click', function () { value = clamp(value + 1); syncInput(); });
-        var publishButton = el('button', { class: 'btn btn-small btn-primary', type: 'button', text: '反映' }, []);
+        var publishButton = el('button', { class: 'btn btn-small btn-primary', type: 'button', text: '反映', disabled: true }, []);
+        var syncPublishButton = function () {
+          publishButton.disabled = value === setting.daily_message_limit;
+        };
+        var syncInputAndButton = function () { syncInput(); syncPublishButton(); };
+        input.addEventListener('input', syncPublishButton);
+        minus.addEventListener('click', syncInputAndButton);
+        plus.addEventListener('click', syncInputAndButton);
+        input.addEventListener('blur', syncInputAndButton);
         publishButton.addEventListener('click', function () {
           var parsed = parseInt(input.value, 10);
           if (isNaN(parsed) || String(parsed) !== input.value.trim() || parsed < 1 || parsed > 999) { toast('1〜999の整数を入力してください。'); return; }
@@ -963,10 +972,12 @@ function renderCorpora(host) {
         });
         card.appendChild(el('div', { class: 'limit-editor' }, [
           el('span', { class: 'limit-label', text: '日次上限' }, []),
+          setting.draft_daily_message_limit !== setting.daily_message_limit
+            ? el('span', { class: 'badge badge-warning', text: '未反映の変更あり' }, [])
+            : null,
           el('div', { class: 'stepper' }, [minus, input, plus]),
           publishButton
         ]));
-        card.appendChild(el('p', { class: 'sub', text: '公開中 ' + setting.daily_message_limit + ' 回/日' + (setting.configured ? '' : '（未設定）') }, []));
       }
       if (entry.firestore_error) {
         card.appendChild(el('p', { class: 'error-note', role: 'alert', text: 'rag_permissionsの読取に失敗しました（' + entry.firestore_error + '）。既定値を表示中。' }, []));
@@ -986,12 +997,16 @@ function renderCorpora(host) {
           details.appendChild(el('p', { class: 'sub', text: corpus.description }, []));
         }
         details.appendChild(list);
+        details.addEventListener('toggle', function () {
+          card.classList.toggle('expanded', details.open);
+        });
         card.appendChild(details);
       } else if (corpus.status === 'error') {
         card.appendChild(el('p', { class: 'error-note', role: 'alert', text: 'Vertex AIコーパス参照に失敗しました（' + (corpus.error || '不明なエラー') + '）。設定表示は継続しています。' }, []));
       }
-      target.appendChild(card);
+      grid.appendChild(card);
     });
+    target.appendChild(grid);
   });
 }
 
