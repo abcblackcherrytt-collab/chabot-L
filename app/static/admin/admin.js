@@ -319,6 +319,8 @@ function renderUserDetail(host) {
       return;
     }
     var user = result.data;
+    var detailPlan = (typeof user.effective_plan === 'string' && user.effective_plan)
+      ? user.effective_plan : effectivePlan(user);
     var stripeActive = (user.subscription_plan === 'basic' || user.subscription_plan === 'pro') &&
       user.subscription_status === 'active';
     var closeButton = el('button', { class: 'btn btn-small', type: 'button', text: '閉じる' }, []);
@@ -335,7 +337,7 @@ function renderUserDetail(host) {
       ['ユーザーID', user.id],
       ['LINE ID', user.line_user_id || '未取得'],
       ['メール', user.email || '未取得'],
-      ['プラン', effectivePlan(user)],
+      ['プラン', detailPlan],
       ['状態', user.is_active ? '有効' : '無効（unfollow等）'],
       ['登録日', fmtDate(user.created_at)],
       ['更新日', fmtDate(user.updated_at)]
@@ -348,7 +350,7 @@ function renderUserDetail(host) {
       el('option', { value: 'pro', text: 'pro' }, []),
       el('option', { value: 'service', text: 'service' }, [])
     ]);
-    planSelect.value = effectivePlan(user);
+    planSelect.value = detailPlan;
     var form = el('form', {}, [
       el('h4', { text: 'プラン変更' }, []),
       el('div', { class: 'toolbar' }, [

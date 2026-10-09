@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,7 @@ from app.core.auth_cookies import (
     set_refresh_token_cookie,
 )
 from app.core.config import settings
+from app.core.rate_limit import RateLimiter, client_ip
 from app.core.security import decode_token
 from app.repositories.firestore_admin_invite_repository import (
     FirestoreAdminInviteRepository,
@@ -35,6 +36,14 @@ router = APIRouter(prefix="/invite", tags=["無料登録URL"])
 
 CLAIM_COOKIE_NAME = "chabot_invite_claim"
 CLAIM_TTL_SECONDS = 600
+
+# 招待引き換え導線の簡易IPレート制限（インスタンス単位・60秒に10回まで）。
+_claim_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
+
+def _enforce_claim_rate_limit(request: Request) -> None:
+    """招待トークン総当たり・短時間集中アクセスを抑える。"""
+    _claim_rate_limiter.check(client_ip(request))
 
 
 def _sign(payload: bytes) -> str:
@@ -155,6 +164,7 @@ async def invite_claim_script() -> Response:
 async def invite_start_session(
     request: InviteSessionRequest,
     http_request: Request,
+    _: None = Depends(_enforce_claim_rate_limit),
 ) -> JSONResponse:
     """トークンを検証し、短命クレームCookieを設定してLINE Loginへ案内する。"""
     import hashlib as _hashlib
@@ -195,7 +205,10 @@ def _result_page(title: str, body: str) -> HTMLResponse:
 
 
 @router.get("/complete", response_class=HTMLResponse)
-async def invite_complete(request: Request) -> Response:
+async def invite_complete(
+    request: Request,
+    _: None = Depends(_enforce_claim_rate_limit),
+) -> Response:
     """LINE Login成功後に招待を消費して登録を確定する。"""
     claim_token = request.cookies.get(CLAIM_COOKIE_NAME)
     invite_id = _verify_claim_token(claim_token) if claim_token else None

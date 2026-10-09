@@ -26,6 +26,20 @@ JST = ZoneInfo("Asia/Tokyo")
 class FirestoreAdminUserRepository:
     """users コレクションの管理向け読み書きを提供する。"""
 
+    # 管理UI詳細応答へ含めるフィールド。連携ID（stripe_customer_id等）は
+    # 応答へ返さず、漏洩面を最小化する。
+    _DETAIL_FIELDS = (
+        "display_name",
+        "line_user_id",
+        "email",
+        "subscription_plan",
+        "subscription_status",
+        "plan_override",
+        "is_active",
+        "created_at",
+        "updated_at",
+    )
+
     def __init__(self, client: Optional[firestore.AsyncClient] = None):
         """Firestoreクライアントを初期化する。"""
         self.db = client or get_firestore_client_sync()
@@ -112,13 +126,15 @@ class FirestoreAdminUserRepository:
         await asyncio.gather(*[_usage(user) for user in users])
 
     async def get_user_detail(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """詳細（LINE user ID・email等のPIIを含む）を返す。呼び出し側は監査を記録する。"""
+        """詳細を管理UI表示用フィールドへ絞り込んで返す。呼び出し側は監査を記録する。"""
         doc = await self.db.collection(USERS_COLLECTION).document(user_id).get()
         if not doc.exists:
             return None
         data = doc.to_dict()
-        data["id"] = doc.id
-        return data
+        detail = {field: data.get(field) for field in self._DETAIL_FIELDS}
+        detail["id"] = doc.id
+        detail["effective_plan"] = resolve_effective_plan(data)
+        return detail
 
     async def set_plan_override(
         self,

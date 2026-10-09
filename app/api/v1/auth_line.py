@@ -10,11 +10,12 @@ import secrets
 import urllib.parse
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.auth_cookies import set_refresh_token_cookie
 from app.core.config import settings
+from app.core.rate_limit import RateLimiter, client_ip
 from app.core.security import verify_line_id_token
 from app.services.firestore_auth_service import FirestoreAuthService
 
@@ -25,6 +26,14 @@ router = APIRouter(prefix="/auth/line", tags=["LINE Auth"])
 LINE_AUTH_URL = "https://access.line.me/oauth2/v2.1/authorize"
 LINE_TOKEN_URL = "https://api.line.me/oauth2/v2.1/token"
 LOGIN_RETURN_COOKIE_NAME = "line_login_return_to"
+
+# 認証導線の簡易IPレート制限（インスタンス単位・60秒に10回まで）。
+_login_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
+
+def _enforce_login_rate_limit(request: Request) -> None:
+    """LINE Login導線への短時間集中アクセスを抑える。"""
+    _login_rate_limiter.check(client_ip(request))
 
 
 def _allowed_return_to(return_to: Optional[str]) -> Optional[str]:
@@ -42,6 +51,7 @@ def _allowed_return_to(return_to: Optional[str]) -> Optional[str]:
 async def line_login(
     request: Request,
     return_to: Optional[str] = None,
+    _: None = Depends(_enforce_login_rate_limit),
 ) -> RedirectResponse:
     """
     LINE Login 認証ページにリダイレクトします
@@ -127,6 +137,7 @@ async def line_login_callback(
     state: Optional[str] = None,
     error: Optional[str] = None,
     error_description: Optional[str] = None,
+    _: None = Depends(_enforce_login_rate_limit),
 ):
     """
     LINE Login コールバックを処理します

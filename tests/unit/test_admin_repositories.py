@@ -256,6 +256,51 @@ class TestAdminUserRepository:
         assert result["users"][0]["effective_plan"] == "pro"
 
 
+class TestAdminUserRepository:
+    """管理ユーザー詳細の応答絞り込みテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_get_user_detail_returns_whitelisted_fields_only(self) -> None:
+        """連携ID等を応答へ含めず、実効プランを付与すること。"""
+        document = MagicMock()
+        document.get = AsyncMock(
+            return_value=_snapshot(
+                {
+                    "id": "user-1",
+                    "display_name": "テスト",
+                    "line_user_id": "U_test123",
+                    "email": None,
+                    "subscription_plan": "basic",
+                    "subscription_status": "active",
+                    "stripe_customer_id": "cus_secret",
+                    "admin_invite_id": "inv_x",
+                    "registration_source": "admin_invite",
+                    "role": "user",
+                    "plan_override": {"plan": "service", "source": "admin"},
+                    "is_active": True,
+                    "created_at": "2026-08-31T00:00:00+00:00",
+                    "updated_at": "2026-10-05T00:00:00+00:00",
+                }
+            )
+        )
+        collection = MagicMock()
+        collection.document.return_value = document
+        client = MagicMock()
+        client.collection.return_value = collection
+        repository = FirestoreAdminUserRepository(client=client)
+
+        detail = await repository.get_user_detail("user-1")
+
+        assert detail is not None
+        assert detail["id"] == "user-1"
+        assert detail["display_name"] == "テスト"
+        assert detail["effective_plan"] == "pro"
+        assert "stripe_customer_id" not in detail
+        assert "admin_invite_id" not in detail
+        assert "registration_source" not in detail
+        assert "role" not in detail
+
+
 class TestFeedbackRepository:
     """feedback / feedback_pendingのテスト。"""
 

@@ -218,7 +218,7 @@ async def get_user(
     user_id: str,
     session: Dict[str, Any] = Depends(_require_admin_session),
 ) -> Dict[str, Any]:
-    """ユーザー詳細（PII含む・監査記録付き）を返す。"""
+    """ユーザー詳細（表示用フィールドへ絞り込み・監査記録付き）を返す。"""
     detail = await _admin_service().get_user_detail(
         user_id=user_id,
         actor=session["sub"],
