@@ -547,8 +547,6 @@ function renderCoupons(host) {
     bonusFields.style.display = kindSelect.value === 'bonus_messages' ? '' : 'none';
   });
   var form = el('form', {}, [
-    el('h3', { text: 'クーポン発行' }, []),
-    el('p', { class: 'sub', text: 'コード平文は発行時のみ表示されます。' }, []),
     el('div', { class: 'toolbar' }, [el('div', { class: 'field' }, [el('label', { text: '種別' }, []), kindSelect])]),
     grantFields,
     bonusFields,

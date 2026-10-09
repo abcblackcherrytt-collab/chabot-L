@@ -6,7 +6,7 @@
 
 import os
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 
@@ -17,6 +17,17 @@ DAILY_MESSAGE_LIMITS: Dict[str, int] = {
     "basic": 100,
     "pro": 500,
 }
+
+
+def _parse_price_ids(raw: Optional[str]) -> List[str]:
+    """カンマ区切りのPrice ID環境変数をパースする。
+
+    値上げ時に旧Priceで契約中の既存利用者（グランドファザーリング）の
+    プラン判定のためだけに使われる。空・未設定なら空リスト。
+    """
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 # プラン定義
@@ -31,6 +42,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
     "basic": {
         "name": "ベーシックプラン",
         "price_id": os.getenv("STRIPE_BASIC_PRICE_ID"),
+        "legacy_price_ids": _parse_price_ids(os.getenv("STRIPE_BASIC_LEGACY_PRICE_IDS")),
         "monthly_limit": DAILY_MESSAGE_LIMITS["basic"],  # API互換用。実際の単位は1日
         "corpus_id": None,  # 設定から取得
         "stripe_plan_id": "basic",
@@ -38,6 +50,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
     "pro": {
         "name": "プロプラン",
         "price_id": os.getenv("STRIPE_PRO_PRICE_ID"),
+        "legacy_price_ids": _parse_price_ids(os.getenv("STRIPE_PRO_LEGACY_PRICE_IDS")),
         "monthly_limit": DAILY_MESSAGE_LIMITS["pro"],  # API互換用。実際の単位は1日
         "corpus_id": None,  # 設定から取得
         "stripe_plan_id": "pro",
@@ -125,6 +138,9 @@ def get_plan_from_price_id(price_id: str) -> str:
     """
     Stripe価格IDからプラン名を取得
 
+    現行のPrice IDに加え、legacy_price_ids（値上げ前の旧Price）も判定対象に含む。
+    Checkout新規作成は引き続き現行price_idのみを使用し、旧Priceでの新規契約は不可。
+
     Args:
         price_id: Stripe価格ID
 
@@ -135,7 +151,8 @@ def get_plan_from_price_id(price_id: str) -> str:
         ValueError: 不正な価格IDの場合
     """
     for plan_name, plan_config in PLANS.items():
-        if plan_config["price_id"] == price_id:
+        known_ids = [plan_config.get("price_id"), *(plan_config.get("legacy_price_ids") or [])]
+        if price_id in known_ids:
             return plan_name
 
     # マッチしない場合はエラー
