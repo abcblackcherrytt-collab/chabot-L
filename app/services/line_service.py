@@ -23,6 +23,9 @@ from app.repositories.base_user_repository import BaseUserRepository
 logger = logging.getLogger(__name__)
 
 
+RAG_SERVICE_ATTR = "_shared_rag_service"
+
+
 FEEDBACK_QUICK_REPLY = [
     {
         "type": "action",
@@ -62,6 +65,27 @@ class LineService:
             base_url=settings.line_api_base_url,
         )
         logger.info("LINE service initialized")
+
+    def _get_rag_service(self):
+        """入力ゲート判定用にRAGサービスを遅延生成して再利用する。"""
+        service = getattr(self, RAG_SERVICE_ATTR, None)
+        if service is None:
+            from app.services.rag_service import RAGService
+
+            service = RAGService()
+            setattr(self, RAG_SERVICE_ATTR, service)
+        return service
+
+    async def _classify_message_kind(self, text: str) -> str:
+        """入力が肩リハの質問か、挨拶・お礼か、対象外かをJevで判定する。"""
+        try:
+            return await self._get_rag_service().classify_message_kind(text)
+        except Exception as exc:
+            logger.warning(
+                "Message kind gate fell back to question: error_type=%s",
+                type(exc).__name__,
+            )
+            return "in_scope_question"
 
     def _get_user_repository(
         self,
@@ -334,6 +358,35 @@ class LineService:
                     )
             await self._send_reply(reply_token, feedback_result["reply"])
             return {"status": "processed", "action": "feedback_saved"}
+
+        # Jev入力ゲート: 挨拶・お礼・対象外質問は日次回数を消費せず、
+        # RAG検索・回答生成・会話保存を行わず定型応答で返す。
+        # 判定はクーポン・要望の専用処理より後、プラン解決と回数加算の前に行う。
+        message_kind_started = time.perf_counter()
+        message_kind = await self._classify_message_kind(user_message)
+        logger.info(
+            "Message kind gate: kind=%s latency_ms=%.1f",
+            message_kind,
+            (time.perf_counter() - message_kind_started) * 1000,
+        )
+        if message_kind == "social_message":
+            from app.clients.vertex_ai import SOCIAL_MESSAGE_REPLY_TEXT
+
+            await self._send_reply(reply_token, SOCIAL_MESSAGE_REPLY_TEXT)
+            return {
+                "status": "processed",
+                "action": "social_message_reply",
+                "message_kind": message_kind,
+            }
+        if message_kind == "out_of_scope_question":
+            from app.clients.vertex_ai import OUT_OF_SCOPE_REPLY_TEXT
+
+            await self._send_reply(reply_token, OUT_OF_SCOPE_REPLY_TEXT)
+            return {
+                "status": "processed",
+                "action": "out_of_scope_reply",
+                "message_kind": message_kind,
+            }
 
         # プラン解決優先度: 管理者override > Stripe契約 > free
         plan = self._resolve_effective_plan(user_dict)

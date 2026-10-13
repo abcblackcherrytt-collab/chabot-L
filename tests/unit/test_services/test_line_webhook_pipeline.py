@@ -117,6 +117,33 @@ async def test_limit_reached_does_not_call_rag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_social_message_reply_does_not_call_rag() -> None:
+    """入力ゲートの定型応答後はRAG・会話保存へ進まないこと。"""
+    line_service = MagicMock()
+    line_service.process_webhook_event = AsyncMock(
+        return_value={
+            "status": "processed",
+            "action": "social_message_reply",
+            "message_kind": "social_message",
+        }
+    )
+    line_service._send_reply = AsyncMock()
+    rag_service = MagicMock()
+    rag_service.query = AsyncMock()
+    conversation_repository = _conversation_repository()
+
+    await _process_line_events(
+        [{"type": "message"}],
+        line_service=line_service,
+        rag_service=rag_service,
+        conversation_repository=conversation_repository,
+    )
+
+    rag_service.query.assert_not_awaited()
+    conversation_repository.save_conversation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_uses_real_rag_service_interface() -> None:
     """Webhookと実RAGServiceの引数契約が一致すること。"""
     line_service = MagicMock()

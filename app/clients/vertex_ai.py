@@ -153,6 +153,52 @@ DEFAULT_QUERY_CLASSIFICATION = {
     "available": False,
 }
 
+# 入力ゲート判定。回答生成の前に、入力が肩リハの質問か、挨拶・お礼か、
+# 対象外の質問かをJevの1つのChoice判定で区別する。
+MESSAGE_KINDS = {
+    "in_scope_question": (
+        "肩領域のリハビリテーション（解剖・評価・所見の解釈・介入・術後・"
+        "根拠・行動指針）に関する質問または相談。挨拶の後に質問文が含まれる"
+        "場合は、質問を優先してこれを選ぶ。"
+    ),
+    "social_message": (
+        "挨拶・お礼・了解・感謝だけで、回答すべき臨床質問を含まない入力。"
+        "「お願いします」「よろしくお願いします」だけの文もこれに含める。"
+    ),
+    "out_of_scope_question": (
+        "肩領域のリハビリテーション以外の話題（天気、趣味、他領域の医療など）"
+        "を問う質問。"
+    ),
+}
+
+# Jev未設定・障害時でも確実に定型応答できるよう、明確な挨拶・お礼のみ
+# 完全一致でローカル判定する。部分一致は誤検知を避けるため使わない。
+LOCAL_SOCIAL_TEXTS = frozenset(
+    {
+        "こんにちは",
+        "おはようございます",
+        "こんばんは",
+        "ありがとう",
+        "ありがとうございます",
+        "助かります",
+        "お世話になっております",
+        "よろしくお願いします",
+        "お願いします",
+        "了解しました",
+        "わかりました",
+    }
+)
+
+SOCIAL_MESSAGE_REPLY_TEXT = (
+    "挨拶やお礼は省いていただいて大丈夫です。"
+    "このBotは肩のリハビリテーションに関する評価・解釈・介入を支援する"
+    "専門Botです。知りたいことをそのまま入力してください。"
+)
+
+OUT_OF_SCOPE_REPLY_TEXT = (
+    "このBotは肩領域のリハビリテーションに関する質問に対応しています。"
+)
+
 
 class VertexAIError(BaseClientError):
     """
@@ -607,6 +653,61 @@ class VertexAIClient(BaseClient):
                 type(exc).__name__,
             )
             return DEFAULT_QUERY_CLASSIFICATION.copy()
+
+    def _build_message_kind_questions(self) -> Dict[str, Dict[str, Any]]:
+        """入力ゲート用のJev判定（message_kindのChoice 1件）を定義する。"""
+        return {
+            "message_kind": {
+                "type": "choice",
+                "instructions": (
+                    "このメッセージの種類を1つ選んでください。入力先は肩領域の"
+                    "リハビリテーション専門職向けBotです。挨拶やお礼に質問文が"
+                    "含まれる場合は、質問を優先してください。"
+                ),
+                "criteria": MESSAGE_KINDS,
+            },
+        }
+
+    async def classify_message_kind(self, text: str) -> str:
+        """
+        回答生成の前に、入力が質問か挨拶・お礼か対象外かを判定します。
+
+        判定に失敗した場合は質問として扱い、従来どおりのRAG回答へ進めます。
+        Botを停止させないため、Jev未設定・タイムアウト・応答不正のいずれでも
+        in_scope_question を返します。
+        """
+        normalized = text.strip()
+        if normalized in LOCAL_SOCIAL_TEXTS:
+            return "social_message"
+        try:
+            if not self.jev_client.is_configured:
+                return "in_scope_question"
+            response = await self.jev_client.decide(
+                normalized,
+                self._build_message_kind_questions(),
+            )
+            answers = response.get("answers")
+            kind_answer = (
+                answers.get("message_kind", {}) if isinstance(answers, dict) else {}
+            )
+            if not isinstance(kind_answer, dict):
+                return "in_scope_question"
+            choice = str(kind_answer.get("choice") or "").strip().lower()
+            confidence = kind_answer.get("confidence", 0.0)
+            if choice not in MESSAGE_KINDS or not isinstance(
+                confidence,
+                (int, float),
+            ) or confidence < settings.jev_message_kind_confidence_threshold:
+                return "in_scope_question"
+            logger.info("Message kind classified: kind=%s", choice)
+            return choice
+        except Exception as exc:
+            logger.warning(
+                "Message kind classification failed; continuing as question: "
+                "error_type=%s",
+                type(exc).__name__,
+            )
+            return "in_scope_question"
 
     def _get_generation_client(self) -> genai.Client:
         """RAG回答生成用クライアントを遅延生成し、後続リクエストで再利用する。"""

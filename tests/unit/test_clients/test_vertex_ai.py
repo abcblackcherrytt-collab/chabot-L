@@ -183,6 +183,110 @@ class TestVertexAIClient:
             assert "knowledge/evidence）専用の回答方針" not in instruction
             assert "50〜250字程度" not in instruction
 
+    def _build_gate_client(self):
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+        client.jev_client = MagicMock()
+        client.jev_client.is_configured = True
+        return client
+
+    @pytest.mark.asyncio
+    async def test_local_social_text_short_circuits_without_jev(self):
+        """明確な挨拶はJevを呼ばずにsocial_messageへ判定すること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock()
+
+        kind = await client.classify_message_kind("こんにちは")
+
+        assert kind == "social_message"
+        client.jev_client.decide.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_jev_social_choice_returns_social_message(self):
+        """Jevがsocial_messageを高信頼で返した場合は定型応答対象にすること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "message_kind": {"choice": "social_message", "confidence": 0.95}
+                }
+            }
+        )
+
+        assert await client.classify_message_kind("いつもありがとう") == "social_message"
+
+    @pytest.mark.asyncio
+    async def test_jev_out_of_scope_choice_is_respected(self):
+        """Jevが対象外質問を高信頼で返した場合は対象外扱いにすること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "message_kind": {
+                        "choice": "out_of_scope_question",
+                        "confidence": 0.93,
+                    }
+                }
+            }
+        )
+
+        assert (
+            await client.classify_message_kind("明日の天気を教えて")
+            == "out_of_scope_question"
+        )
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_choice_falls_back_to_question(self):
+        """信頼度がしきい値未満の判定は質問として扱うこと。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "message_kind": {"choice": "social_message", "confidence": 0.5}
+                }
+            }
+        )
+
+        assert await client.classify_message_kind("痛みがあります") == "in_scope_question"
+
+    @pytest.mark.asyncio
+    async def test_jev_unconfigured_falls_back_to_question(self):
+        """Jev未設定時は質問として従来どおり処理すること。"""
+        client = self._build_gate_client()
+        client.jev_client.is_configured = False
+
+        assert (
+            await client.classify_message_kind("GHの評価は？") == "in_scope_question"
+        )
+
+    @pytest.mark.asyncio
+    async def test_jev_failure_falls_back_to_question(self):
+        """Jev障害時は質問としてBot処理を継続すること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(side_effect=RuntimeError("timeout"))
+
+        assert (
+            await client.classify_message_kind("棘上筋の作用は？")
+            == "in_scope_question"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_choice_falls_back_to_question(self):
+        """Jevの未知の判定値は質問として扱うこと。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "message_kind": {"choice": "unknown_kind", "confidence": 0.99}
+                }
+            }
+        )
+
+        assert (
+            await client.classify_message_kind("腱板断裂の評価は？")
+            == "in_scope_question"
+        )
+
     def test_default_corpus_is_free_plan_secret(self):
         """コーパス未指定時はfree用GOOGLE_CORPUS_IDを使用する。"""
         with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):

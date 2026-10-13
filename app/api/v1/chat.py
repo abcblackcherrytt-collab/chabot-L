@@ -152,6 +152,34 @@ async def send_message(
     # アプリケーション状態からサービスを取得（lifespanで初期化済み）
     rag_service = http_request.app.state.rag_service
 
+    # LINE経路と同じ入力ゲートを適用する。挨拶・お礼・対象外質問は
+    # 日次回数を消費せず、RAG検索・回答生成・会話保存を行わない。
+    try:
+        message_kind = await rag_service.classify_message_kind(request.message)
+    except Exception as exc:
+        logger.warning(
+            "Message kind gate fell back to question: error_type=%s",
+            type(exc).__name__,
+        )
+        message_kind = "in_scope_question"
+    if message_kind != "in_scope_question":
+        from app.clients.vertex_ai import (
+            OUT_OF_SCOPE_REPLY_TEXT,
+            SOCIAL_MESSAGE_REPLY_TEXT,
+        )
+
+        answer = (
+            SOCIAL_MESSAGE_REPLY_TEXT
+            if message_kind == "social_message"
+            else OUT_OF_SCOPE_REPLY_TEXT
+        )
+        return ChatResponse(
+            answer=answer,
+            user_id=str(current_user.id),
+            denied=False,
+            reason=message_kind,
+        )
+
     # Phase 2: ユーザーのプラン → RAG 権限（corpus_id/model_name）解決
     plan = getattr(current_user, "subscription_plan", None) or "free"
 

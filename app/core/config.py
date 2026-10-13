@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     jev_timeout_seconds: float = 5.0
     jev_choice_confidence_threshold: float = 0.45
     jev_aspect_probability_threshold: float = 0.60
+    # 入力ゲート（挨拶・お礼・対象外を質問以外と判定する）の信頼度しきい値。
+    # 質問を誤って除外しないよう、質問タイプ判定より高い値を既定とする。
+    jev_message_kind_confidence_threshold: float = 0.80
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]

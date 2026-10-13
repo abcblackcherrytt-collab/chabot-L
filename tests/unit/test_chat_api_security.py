@@ -134,6 +134,7 @@ async def test_public_chat_never_returns_contexts(monkeypatch) -> None:
             "denied": False,
         }
     )
+    rag_service.classify_message_kind = AsyncMock(return_value="in_scope_question")
     background_tasks = MagicMock()
 
     response = await chat_api.send_message(

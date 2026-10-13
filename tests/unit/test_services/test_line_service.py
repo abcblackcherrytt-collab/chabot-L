@@ -102,17 +102,99 @@ class TestProcessWebhookEvent:
             "type": "message",
             "replyToken": "test_reply_token",
             "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "棘上筋の作用は？"},
+        }
+
+        result = await line_service.process_webhook_event(event)
+
+        assert result["status"] == "processed"
+        assert result["message"] == "棘上筋の作用は？"
+        assert result["line_user_id"] == "U_test123"
+        user_repo = line_service._get_user_repository()
+        user_repo.is_active.assert_not_awaited()
+        user_repo.get_subscription_plan.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_social_message_replies_fixed_text_without_usage(
+        self,
+        line_service,
+    ):
+        """挨拶・お礼は定型応答で返し、日次回数を消費しないこと。"""
+        line_service._classify_message_kind = AsyncMock(return_value="social_message")
+        line_service._send_reply = AsyncMock()
+        event = {
+            "type": "message",
+            "replyToken": "test_reply_token",
+            "source": {"userId": "U_test123"},
             "message": {"type": "text", "text": "こんにちは"},
         }
 
         result = await line_service.process_webhook_event(event)
 
         assert result["status"] == "processed"
-        assert result["message"] == "こんにちは"
-        assert result["line_user_id"] == "U_test123"
-        user_repo = line_service._get_user_repository()
-        user_repo.is_active.assert_not_awaited()
-        user_repo.get_subscription_plan.assert_not_awaited()
+        assert result["action"] == "social_message_reply"
+        assert "message" not in result
+        assert "reply_token" not in result
+        line_service._send_reply.assert_awaited_once()
+        from app.clients.vertex_ai import SOCIAL_MESSAGE_REPLY_TEXT
+
+        assert (
+            line_service._send_reply.await_args.args[1]
+            == SOCIAL_MESSAGE_REPLY_TEXT
+        )
+        line_service._test_usage_repo.increment_with_limit_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_out_of_scope_message_replies_scope_guide(
+        self,
+        line_service,
+    ):
+        """対象外質問は対応範囲を案内し、日次回数を消費しないこと。"""
+        line_service._classify_message_kind = AsyncMock(
+            return_value="out_of_scope_question"
+        )
+        line_service._send_reply = AsyncMock()
+        event = {
+            "type": "message",
+            "replyToken": "test_reply_token",
+            "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "今日の天気は？"},
+        }
+
+        result = await line_service.process_webhook_event(event)
+
+        assert result["action"] == "out_of_scope_reply"
+        from app.clients.vertex_ai import OUT_OF_SCOPE_REPLY_TEXT
+
+        assert (
+            line_service._send_reply.await_args.args[1]
+            == OUT_OF_SCOPE_REPLY_TEXT
+        )
+        line_service._test_usage_repo.increment_with_limit_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_gate_failure_falls_back_to_question_flow(
+        self,
+        line_service,
+    ):
+        """ゲート判定が失敗した場合は従来どおり質問として処理すること。"""
+        rag_service_stub = MagicMock()
+        rag_service_stub.classify_message_kind = AsyncMock(
+            side_effect=RuntimeError("gate down")
+        )
+        line_service._get_rag_service = MagicMock(return_value=rag_service_stub)
+        event = {
+            "type": "message",
+            "replyToken": "test_reply_token",
+            "source": {"userId": "U_test123"},
+            "message": {"type": "text", "text": "棘上筋の作用は？"},
+        }
+
+        result = await line_service.process_webhook_event(event)
+
+        assert result["status"] == "processed"
+        assert result["message"] == "棘上筋の作用は？"
+        line_service._test_usage_repo.increment_with_limit_check.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_message_log_does_not_include_line_user_id(

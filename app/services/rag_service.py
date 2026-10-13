@@ -108,6 +108,16 @@ class RAGService:
             )
             raise
 
+    async def classify_message_kind(self, text: str) -> str:
+        """
+        入力ゲート用にメッセージ種別を判定します。
+
+        Returns:
+            in_scope_question / social_message / out_of_scope_question のいずれか。
+            Jev未設定・障害時は in_scope_question（従来どおり質問処理）を返す。
+        """
+        return await self.vertex_ai_client.classify_message_kind(text)
+
     async def batch_query(
         self,
         queries: List[str],
