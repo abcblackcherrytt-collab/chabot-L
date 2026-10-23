@@ -3,7 +3,7 @@
 環境変数とアプリケーション設定を管理します。
 """
 
-from typing import List
+from typing import Dict, List
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # LINE Bot利用者が登録導線で頻繁に再ログインしないためのローリング期間。
     jwt_refresh_token_expire_days: int = 30
     jwt_key_rotation_days: int = 90
+    # セッション検証用の既定issuer/audience（JWTへ埋め込み、検証時に一致確認）。
+    jwt_issuer: str = "chabot"
+    jwt_audience: str = "chabot"
+    # Refresh Tokenの残存期間がこの日数未満のときだけローテーションする。
+    # 通常アクセスは検証のみでトークンを消費せず、並行アクセスでの
+    # 更新競合と不必要な再ログインを防ぐ。
+    jwt_refresh_rotate_days: int = 15
 
     # LINE Messaging API設定
     line_channel_secret: str = ""
@@ -120,6 +127,13 @@ class Settings(BaseSettings):
     # 入力ゲート（挨拶・お礼・対象外を質問以外と判定する）の信頼度しきい値。
     # 質問を誤って除外しないよう、質問タイプ判定より高い値を既定とする。
     jev_message_kind_confidence_threshold: float = 0.80
+    # カテゴリ分類（Basic/Proでカテゴリ別RAGコーパスを選択する）の信頼度しきい値。
+    # 低信頼・分類不能はNoneへフォールバックし、プラン既定コーパスで検索する。
+    jev_category_confidence_threshold: float = 0.60
+    # Basic/Pro用カテゴリ別コーパスID。"category:corpus_id" をカンマ区切りで指定する。
+    # 例: "shoulder:1495705249682292736,knee:1172699519767281664"
+    # カテゴリ名は rag_source/source のディレクトリ名と一致させる。
+    google_corpus_ids_by_category: str = ""
 
     # CORS設定（カンマ区切りの文字列またはリスト）
     cors_allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
@@ -153,6 +167,20 @@ class Settings(BaseSettings):
         if isinstance(self.cors_allowed_origins, str):
             return [origin.strip() for origin in self.cors_allowed_origins.split(";") if origin.strip()]
         return self.cors_allowed_origins
+
+    @property
+    def corpus_ids_by_category_map(self) -> Dict[str, str]:
+        """カテゴリ別コーパスIDのマッピングを返します"""
+        mapping: Dict[str, str] = {}
+        for item in self.google_corpus_ids_by_category.split(","):
+            if ":" not in item:
+                continue
+            category, corpus_id = item.split(":", 1)
+            category = category.strip().lower()
+            corpus_id = corpus_id.strip()
+            if category and corpus_id:
+                mapping[category] = corpus_id
+        return mapping
 
     @property
     def jwt_secret_keys_list(self) -> List[str]:

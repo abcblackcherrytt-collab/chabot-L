@@ -15,7 +15,6 @@ async def test_admin_shell_contains_all_sections_and_external_assets() -> None:
 
     assert response.status_code == 200
     for label in (
-        "集計",
         "ユーザー",
         "コーパス",
         "クーポン",
@@ -25,6 +24,7 @@ async def test_admin_shell_contains_all_sections_and_external_assets() -> None:
         "監査ログ",
     ):
         assert label in response.text
+    assert "data-section='overview'" not in response.text
     assert "/admin.css" in response.text
     assert "/admin.js" in response.text
     assert "<style>" not in response.text
@@ -49,6 +49,9 @@ async def test_admin_assets_are_served_same_origin() -> None:
     assert js.headers["content-type"].startswith("text/javascript")
     assert "/api/v1/admin" in js.text
     assert "refreshSection" in js.text
+    assert "/api/v1/admin/stats" not in js.text
+    assert "検索を実行したときだけFirestoreを参照します" in js.text
+    assert "search_field=" in js.text
     # 保存型XSS対策と外部originへの通信なしを固定する（同一originのfetchのみ許可）。
     assert "innerHTML" not in js.text
     assert "http://" not in js.text

@@ -120,7 +120,7 @@ async def test_authenticated_checkout_link_redirects_to_stripe(
         lambda plan: {"price_id": "price_later"},
     )
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(
+    auth_service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "new-access",
             "refresh_token": "new-refresh",
@@ -156,7 +156,7 @@ async def test_authenticated_checkout_link_redirects_to_stripe(
 
     assert response.status_code == 303
     assert response.headers["location"].startswith("https://checkout.stripe.com/")
-    auth_service.refresh.assert_awaited_once_with("saved-refresh")
+    auth_service.authenticate_refresh.assert_awaited_once_with("saved-refresh")
     checkout_service.create_checkout_session.assert_awaited_once_with(
         user_id="real-user-id",
         plan="pro",
@@ -176,7 +176,7 @@ async def test_authenticated_checkout_link_shows_preparing_page_on_stripe_error(
         lambda plan: {"price_id": "price_later"},
     )
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(
+    auth_service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "new-access",
             "refresh_token": "new-refresh",
@@ -249,7 +249,7 @@ async def test_legacy_checkout_api_uses_authenticated_user(
     """旧POST Checkout APIも実認証ユーザーIDを使用すること。"""
     monkeypatch.setattr(subscription_api, "validate_plan_availability", lambda plan: True)
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(return_value={
+    auth_service.authenticate_refresh = AsyncMock(return_value={
         "access_token": "new-access",
         "refresh_token": "new-refresh",
     })
@@ -309,7 +309,7 @@ def _plan_selection_auth_mocks(
 ) -> None:
     """選択画面の現在プラン解決に必要な認証・ユーザー取得をモックする。"""
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(
+    auth_service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "new-access",
             "refresh_token": "new-refresh",

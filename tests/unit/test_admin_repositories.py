@@ -218,8 +218,8 @@ class TestAdminUserRepository:
         assert summary["effective_plan"] == "pro"
 
     @pytest.mark.asyncio
-    async def test_list_users_filters_by_effective_plan(self) -> None:
-        """一覧のプラン絞り込みがsubscription_planではなく実効プランを使うこと。"""
+    async def test_search_users_filters_by_effective_plan(self) -> None:
+        """検索結果のプラン絞り込みが実効プランを使うこと。"""
         snapshots = [
             _snapshot(
                 {
@@ -240,6 +240,8 @@ class TestAdminUserRepository:
             ),
         ]
         query = MagicMock()
+        query.start_at.return_value = query
+        query.end_at.return_value = query
         query.limit.return_value.get = AsyncMock(return_value=snapshots)
         collection = MagicMock()
         collection.order_by.return_value = query
@@ -250,10 +252,59 @@ class TestAdminUserRepository:
         client.collection.return_value = collection
         repository = FirestoreAdminUserRepository(client=client)
 
-        result = await repository.list_users(plan="pro")
+        result = await repository.list_users(q="service", plan="pro")
 
         assert result["count"] == 1
         assert result["users"][0]["effective_plan"] == "pro"
+        query.limit.assert_called_once_with(20)
+
+    @pytest.mark.asyncio
+    async def test_search_by_user_id_reads_one_document(self) -> None:
+        """内部ID検索はusers全体を走査せず、対象文書だけを読むこと。"""
+        user_document = MagicMock()
+        user_document.get = AsyncMock(
+            return_value=_snapshot(
+                {
+                    "id": "user-1",
+                    "display_name": "テスト",
+                    "subscription_plan": "free",
+                    "is_active": True,
+                }
+            )
+        )
+        usage_document = MagicMock()
+        usage_document.get = AsyncMock(return_value=_snapshot({}, exists=False))
+        users_collection = MagicMock()
+        users_collection.document.side_effect = lambda document_id: (
+            user_document if document_id == "user-1" else usage_document
+        )
+        usage_collection = MagicMock()
+        usage_collection.document.return_value = usage_document
+        client = MagicMock()
+        client.collection.side_effect = lambda name: (
+            users_collection if name == "users" else usage_collection
+        )
+        repository = FirestoreAdminUserRepository(client=client)
+
+        result = await repository.list_users(
+            q="user-1",
+            search_field="user_id",
+        )
+
+        assert result["count"] == 1
+        users_collection.document.assert_called_once_with("user-1")
+        users_collection.order_by.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_blank_query_without_firestore_read(self) -> None:
+        """空検索ではFirestoreへアクセスしないこと。"""
+        client = MagicMock()
+        repository = FirestoreAdminUserRepository(client=client)
+
+        with pytest.raises(ValueError, match="search_query_required"):
+            await repository.list_users(q="  ")
+
+        client.collection.assert_not_called()
 
 
 class TestAdminUserRepository:
@@ -341,8 +392,8 @@ class TestConversationQuestionExtraction:
     """conversationsの質問抽出テスト。"""
 
     @pytest.mark.asyncio
-    async def test_get_question_returns_question_only(self) -> None:
-        """質問本文とメタデータだけを返し、回答本文を含めないこと。"""
+    async def test_get_question_returns_allowed_fields_only(self) -> None:
+        """質問・回答・日付だけを返し、利用者情報を含めないこと。"""
         document = MagicMock()
         document.get = AsyncMock(
             return_value=_snapshot(
@@ -351,8 +402,7 @@ class TestConversationQuestionExtraction:
                     "answer_text": "botの回答",
                     "question_type": "assessment",
                     "plan": "free",
-                    "denied": False,
-                    "pii_suspected": False,
+                    "user_id": "user-1",
                     "created_at": "2026-10-02T10:00:00+09:00",
                 }
             )
@@ -367,7 +417,11 @@ class TestConversationQuestionExtraction:
 
         assert question is not None
         assert question["question_text"].startswith("2nd肢位")
-        assert "answer_text" not in question
+        assert question["answer_text"] == "botの回答"
+        assert question["date"] == "2026-10-02"
+        assert "user_id" not in question
+        assert "plan" not in question
+        assert "question_type" not in question
 
     @pytest.mark.asyncio
     async def test_get_question_returns_none_for_missing(self) -> None:
@@ -387,13 +441,12 @@ class TestRepresentativeAnswerRepository:
     """representative_answersの読み書きテスト。"""
 
     @pytest.mark.asyncio
-    async def test_upsert_creates_when_absent(self) -> None:
-        """既存がない場合は新規作成すること。"""
+    async def test_upsert_uses_conversation_key_and_three_fields(self) -> None:
+        """会話キー文書へ質問・回答・日付のみを保存すること。"""
         collection = MagicMock()
-        collection.where.return_value.limit.return_value.get = AsyncMock(return_value=[])
-        created_ref = MagicMock()
-        created_ref.id = "rep-1"
-        collection.add = AsyncMock(return_value=(MagicMock(), created_ref))
+        document_ref = MagicMock()
+        document_ref.set = AsyncMock()
+        collection.document.return_value = document_ref
         client = MagicMock()
         client.collection.return_value = collection
         repository = FirestoreRepresentativeAnswerRepository(client=client)
@@ -401,40 +454,16 @@ class TestRepresentativeAnswerRepository:
         saved = await repository.upsert(
             conversation_id="conv-1",
             question_text="質問",
-            question_type="assessment",
-            plan="free",
             representative_answer="代表回答",
-            updated_by="admin",
+            date="2026-10-02",
         )
 
-        assert saved["id"] == "rep-1"
-        assert saved["conversation_id"] == "conv-1"
+        collection.document.assert_called_once_with("conv-1")
+        assert saved["id"] == "conv-1"
         assert saved["representative_answer"] == "代表回答"
-        collection.add.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_upsert_updates_existing_document(self) -> None:
-        """既存がある場合は同じドキュメントを更新すること。"""
-        existing = MagicMock()
-        existing.id = "rep-1"
-        existing.reference.update = AsyncMock()
-        collection = MagicMock()
-        collection.where.return_value.limit.return_value.get = AsyncMock(return_value=[existing])
-        collection.add = AsyncMock()
-        client = MagicMock()
-        client.collection.return_value = collection
-        repository = FirestoreRepresentativeAnswerRepository(client=client)
-
-        saved = await repository.upsert(
-            conversation_id="conv-1",
-            question_text="質問",
-            question_type=None,
-            plan=None,
-            representative_answer="更新後",
-            updated_by="admin",
-        )
-
-        assert saved["id"] == "rep-1"
-        assert saved["representative_answer"] == "更新後"
-        existing.reference.update.assert_awaited_once()
-        collection.add.assert_not_awaited()
+        document = document_ref.set.call_args.args[0]
+        assert set(document.keys()) == {
+            "question_text",
+            "representative_answer",
+            "date",
+        }

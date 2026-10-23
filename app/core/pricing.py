@@ -67,6 +67,34 @@ def get_daily_message_limit(plan: str) -> int:
     return DAILY_MESSAGE_LIMITS[plan]
 
 
+PLACEHOLDER_CORPUS_IDS = {
+    "",
+    "your-corpus-id",
+    "your-free-corpus-id",
+    "your-paid-corpus-id",
+}
+
+
+def normalize_corpus_id(corpus_id: Any) -> Optional[str]:
+    """RAG権限のコーパスIDを公開経路向けに検証する。
+
+    未設定・空・プレースホルダー・非文字列はすべてNoneへ正規化し、
+    呼び出し側はNoneのとき検索を実行しない（fail closed）。
+
+    Args:
+        corpus_id: RAG権限レコード等から取得したコーパスID
+
+    Returns:
+        利用可能なコーパスID、利用できない場合はNone
+    """
+    if not isinstance(corpus_id, str):
+        return None
+    value = corpus_id.strip()
+    if value in PLACEHOLDER_CORPUS_IDS:
+        return None
+    return value
+
+
 def get_plan_config(plan: str) -> Dict[str, Any]:
     """
     プラン設定を取得

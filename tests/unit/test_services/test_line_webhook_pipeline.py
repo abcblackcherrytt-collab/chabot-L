@@ -8,24 +8,10 @@ from app.api.v1.webhooks.line import _process_line_events
 from app.services.rag_service import RAGService
 
 
-@pytest.fixture(autouse=True)
-def _mock_admin_stats(monkeypatch) -> None:
-    """管理統計リポジトリをモックし、実Firestoreへ接続しないようにする。"""
-    stats_repository = MagicMock()
-    stats_repository.increment_message_count = AsyncMock()
-    stats_repository.increment_denied_by_limit = AsyncMock()
-    stats_repository.record_active_user = AsyncMock()
-    monkeypatch.setattr(
-        "app.repositories.firestore_admin_stats_repository.FirestoreAdminStatsRepository",
-        lambda: stats_repository,
-    )
-
-
 def _conversation_repository() -> MagicMock:
     """会話保存リポジトリのモックを返す。"""
     repository = MagicMock()
     repository.save_conversation = AsyncMock()
-    repository.save_limit_denied = AsyncMock()
     return repository
 
 
@@ -74,14 +60,8 @@ async def test_rag_runs_after_plan_resolution_with_selected_configuration() -> N
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")
     conversation_repository.save_conversation.assert_awaited_once_with(
-        user_id="user-123",
         question_text="肩関節を評価するには？",
         answer_text="回答です",
-        plan="free",
-        denied=False,
-        question_type="evaluation",
-        answer_aspects=["range_of_motion"],
-        reasoning_roles=None,
     )
 
 
@@ -110,10 +90,7 @@ async def test_limit_reached_does_not_call_rag() -> None:
 
     rag_service.query.assert_not_awaited()
     line_service._send_reply.assert_not_awaited()
-    conversation_repository.save_limit_denied.assert_awaited_once_with(
-        user_id="user-123",
-        plan="free",
-    )
+    conversation_repository.save_conversation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -183,14 +160,8 @@ async def test_pipeline_uses_real_rag_service_interface() -> None:
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")
     conversation_repository.save_conversation.assert_awaited_once_with(
-        user_id="user-123",
         question_text="肩関節を評価するには？",
         answer_text="回答です",
-        plan="pro",
-        denied=False,
-        question_type=None,
-        answer_aspects=None,
-        reasoning_roles=None,
     )
 
 

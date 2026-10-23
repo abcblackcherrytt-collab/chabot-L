@@ -59,7 +59,6 @@ function fmtDate(value) {
 }
 
 var sectionTitles = {
-  overview: '集計',
   users: 'ユーザー',
   corpora: 'コーパス',
   coupons: 'クーポン',
@@ -229,67 +228,9 @@ function bootstrapSession() {
   });
 }
 
-/* ---------- 集計 ---------- */
-
-var statsDays = { daily: 1, weekly: 7, monthly: 30 };
-var statsPeriod = 'daily';
-
-function renderOverview(host) {
-  var periodNames = { daily: '日次', weekly: '週次', monthly: '月次' };
-  var segmented = el('div', { class: 'segmented', role: 'group', 'aria-label': '集計期間' }, []);
-  Object.keys(periodNames).forEach(function (key) {
-    segmented.appendChild(el('button', {
-      type: 'button',
-      text: periodNames[key],
-      'aria-pressed': String(statsPeriod === key),
-      onclick: function () { statsPeriod = key; refreshSection(); }
-    }, []));
-  });
-  host.appendChild(el('div', { class: 'card' }, [
-    el('h3', { text: '期間別の指標' }, []),
-    segmented
-  ]));
-  var holder = el('div', {}, []);
-  host.appendChild(holder);
-  loadInto(holder, function () {
-    return apiRequest('GET', '/api/v1/admin/stats?days=' + statsDays[statsPeriod]);
-  }, function (target, data) {
-    var totals = data.totals || {};
-    var metrics = [
-      ['アクティブユーザー数（延べ）', totals.active_user_count || 0, '人'],
-      ['メッセージ数', totals.message_count || 0, '件'],
-      ['上限拒否数', totals.denied_by_limit || 0, '件'],
-      ['クーポン引き換え', totals.coupon_redemptions || 0, '件'],
-      ['要望受付', totals.feedback_count || 0, '件']
-    ];
-    target.appendChild(el('div', { class: 'metric-grid wide' }, metrics.map(function (m) {
-      return el('div', { class: 'metric' }, [
-        el('p', { class: 'label', text: m[0] }, []),
-        el('p', { class: 'value' }, [String(m[1]), el('span', { class: 'unit', text: m[2] }, [])])
-      ]);
-    })));
-    var list = el('ul', { class: 'timeline' }, []);
-    (data.daily || []).slice().reverse().forEach(function (day) {
-      list.appendChild(el('li', {}, [
-        el('div', { class: 'head' }, [
-          el('time', { text: day.date }, []),
-          el('span', { class: 'action', text: 'メッセージ ' + (day.message_count || 0) + '件・アクティブ ' + (day.active_user_count || 0) + '人' }, [])
-        ])
-      ]));
-    });
-    if (!list.childNodes.length) {
-      list.appendChild(el('li', {}, [el('p', { class: 'meta', text: 'まだ統計データがありません。' }, [])]));
-    }
-    target.appendChild(el('div', { class: 'card' }, [
-      el('h3', { text: '日別の内訳' }, []),
-      list
-    ]));
-  });
-}
-
 /* ---------- ユーザー ---------- */
 
-var usersFilter = { q: '', plan: 'all', status: 'all' };
+var usersFilter = { q: '', searchField: 'display_name', plan: 'all', status: 'all', searched: false };
 var selectedUserId = null;
 
 function effectivePlan(user) {
@@ -407,14 +348,14 @@ function renderUsers(host) {
   layout.appendChild(right);
   host.appendChild(layout);
 
-  var search = el('input', { type: 'search', placeholder: '表示名の前方一致' }, []);
+  var search = el('input', { type: 'search', placeholder: '検索値を入力', required: true, maxlength: '100' }, []);
   search.value = usersFilter.q;
-  var searchTimer = null;
-  search.addEventListener('input', function () {
-    usersFilter.q = search.value;
-    window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(refreshSection, 350);
-  });
+  var fieldSelect = el('select', {}, [
+    el('option', { value: 'display_name', text: '表示名（前方一致）' }, []),
+    el('option', { value: 'line_user_id', text: 'LINE user ID（完全一致）' }, []),
+    el('option', { value: 'user_id', text: 'ユーザーID（完全一致）' }, [])
+  ]);
+  fieldSelect.value = usersFilter.searchField;
   var planSelect = el('select', {}, [
     el('option', { value: 'all', text: 'すべてのプラン' }, []),
     el('option', { value: 'free', text: 'free' }, []),
@@ -423,68 +364,98 @@ function renderUsers(host) {
     el('option', { value: 'service', text: 'service' }, [])
   ]);
   planSelect.value = usersFilter.plan;
-  planSelect.addEventListener('change', function () { usersFilter.plan = planSelect.value; refreshSection(); });
   var statusSelect = el('select', {}, [
     el('option', { value: 'all', text: 'すべての状態' }, []),
     el('option', { value: 'active', text: '有効' }, []),
     el('option', { value: 'inactive', text: '無効' }, [])
   ]);
   statusSelect.value = usersFilter.status;
-  statusSelect.addEventListener('change', function () { usersFilter.status = statusSelect.value; refreshSection(); });
-
-  left.appendChild(el('div', { class: 'card' }, [
+  var searchButton = el('button', { class: 'btn btn-primary', type: 'submit', text: '検索' }, []);
+  var resetButton = el('button', { class: 'btn', type: 'button', text: 'クリア' }, []);
+  var searchForm = el('form', {}, [
     el('h3', { text: '登録ユーザー' }, []),
     el('div', { class: 'toolbar' }, [
-      el('div', { class: 'field grow' }, [el('label', { text: '検索' }, []), search]),
+      el('div', { class: 'field' }, [el('label', { text: '検索項目' }, []), fieldSelect]),
+      el('div', { class: 'field grow' }, [el('label', { text: '検索値' }, []), search]),
       el('div', { class: 'field' }, [el('label', { text: 'プラン' }, []), planSelect]),
       el('div', { class: 'field' }, [el('label', { text: '状態' }, []), statusSelect])
-    ])
-  ]));
+    ]),
+    el('p', { class: 'help', text: '検索を実行したときだけFirestoreを参照します。表示は最大20件です。' }, []),
+    el('div', { class: 'btn-row' }, [searchButton, resetButton])
+  ]);
+  searchForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    var query = search.value.trim();
+    if (!query) { toast('検索値を入力してください。'); search.focus(); return; }
+    usersFilter = {
+      q: query,
+      searchField: fieldSelect.value,
+      plan: planSelect.value,
+      status: statusSelect.value,
+      searched: true
+    };
+    selectedUserId = null;
+    refreshSection();
+  });
+  resetButton.addEventListener('click', function () {
+    usersFilter = { q: '', searchField: 'display_name', plan: 'all', status: 'all', searched: false };
+    selectedUserId = null;
+    refreshSection();
+  });
+  left.appendChild(el('div', { class: 'card' }, [searchForm]));
 
   var holder = el('div', {}, []);
   left.appendChild(holder);
-  var params = [];
-  if (usersFilter.q.trim()) { params.push('q=' + encodeURIComponent(usersFilter.q.trim())); }
-  if (usersFilter.plan !== 'all') { params.push('plan=' + usersFilter.plan); }
-  if (usersFilter.status !== 'all') { params.push('status_filter=' + usersFilter.status); }
-  loadInto(holder, function () {
-    return apiRequest('GET', '/api/v1/admin/users' + (params.length ? '?' + params.join('&') : ''));
-  }, function (target, data) {
-    var users = data.users || [];
-    target.appendChild(el('p', { class: 'help', text: users.length + ' 件' }, []));
-    if (!users.length) {
-      target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '条件に一致するユーザーがありません。' }, [])]));
-      return;
-    }
-    var rows = users.map(function (user) {
-      var detailButton = el('button', { class: 'btn btn-small', type: 'button', text: '詳細' }, []);
-      detailButton.addEventListener('click', function () {
-        selectedUserId = user.id;
-        renderUserDetail(right);
-      });
-      return el('tr', {}, [
-        el('td', { text: user.display_name || '(名称未取得)' }, []),
-        el('td', {}, [planBadge(user.effective_plan || effectivePlan(user))]),
-        el('td', {}, [user.is_active ? badge('有効', 'active') : badge('無効', 'inactive')]),
-        el('td', { text: String(user.today_message_count || 0) }, []),
-        el('td', { text: fmtDate(user.created_at) }, []),
-        el('td', {}, [detailButton])
-      ]);
-    });
-    target.appendChild(el('div', { class: 'card table-wrap' }, [
-      el('table', {}, [
-        el('thead', {}, [el('tr', {}, [
-          el('th', { scope: 'col', text: '表示名' }, []),
-          el('th', { scope: 'col', text: 'プラン' }, []),
-          el('th', { scope: 'col', text: '状態' }, []),
-          el('th', { scope: 'col', text: '当日利用' }, []),
-          el('th', { scope: 'col', text: '登録日' }, []),
-          el('th', { scope: 'col', text: '操作' }, [])
-        ])]),
-        el('tbody', {}, rows)
-      ])
+  if (!usersFilter.searched) {
+    holder.appendChild(el('div', { class: 'card' }, [
+      el('p', { class: 'empty', text: '検索項目と検索値を指定して「検索」を実行してください。' }, [])
     ]));
-  });
+  } else {
+    var params = [
+      'q=' + encodeURIComponent(usersFilter.q),
+      'search_field=' + encodeURIComponent(usersFilter.searchField)
+    ];
+    if (usersFilter.plan !== 'all') { params.push('plan=' + usersFilter.plan); }
+    if (usersFilter.status !== 'all') { params.push('status_filter=' + usersFilter.status); }
+    loadInto(holder, function () {
+      return apiRequest('GET', '/api/v1/admin/users?' + params.join('&'));
+    }, function (target, data) {
+      var users = data.users || [];
+      target.appendChild(el('p', { class: 'help', text: users.length + ' 件' }, []));
+      if (!users.length) {
+        target.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: '条件に一致するユーザーがありません。' }, [])]));
+        return;
+      }
+      var rows = users.map(function (user) {
+        var detailButton = el('button', { class: 'btn btn-small', type: 'button', text: '詳細' }, []);
+        detailButton.addEventListener('click', function () {
+          selectedUserId = user.id;
+          renderUserDetail(right);
+        });
+        return el('tr', {}, [
+          el('td', { text: user.display_name || '(名称未取得)' }, []),
+          el('td', {}, [planBadge(user.effective_plan || effectivePlan(user))]),
+          el('td', {}, [user.is_active ? badge('有効', 'active') : badge('無効', 'inactive')]),
+          el('td', { text: String(user.today_message_count || 0) }, []),
+          el('td', { text: fmtDate(user.created_at) }, []),
+          el('td', {}, [detailButton])
+        ]);
+      });
+      target.appendChild(el('div', { class: 'card table-wrap' }, [
+        el('table', {}, [
+          el('thead', {}, [el('tr', {}, [
+            el('th', { scope: 'col', text: '表示名' }, []),
+            el('th', { scope: 'col', text: 'プラン' }, []),
+            el('th', { scope: 'col', text: '状態' }, []),
+            el('th', { scope: 'col', text: '当日利用' }, []),
+            el('th', { scope: 'col', text: '登録日' }, []),
+            el('th', { scope: 'col', text: '操作' }, [])
+          ])]),
+          el('tbody', {}, rows)
+        ])
+      ]));
+    });
+  }
   renderUserDetail(right);
 
   var createError = el('p', { class: 'error-note', role: 'alert' }, []);
@@ -777,7 +748,12 @@ function renderQuestionForm(panel, question, onSaved) {
   });
   panel.appendChild(el('h3', { text: '質問と代表回答' }, []));
   panel.appendChild(questionText);
-  panel.appendChild(el('p', { class: 'sub', text: '主目的 ' + (question.question_type || '—') + ' ・ ' + fmtDate(question.created_at) + (question.pii_suspected ? ' ・ PII検知あり' : '') }, []));
+  panel.appendChild(el('p', { class: 'sub', text: question.date || '—' }, []));
+  if (question.answer_text) {
+    var answerText = el('p', { class: 'code', text: question.answer_text }, []);
+    answerText.style.whiteSpace = 'pre-wrap';
+    panel.appendChild(el('div', { class: 'field' }, [el('label', { text: '回答（利用者へ送信した本文）' }, []), answerText]));
+  }
   panel.appendChild(el('div', { class: 'field' }, [el('label', { text: '代表回答（あなたの回答を入力）' }, []), textarea]));
   panel.appendChild(el('div', { class: 'btn-row' }, [save]));
   panel.appendChild(error);
@@ -821,9 +797,8 @@ function renderConversations(host) {
       }
       var rows = items.map(function (item) {
         return el('tr', {}, [
-          el('td', { text: fmtDate(item.updated_at) }, []),
+          el('td', { text: item.date || '—' }, []),
           el('td', { text: (item.question_text || '').slice(0, 40) }, []),
-          el('td', { text: item.question_type || '—' }, []),
           el('td', { text: (item.representative_answer || '').slice(0, 40) }, [])
         ]);
       });
@@ -831,9 +806,8 @@ function renderConversations(host) {
         el('h3', { text: '代表回答済み（直近' + items.length + '件）' }, []),
         el('table', {}, [
           el('thead', {}, [el('tr', {}, [
-            el('th', { scope: 'col', text: '更新日時' }, []),
+            el('th', { scope: 'col', text: '日付' }, []),
             el('th', { scope: 'col', text: '質問（抜粋）' }, []),
-            el('th', { scope: 'col', text: '主目的' }, []),
             el('th', { scope: 'col', text: '代表回答（抜粋）' }, [])
           ])]),
           el('tbody', {}, rows)
@@ -846,24 +820,17 @@ function renderConversations(host) {
     return apiRequest('GET', '/api/v1/admin/conversations?limit=100');
   }, function (target, data) {
     var items = data.items || [];
-    var piiCount = items.filter(function (row) { return row.pii_suspected; }).length;
     var rows = items.map(function (row) {
       var action = el('span', {}, []);
-      if (!row.denied) {
-        var questionButton = el('button', { class: 'btn btn-small', type: 'button', text: '質問' }, []);
-        questionButton.addEventListener('click', function () {
-          selectedConversationId = row.id;
-          refreshQuestionPanel();
-        });
-        action.appendChild(questionButton);
-      }
+      var questionButton = el('button', { class: 'btn btn-small', type: 'button', text: '質問' }, []);
+      questionButton.addEventListener('click', function () {
+        selectedConversationId = row.id;
+        refreshQuestionPanel();
+      });
+      action.appendChild(questionButton);
       return el('tr', {}, [
-        el('td', { text: fmtDate(row.created_at) }, []),
-        el('td', { text: shortId(row.user_id) }, []),
-        el('td', {}, [planBadge(row.plan || 'free')]),
-        el('td', { text: row.question_type || '—' }, []),
-        el('td', {}, [row.denied ? badge('拒否', 'danger') : document.createTextNode('—')]),
-        el('td', {}, [row.pii_suspected ? badge('検知', 'warning') : document.createTextNode('—')]),
+        el('td', { text: row.date || '—' }, []),
+        el('td', { text: (row.question_text || '').slice(0, 40) }, []),
         el('td', {}, [action])
       ]);
     });
@@ -872,16 +839,12 @@ function renderConversations(host) {
       return;
     }
     target.appendChild(el('div', { class: 'card table-wrap' }, [
-      el('h3', { text: '保管済み会話（メタデータ）' }, []),
-      el('p', { class: 'sub', text: '直近' + items.length + '件・PII検知' + piiCount + '件' }, []),
+      el('h3', { text: '保管済み会話' }, []),
+      el('p', { class: 'sub', text: '直近' + items.length + '件' }, []),
       el('table', {}, [
         el('thead', {}, [el('tr', {}, [
-          el('th', { scope: 'col', text: '日時' }, []),
-          el('th', { scope: 'col', text: 'ユーザー' }, []),
-          el('th', { scope: 'col', text: 'プラン' }, []),
-          el('th', { scope: 'col', text: '主目的' }, []),
-          el('th', { scope: 'col', text: '上限拒否' }, []),
-          el('th', { scope: 'col', text: 'PII検知' }, []),
+          el('th', { scope: 'col', text: '日付' }, []),
+          el('th', { scope: 'col', text: '質問（抜粋）' }, []),
           el('th', { scope: 'col', text: '操作' }, [])
         ])]),
         el('tbody', {}, rows)
@@ -1116,7 +1079,6 @@ function renderAudit(host) {
 /* ---------- ルーティング ---------- */
 
 var renderers = {
-  overview: renderOverview,
   users: renderUsers,
   corpora: renderCorpora,
   coupons: renderCoupons,
@@ -1128,7 +1090,7 @@ var renderers = {
 
 function currentSectionFromHash() {
   var name = window.location.hash.replace('#', '');
-  return renderers[name] ? name : 'overview';
+  return renderers[name] ? name : 'users';
 }
 
 function renderSection(target) {
@@ -1144,7 +1106,7 @@ function refreshSection() {
 var renderedSection = null;
 
 function setSection(name) {
-  var target = renderers[name] ? name : 'overview';
+  var target = renderers[name] ? name : 'users';
   renderedSection = target;
   document.querySelectorAll('.section-nav button').forEach(function (button) {
     if (button.getAttribute('data-section') === target) {

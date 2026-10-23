@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.line import LINEClient, LINEError
 from app.core.config import settings
-from app.core.pricing import get_daily_message_limit, resolve_effective_plan
+from app.core.pricing import (
+    get_daily_message_limit,
+    normalize_corpus_id,
+    resolve_effective_plan,
+)
 from app.repositories.base_user_repository import BaseUserRepository
 
 logger = logging.getLogger(__name__)
@@ -86,6 +90,17 @@ class LineService:
                 type(exc).__name__,
             )
             return "in_scope_question"
+
+    async def _classify_category(self, text: str) -> Optional[str]:
+        """質問をコーパス選択用カテゴリへ分類する（失敗時はNone）。"""
+        try:
+            return await self._get_rag_service().classify_category(text)
+        except Exception as exc:
+            logger.warning(
+                "Category classification fell back to default corpus: error_type=%s",
+                type(exc).__name__,
+            )
+            return None
 
     def _get_user_repository(
         self,
@@ -162,6 +177,19 @@ class LineService:
             処理結果、未処理イベントは None
         """
         event_type = event.get("type")
+
+        # 個人向け処理・返信は1対1トークに限定する。グループ/複数人トークでは
+        # 送信者個人のかたちをした処理・返信が第三者に見えるため、登録・状態変更・
+        # RAG・会話保存・個人宛pushを含め一切処理しない。
+        if event_type in {"message", "follow", "unfollow", "postback"}:
+            source = event.get("source")
+            if (
+                not isinstance(source, dict)
+                or source.get("type") != "user"
+                or not source.get("userId")
+            ):
+                logger.info("Skipped non-direct LINE event: type=%s", event_type)
+                return {"status": "skipped", "reason": "non_direct_source"}
 
         if event_type == "message":
             return await self._handle_message_event(event, db)
@@ -294,21 +322,6 @@ class LineService:
                     "status": "error",
                     "message": "クーポン処理でエラーが発生しました。しばらくしてからもう一度お試しください。",
                 }
-            try:
-                from app.repositories.firestore_admin_stats_repository import (
-                    FirestoreAdminStatsRepository,
-                )
-
-                stats_repo = FirestoreAdminStatsRepository()
-                if coupon_result.get("status") == "granted":
-                    await stats_repo.increment_coupon_redemption()
-                else:
-                    await stats_repo.increment_coupon_failure()
-            except Exception as exc:
-                logger.warning(
-                    "Coupon stats update failed: error_type=%s",
-                    type(exc).__name__,
-                )
             await self._send_reply(reply_token, coupon_result["message"])
             return {
                 "status": "processed",
@@ -344,18 +357,6 @@ class LineService:
             )
             feedback_result = None
         if feedback_result is not None:
-            if feedback_result.get("saved"):
-                try:
-                    from app.repositories.firestore_admin_stats_repository import (
-                        FirestoreAdminStatsRepository,
-                    )
-
-                    await FirestoreAdminStatsRepository().increment_feedback()
-                except Exception as exc:
-                    logger.warning(
-                        "Feedback stats update failed: error_type=%s",
-                        type(exc).__name__,
-                    )
             await self._send_reply(reply_token, feedback_result["reply"])
             return {"status": "processed", "action": "feedback_saved"}
 
@@ -387,6 +388,17 @@ class LineService:
                 "action": "out_of_scope_reply",
                 "message_kind": message_kind,
             }
+
+        # カテゴリ分類: Basic/Proでカテゴリ別RAGコーパスを選択するための判定。
+        # Freeは常にfree用コーパスを使うため、判定結果はコーパス選択とログのみ
+        # に使用する。失敗時はNoneで、プラン既定コーパスへフォールバックする。
+        category_started = time.perf_counter()
+        category = await self._classify_category(user_message)
+        logger.info(
+            "Category gate: category=%s latency_ms=%.1f",
+            category,
+            (time.perf_counter() - category_started) * 1000,
+        )
 
         # プラン解決優先度: 管理者override > Stripe契約 > free
         plan = self._resolve_effective_plan(user_dict)
@@ -427,11 +439,35 @@ class LineService:
                 model_name = rag_perm.model_name
 
         logger.info(
-            "Resolved LINE plan settings: plan=%s model=%s daily_limit=%s",
+            "Resolved LINE plan settings: plan=%s category=%s model=%s daily_limit=%s",
             plan,
+            category,
             model_name,
             daily_limit,
         )
+
+        # Basic/Proは分類カテゴリに対応するコーパスへ切替える（未設定時は
+        # plan_settingsのrag_corpus_idのまま）。Freeは常に既定コーパス。
+        corpus_id = self._get_rag_service().resolve_corpus_id(
+            plan,
+            category,
+            corpus_id,
+        )
+
+        # 公開経路のRAG検索は、有効な権限レコードと実コーパスIDが確認できた
+        # ときだけ実行する。権限欠損・無効時は検索も回数消費も行わない。
+        corpus_id = normalize_corpus_id(corpus_id)
+        if corpus_id is None:
+            logger.error("RAG permission unavailable: plan=%s", plan)
+            await self._send_reply(
+                reply_token,
+                "ただいま回答を生成できない状態です。しばらくしてからもう一度お試しください。",
+            )
+            return {
+                "status": "error",
+                "reason": "rag_permission_unavailable",
+                "plan": plan,
+            }
 
         # 全プランで1日あたりのメッセージ上限をチェック・インクリメントを原子的に実行
         usage_ms = 0.0
@@ -505,6 +541,7 @@ class LineService:
             "line_user_id": line_user_id,
             "user_id": user_dict['id'],
             "plan": plan,
+            "category": category,
             "corpus_id": corpus_id,
             "model_name": model_name,
             "daily_limit": daily_limit,

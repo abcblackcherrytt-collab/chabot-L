@@ -71,8 +71,17 @@ async def test_admin_session_flow_and_csrf(dev_admin_app) -> None:
         original_service = admin_api_module._admin_service
         admin_api_module._admin_service = lambda: service
         try:
-            listed = await client.get("/api/v1/admin/users")
+            listed = await client.get(
+                "/api/v1/admin/users",
+                params={"q": "テスト", "search_field": "display_name"},
+            )
             assert listed.status_code == 200
+            service.list_users.assert_awaited_once_with(
+                q="テスト",
+                search_field="display_name",
+                plan=None,
+                status=None,
+            )
 
             no_csrf = await client.put(
                 "/api/v1/admin/plan-settings/free",
@@ -102,9 +111,24 @@ async def test_admin_api_returns_503_when_disabled() -> None:
     disabled_app = create_admin_app(enabled=False)
     transport = ASGITransport(app=disabled_app)
     async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
-        response = await client.get("/api/v1/admin/users")
+        response = await client.get("/api/v1/admin/users?q=test")
 
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_user_search_requires_query(dev_admin_app) -> None:
+    """全件取得を防ぐため、検索値なしのユーザーAPIを拒否すること。"""
+    transport = ASGITransport(app=dev_admin_app)
+    async with AsyncClient(transport=transport, base_url="https://admin.test") as client:
+        session = await client.get(
+            "/api/v1/admin/session",
+            headers={"X-Admin-Dev-Email": DEV_EMAIL},
+        )
+        assert session.status_code == 200
+        response = await client.get("/api/v1/admin/users")
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -293,12 +317,8 @@ async def test_conversation_question_and_representative_answer(dev_admin_app) ->
             return_value={
                 "id": "conv-1",
                 "question_text": "2nd肢位の外旋制限をどう評価しますか",
-                "question_type": "assessment",
-                "answer_aspects": ["rom"],
-                "plan": "free",
-                "denied": False,
-                "pii_suspected": False,
-                "created_at": "2026-10-02T10:00:00+09:00",
+                "answer_text": "botの回答",
+                "date": "2026-10-02",
             }
         )
         service.save_representative_answer = AsyncMock(return_value={"id": "rep-1"})
@@ -311,7 +331,8 @@ async def test_conversation_question_and_representative_answer(dev_admin_app) ->
             question = await client.get("/api/v1/admin/conversations/conv-1/question")
             assert question.status_code == 200
             assert question.json()["question_text"].startswith("2nd肢位")
-            assert "answer_text" not in question.json()
+            assert question.json()["answer_text"] == "botの回答"
+            assert "user_id" not in question.json()
 
             no_csrf = await client.post(
                 "/api/v1/admin/conversations/conv-1/representative-answer",

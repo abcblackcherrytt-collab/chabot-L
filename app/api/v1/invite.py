@@ -221,7 +221,7 @@ async def invite_complete(
         )
 
     try:
-        tokens = await FirestoreAuthService().refresh(refresh_token)
+        tokens = await FirestoreAuthService().authenticate_refresh(refresh_token)
         access_payload = decode_token(tokens["access_token"]) if tokens else None
         user_id = access_payload.get("sub") if access_payload else None
     except Exception:

@@ -21,9 +21,6 @@ from app.clients.vertex_ai_rag import (
 from app.repositories.firestore_admin_invite_repository import (
     FirestoreAdminInviteRepository,
 )
-from app.repositories.firestore_admin_stats_repository import (
-    FirestoreAdminStatsRepository,
-)
 from app.repositories.firestore_admin_user_repository import (
     FirestoreAdminUserRepository,
 )
@@ -64,7 +61,6 @@ class AdminService:
         coupon_repository: Optional[FirestoreCouponRepository] = None,
         audit_repository: Optional[FirestoreAuditLogRepository] = None,
         feedback_repository: Optional[FirestoreFeedbackRepository] = None,
-        stats_repository: Optional[FirestoreAdminStatsRepository] = None,
         admin_user_repository: Optional[FirestoreAdminUserRepository] = None,
         user_repository: Optional[FirestoreUserRepository] = None,
         conversation_repository: Optional[FirestoreConversationRepository] = None,
@@ -82,7 +78,6 @@ class AdminService:
         self.coupon_service = CouponService(coupon_repository)
         self.audit_repository = audit_repository or FirestoreAuditLogRepository()
         self.feedback_repository = feedback_repository or FirestoreFeedbackRepository()
-        self.stats_repository = stats_repository or FirestoreAdminStatsRepository()
         self.admin_user_repository = admin_user_repository or FirestoreAdminUserRepository()
         self.user_repository = user_repository or FirestoreUserRepository()
         self.conversation_repository = (
@@ -274,13 +269,15 @@ class AdminService:
     async def list_users(
         self,
         *,
-        q: Optional[str] = None,
+        q: str,
+        search_field: str = "display_name",
         plan: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """ユーザー一覧（非PII要約＋当日利用回数）を返す。"""
+        """明示的な検索結果（非PII要約＋当日利用回数）を返す。"""
         return await self.admin_user_repository.list_users(
             q=q,
+            search_field=search_field,
             plan=plan,
             status=status,
         )
@@ -425,10 +422,10 @@ class AdminService:
             )
         return result
 
-    # ---- 会話・要望・監査・集計 ----
+    # ---- 会話・要望・監査 ----
 
     async def list_conversations(self, *, limit: int = 100) -> Dict[str, Any]:
-        """会話メタデータ（本文なし）を返す。"""
+        """会話一覧（質問・回答・日付のみ）を返す。"""
         return await self.conversation_repository.list_metadata(limit=limit)
 
     async def get_conversation_question(self, *, conversation_id: str) -> Dict[str, Any]:
@@ -436,7 +433,7 @@ class AdminService:
         question = await self.conversation_repository.get_question(conversation_id)
         if question is None:
             raise LookupError("conversation_not_found")
-        if question.get("denied") or not question.get("question_text"):
+        if not question.get("question_text"):
             raise ValueError("question_unavailable")
         return question
 
@@ -457,10 +454,8 @@ class AdminService:
         saved = await self.representative_answer_repository.upsert(
             conversation_id=conversation_id,
             question_text=question.get("question_text"),
-            question_type=question.get("question_type"),
-            plan=question.get("plan"),
             representative_answer=answer,
-            updated_by=actor,
+            date=question.get("date"),
         )
         await self._audit(
             actor=actor,
@@ -592,21 +587,3 @@ class AdminService:
     async def list_audit_logs(self, *, limit: int = 100) -> List[Dict[str, Any]]:
         """監査ログ一覧を返す。"""
         return await self.audit_repository.list(limit=limit)
-
-    async def get_stats(self, *, days: int = 30) -> Dict[str, Any]:
-        """日次統計の範囲集計を返す。"""
-        if not 1 <= days <= 365:
-            raise ValueError("invalid_days")
-        daily = await self.stats_repository.get_range(days)
-        totals: Dict[str, int] = {}
-        for item in daily:
-            for key in (
-                "message_count",
-                "active_user_count",
-                "denied_by_limit",
-                "coupon_redemptions",
-                "coupon_failed_attempts",
-                "feedback_count",
-            ):
-                totals[key] = totals.get(key, 0) + int(item.get(key, 0) or 0)
-        return {"daily": daily, "totals": totals, "days": days}

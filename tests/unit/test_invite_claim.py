@@ -111,7 +111,7 @@ async def test_invite_complete_consumes_invite(monkeypatch) -> None:
         lambda: invite_repository,
     )
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(
+    auth_service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "access",
             "refresh_token": "rotated-refresh",
@@ -158,7 +158,7 @@ async def test_invite_complete_rejects_used_invite(monkeypatch) -> None:
         lambda: invite_repository,
     )
     auth_service = MagicMock()
-    auth_service.refresh = AsyncMock(
+    auth_service.authenticate_refresh = AsyncMock(
         return_value={"access_token": "access", "refresh_token": "rotated"}
     )
     monkeypatch.setattr(

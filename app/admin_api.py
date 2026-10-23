@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -204,13 +204,23 @@ async def dev_login(request_data: DevLoginRequest, request: Request) -> JSONResp
 
 @router.get("/users")
 async def list_users(
-    q: Optional[str] = None,
+    q: str = Query(min_length=1, max_length=100),
+    search_field: str = Query(
+        default="display_name",
+        pattern="^(display_name|line_user_id|user_id)$",
+    ),
     plan: Optional[str] = None,
     status_filter: Optional[str] = None,
     session: Dict[str, Any] = Depends(_require_admin_session),
 ) -> Dict[str, Any]:
-    """ユーザー一覧（非PII要約）を返す。"""
-    return await _admin_service().list_users(q=q, plan=plan, status=status_filter)
+    """明示的な検索条件に一致するユーザー要約を返す。"""
+    return await _run_service(
+        _admin_service().list_users,
+        q=q,
+        search_field=search_field,
+        plan=plan,
+        status=status_filter,
+    )
 
 
 @router.get("/users/{user_id}")
@@ -509,15 +519,6 @@ async def list_audit_logs(
 ) -> Dict[str, Any]:
     """監査ログ一覧を返す。"""
     return {"items": await _admin_service().list_audit_logs(limit=min(limit, 500))}
-
-
-@router.get("/stats")
-async def get_stats(
-    days: int = 30,
-    session: Dict[str, Any] = Depends(_require_admin_session),
-) -> Dict[str, Any]:
-    """日次統計の範囲集計を返す。"""
-    return await _run_service(_admin_service().get_stats, days=days)
 
 
 async def _run_service(coro_fn, *args: Any, **kwargs: Any) -> Any:

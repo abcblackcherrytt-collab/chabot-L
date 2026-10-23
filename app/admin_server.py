@@ -40,7 +40,6 @@ ADMIN_PAGE_HTML = """<!doctype html>
   <div class='app-body'>
     <nav class='section-nav' aria-label='管理メニュー'>
       <ul>
-        <li><button type='button' data-section='overview'>集計</button></li>
         <li><button type='button' data-section='users'>ユーザー</button></li>
         <li><button type='button' data-section='corpora'>コーパス</button></li>
         <li><button type='button' data-section='coupons'>クーポン</button></li>

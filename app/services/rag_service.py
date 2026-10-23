@@ -62,6 +62,12 @@ class RAGService:
         Raises:
             VertexAIError: Vertex AIエラーが発生した場合
         """
+        # 公開経路では権限解決済みの明示corpus_idのみを許可する。
+        # Noneのまま既定コーパスへフォールバックすると、権限がない
+        # プラン・ユーザーがコーパスを検索できてしまうため禁止する。
+        if not corpus_id or not str(corpus_id).strip():
+            raise VertexAIError("RAG corpus is not authorized for this request")
+
         logger.info(
             "Processing RAG query: query_length=%s include_context=%s plan=%s",
             len(text),
@@ -118,12 +124,36 @@ class RAGService:
         """
         return await self.vertex_ai_client.classify_message_kind(text)
 
+    async def classify_category(self, text: str) -> Optional[str]:
+        """
+        コーパス選択用に質問カテゴリを判定します。
+
+        Returns:
+            shoulder / knee などのカテゴリ名。Jev未設定・障害・低信頼時はNone。
+        """
+        return await self.vertex_ai_client.classify_category(text)
+
+    def resolve_corpus_id(
+        self,
+        plan: str,
+        category: Optional[str],
+        corpus_id: Optional[str],
+    ) -> Optional[str]:
+        """
+        プランとカテゴリから検索対象コーパスIDを解決します。
+
+        Freeはプラン既定（free用コーパス）を維持し、Basic/Proは設定された
+        カテゴリ別コーパスIDへ切替えます。
+        """
+        return self.vertex_ai_client.resolve_corpus_id(plan, category, corpus_id)
+
     async def batch_query(
         self,
         queries: List[str],
         max_results: int = 5,
         include_context: bool = True,
         user_id: Optional[str] = None,
+        corpus_id: Optional[str] = None,
         plan: str = "free",
     ) -> List[Dict[str, Any]]:
         """
@@ -134,6 +164,7 @@ class RAGService:
             max_results: 最大結果数
             include_context: コンテキストを含めるか
             user_id: ユーザーID
+            corpus_id: 使用するRAGコーパスID（公開経路では必須）
             plan: 回答構成を選択するプラン（free/basic/pro）
 
         Returns:
@@ -153,6 +184,7 @@ class RAGService:
                     max_results=max_results,
                     include_context=include_context,
                     user_id=user_id,
+                    corpus_id=corpus_id,
                     plan=plan,
                 )
                 results.append(result)

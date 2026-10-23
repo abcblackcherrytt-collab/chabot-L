@@ -111,7 +111,7 @@ async def test_password_login_is_hidden_in_firestore_mode(monkeypatch) -> None:
 async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> None:
     """Cookieだけで更新でき、新Refresh TokenをJSONへ露出しないこと。"""
     service = MagicMock()
-    service.refresh = AsyncMock(
+    service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "new-access",
             "refresh_token": "new-refresh",
@@ -141,7 +141,7 @@ async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> No
         "token_type": "bearer",
         "expires_in": 900,
     }
-    service.refresh.assert_awaited_once_with("old-refresh")
+    service.authenticate_refresh.assert_awaited_once_with("old-refresh")
     set_cookie = response.headers["set-cookie"].lower()
     assert f"{REFRESH_TOKEN_COOKIE_NAME}=new-refresh" in set_cookie
     assert "httponly" in set_cookie
@@ -154,7 +154,7 @@ async def test_refresh_uses_cookie_rotates_it_and_hides_token(monkeypatch) -> No
 async def test_refresh_keeps_legacy_body_client_compatible(monkeypatch) -> None:
     """既存APIクライアントはbodyトークンでも更新できること。"""
     service = MagicMock()
-    service.refresh = AsyncMock(
+    service.authenticate_refresh = AsyncMock(
         return_value={
             "access_token": "new-access",
             "refresh_token": "new-refresh",
@@ -178,7 +178,7 @@ async def test_refresh_keeps_legacy_body_client_compatible(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["refresh_token"] == "new-refresh"
-    service.refresh.assert_awaited_once_with("legacy-refresh")
+    service.authenticate_refresh.assert_awaited_once_with("legacy-refresh")
 
 
 @pytest.mark.asyncio

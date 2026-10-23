@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-09（サブスクリプション本番展開可否セキュリティレビュー）
+> **更新日**: 2026-10-23（管理統計廃止・ユーザー検索限定をローカル実装）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -9,6 +9,10 @@
 ---
 
 ## 0. 現在の結論
+
+**2026-10-23の最新決定（ローカル実装・本番未反映）**: Firestore無料枠を節約するため、管理用日次統計の書き込みと集計画面・APIを廃止した。既存の `admin_daily_stats` データは削除しない。ユーザー画面は初期表示でFirestoreを読まず、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する。プラン・状態の絞り込みは検索候補内へ適用する。
+
+**2026-10-20の決定（ローカル実装済み・本番未反映）**: 1対1トーク限定、Access Tokenを含む即時セッション失効、Refresh Token更新の原子化、RAG権限未確定時の検索停止を実装した。会話アーカイブは質問・回答・JST日付の3項目だけとし、ユーザーID・ユーザー情報・プラン・分類・時刻等を除去した。通常の自動ログイン・30日ローリング更新は維持する。具体的な手順・受入条件は [実装引き継ぎ計画](docs/security-hardening-handoff-2026-10-20.md) を参照。既存データ移行と本番反映、実E2Eは未実施。
 
 現在は、次の2つを分けて管理する。
 
@@ -93,6 +97,8 @@
 - [ ] 管理UI導入時は、公開済みFirestore設定を回数上限の運用上の正とし、`app/core/pricing.py` の `3/100/500` は設定欠損・不正時の安全な既定値へ役割を変更する。
 - [保留] FirestoreとRAGの直接並列化は、回数上限超過時の不要なVertex AI課金とプラン別コーパス誤選択を招くため採用しない。
 - [x] LINE Loginは、通常利用中はセッションを自動更新し、利用者へログイン画面を繰り返し表示しない。明示的ログアウト、LINE unfollow、またはセッションを更新できない場合のみ再ログインを求める。
+- [ ] 2026-10-20承認済み・実装予定: 上記の通常ログイン維持を保ち、失効をAccess Tokenへも即時適用する。LINEアプリ自体のログアウト通知は現行構成にないため、Chabotログアウト/unfollowと区別する。Cookie消失・長期未使用等はLINE自動ログインによる復帰を利用し、永久無操作ログインとは表現しない。
+- [ ] 2026-10-20承認済み・実装予定: 会話保存は `question_text` / `answer_text` / `date` のみ。ユーザー情報やそのハッシュ、関連付け用IDは保存しない。Firestoreのランダム文書キーは内部操作用のみ。本文自体の個人情報除去は今回追加せず、完全匿名化とは呼ばない。認証・課金・回数管理のユーザーIDは維持する。
 - [x] Stripe Basic / Proの商品・Price IDとCloud RunのStripe API鍵を同じアカウント・テストモードへ統一し、商品・継続課金・金額・通貨をAPIで確認する。
 - [x] 無期限serviceアカウントをStripeへ追加せず、招待URL消費時と管理UIプラン変更で`plan_override.plan=service`を付与する方式を実装。Bot側プラン解決はserviceをpro相当へ変換し、同一コーパス・pro日次上限を適用。優先度は2026-10-05ユーザー指示により **管理者override（source=admin）> Stripe契約 > free** へ変更。coupon / service_invite由来は従来どおり契約free時のみ適用し有料契約をdowngradeしない。招待・管理・LINEフローの単体テスト43件成功。
 - [ ] Stripe本番キーへの切替は、テストモードE2E完了後に判断する。
@@ -297,7 +303,7 @@ P0公開ゲート:
 
 #### 登録ユーザー参照
 
-- [ ] `users` をページネーション付きで一覧・検索し、表示名、プラン、契約状態、有効状態、登録日、更新日、当日利用回数を表示する。
+- [x] `users` は全件一覧を廃止し、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する。初期表示は読取ゼロとする（2026-10-23ローカル実装・本番未反映）。
 - [ ] 詳細画面でLINE user ID（一覧ではマスク）、プロフィール画像、取得日時を必要な範囲だけ表示する。status message・languageは明確な利用目的が承認されるまで収集・保存しない。既存データには画像等がないため、登録時保存と明示的なプロフィール再取得を追加する。
 - [ ] Messaging APIで取得できるのは原則として友だちまたはメッセージ送信者の表示名・画像・ステータスメッセージ・言語で、ブロック後などは再取得できない前提で最終取得スナップショットを扱う。
 - [ ] メールはLINE Loginのemail権限が承認され、本人が同意した場合だけ実値として保存・表示する。現在の `line_<userId>@chabot.local` は識別用プレースホルダーと明示し、実メールとして扱わない。
@@ -332,6 +338,8 @@ P0公開ゲート:
 - [ ] 本番向け管理API（/api/v1/admin/*）、Firestore読み書き、IAP認証、CSRF、監査ログ保存、ページネーションは未実装。UIの書き込み操作はモック状態でしか動かない。
 
 **2026-09-28: 管理UI本番実装（単体テスト済み・管理サービスのIAP/デプロイは保留）**
+
+- [x] 2026-10-23（ユーザー指示）: 管理統計を廃止。LINE質問成功・上限拒否・クーポン成否・要望受付時の `admin_daily_stats` 書き込み、統計リポジトリ、`GET /api/v1/admin/stats`、管理UI「集計」タブを削除した。ユーザー画面は検索フォームだけを初期表示し、明示的な詳細検索後だけ結果を表示する。既存統計データは削除しない。関連52件・全unit 273件（既知PostgreSQL Refresh Token除外）成功、compileall・node構文・diff検査成功。本番未反映。
 
 - [x] 管理API `/api/v1/admin/*` を `app/admin_api.py` として実装し、`app.admin_server` へだけ登録（公開Botへの混入はroute分離テストで固定）。session / users一覧・詳細・プラン変更・無効化・free作成 / plan-settings下書き・反映・ロールバック / coupons発行・一覧・失効 / invites発行・一覧・失効 / conversations / feedback / audit-logs / stats のエンドポイント群。
 - [x] Firestore管理リポジトリを実装: plan_settings（下書き保存・Transaction反映・ロールバック・履歴・Bot側60秒キャッシュ）、admin_invites（SHA-256保存・期限・失効・Transaction単回消費）、coupons/coupon_redemptions（Crockford Base32・チェックディジット・ユーザーごと1回・全体上限・ボーナス回数付与）、admin_audit_logs、feedback/feedback_pending（TTL10分・1日5通）、admin_daily_stats（Increment・active_usersサブコレクション）、users管理参照（一覧・前方一致検索・詳細・plan_override・無効化）。
@@ -391,6 +399,17 @@ P0公開ゲート:
 ---
 
 ## 3. 次回デプロイ前の必須対策（P0）
+
+### P0-10. 個人情報保護・認証強化（2026-10-20承認・次担当向け）
+
+- [x] コードを調査し、[実装引き継ぎ計画](docs/security-hardening-handoff-2026-10-20.md) に対象ファイル・実装順・競合/移行設計・受入条件を記載した（文書のみ。アプリテスト未実行）。
+- [x] S1: LINE message/follow/unfollow/postbackを1対1の有効sourceへ限定（2026-10-20実装・コード実装済み・ローカルunit検証済み・E2E未確認・本番未反映）。group/room/不正sourceは処理前にskipし、登録・個人情報処理・RAG・保存を行わない。
+- [x] S2/S3: 永続session（auth_sessions）とユーザー認証世代（users.auth_version）で即時失効、Refresh Tokenの単回消費をTransaction化（2026-10-20実装・コード実装済み・ローカルunit検証済み・E2E未確認・本番未反映）。authenticate_refreshで通常アクセスはトークンを消費せず、残存15日未満のときだけローテーション。旧形式Cookieは受付時に一度だけ新セッションへ移行し、再ログイン不要の通常導線を維持。logoutはトークン+セッション失効、全失効は世代更新+トークン・セッション失効。Firestore Emulatorでの実同時競合検証は未実施。
+- [x] S4: LINE/APIの実効プラン解決を統一し、有効RAG権限がない場合は検索と回数消費を停止（2026-10-20実装・コード実装済み・ローカルunit検証済み・E2E未確認・本番未反映）。RAGService・VertexAIClientでも明示corpus_id必須化。同時期に実装されたカテゴリ別コーパス分類（Jev category→GOOGLE_CORPUS_IDS_BY_CATEGORY）と統合し、解決後コーパスも同じfail closed検証を通す。
+- [x] S5: 会話保存を質問・回答・JST日付だけに変更（2026-10-20実装・コード実装済み・ローカルunit検証済み・E2E未確認・本番未反映）。ユーザーID・プラン・分類・時刻・PIIフラグを保存しない。代表回答は会話ランダムキーを文書IDとする3フィールド構成。管理UI/API・上限拒否記録廃止へ追従。移行スクリプト `scripts/migrate_conversation_privacy.py`（既定dry-run・件数とフィールド名のみ出力）を追加。実Firestoreデータでのdry-run/本適用は未実施。
+- [x] 全unit 272件（既知PostgreSQL Refresh Token除外）・compileall・node --check・git diff --check成功（2026-10-20・ローカル検証済み）。GitHub Actions CI実行は未実施。
+- [ ] Firestore競合の実検証（Emulator）、管理UI実表示確認、実端末E2E（旧Cookieからの自動更新・1対1質問・Checkout復帰・明示ログアウト・unfollow・グループ無処理）を検証する。
+- [ ] Bot/admin本番反映と既存会話データ移行を別々に検証・記録する（今回いずれも未実施）。
 
 ### P0-1. 依存関係の再インストール
 

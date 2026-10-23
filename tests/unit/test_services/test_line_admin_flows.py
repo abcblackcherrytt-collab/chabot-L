@@ -30,7 +30,9 @@ def flow_service(monkeypatch) -> LineService:
     user_repo.create_line_user = AsyncMock()
 
     rag_permission_repo = MagicMock()
-    rag_permission_repo.get_by_plan = AsyncMock(return_value=None)
+    rag_permission_repo.get_by_plan = AsyncMock(
+        return_value={"rag_corpus_id": "flow-corpus", "model_name": "flow-model"}
+    )
 
     usage_repo = MagicMock()
     usage_repo.increment_with_limit_check = AsyncMock(return_value={
@@ -45,14 +47,6 @@ def flow_service(monkeypatch) -> LineService:
 
     feedback_service = MagicMock()
     feedback_service.handle_pending_message = AsyncMock(return_value=None)
-
-    stats_repo = MagicMock()
-    stats_repo.increment_message_count = AsyncMock()
-    stats_repo.increment_denied_by_limit = AsyncMock()
-    stats_repo.increment_coupon_redemption = AsyncMock()
-    stats_repo.increment_coupon_failure = AsyncMock()
-    stats_repo.increment_feedback = AsyncMock()
-    stats_repo.record_active_user = AsyncMock()
 
     service = LineService(line_client=line_client)
     monkeypatch.setattr(service, "_get_user_repository", lambda db=None: user_repo)
@@ -78,10 +72,6 @@ def flow_service(monkeypatch) -> LineService:
         "app.services.feedback_service.FeedbackService",
         lambda: feedback_service,
     )
-    monkeypatch.setattr(
-        "app.repositories.firestore_admin_stats_repository.FirestoreAdminStatsRepository",
-        lambda: stats_repo,
-    )
     service._test_plan_settings_repo = plan_settings_repo
     service._test_usage_repo = usage_repo
     service._test_feedback_service = feedback_service
@@ -93,7 +83,7 @@ def _message_event(text: str) -> dict:
     return {
         "type": "message",
         "replyToken": "reply-token",
-        "source": {"userId": "U_test123"},
+        "source": {"type": "user", "userId": "U_test123"},
         "message": {"type": "text", "text": text},
     }
 
@@ -307,7 +297,7 @@ async def test_postback_feedback_start(flow_service) -> None:
     event = {
         "type": "postback",
         "replyToken": "reply-token",
-        "source": {"userId": "U_test123"},
+        "source": {"type": "user", "userId": "U_test123"},
         "postback": {"data": "action=feedback_start"},
     }
 

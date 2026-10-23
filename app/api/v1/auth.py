@@ -129,7 +129,11 @@ async def refresh_token(
 
     payload = decode_token(refresh_token_value)
     if payload and payload.get("provider") == "line":
-        tokens = await FirestoreAuthService().refresh(refresh_token_value)
+        # 検証のみで済む場合はトークンを消費せず、残存期間が閾値未満の
+        # ときだけローテーションする。並行アクセスでも競合しない。
+        tokens = await FirestoreAuthService().authenticate_refresh(
+            refresh_token_value
+        )
     elif db is not None:
         result = await AuthService(db).refresh_token(refresh_token_value)
         tokens = result[0] if result else None

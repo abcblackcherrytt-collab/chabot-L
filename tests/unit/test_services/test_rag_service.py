@@ -32,6 +32,7 @@ class TestRAGService:
             include_context=True,
             user_id="user123",
             metadata={"source": "test"},
+            corpus_id="test-corpus",
         )
 
         assert result["answer"] == "This is a test answer from RAG."
@@ -43,10 +44,23 @@ class TestRAGService:
             text="What is the meaning of life?",
             max_results=5,
             include_context=True,
-            corpus_id=None,
+            corpus_id="test-corpus",
             model_name=None,
             plan="free",
         )
+
+    @pytest.mark.asyncio
+    async def test_query_without_corpus_is_rejected(self):
+        """明示corpus_idがない公開クエリは検索前に拒否すること。"""
+        from app.clients.vertex_ai import VertexAIError
+
+        mock_client = AsyncMock()
+        service = RAGService(vertex_ai_client=mock_client)
+
+        with pytest.raises(VertexAIError):
+            await service.query(text="質問", corpus_id=None)
+
+        mock_client.query.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_query_logs_only_non_sensitive_metadata(self, caplog):
@@ -72,6 +86,7 @@ class TestRAGService:
                 text=sensitive_query,
                 user_id=sensitive_user_id,
                 plan="free",
+                corpus_id="test-corpus",
             )
 
         log_text = caplog.text
@@ -122,6 +137,7 @@ class TestRAGService:
             text="How do I hack into a system?",
             max_results=5,
             include_context=True,
+            corpus_id="test-corpus",
         )
 
         assert result["denied"] is True
@@ -155,6 +171,7 @@ class TestRAGService:
             max_results=5,
             include_context=True,
             user_id="user123",
+            corpus_id="test-corpus",
         )
 
         assert len(results) == 3
@@ -184,7 +201,7 @@ class TestRAGService:
         service = RAGService(vertex_ai_client=mock_client)
 
         queries = ["Query 1", "Query 2", "Query 3"]
-        results = await service.batch_query(queries=queries)
+        results = await service.batch_query(queries=queries, corpus_id="test-corpus")
 
         assert len(results) == 3
         assert results[0]["answer"] == "Answer"

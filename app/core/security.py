@@ -30,6 +30,11 @@ PROTECTED_JWT_CLAIMS = {
     "type",
     "email",
     "line_user_id",
+    "sid",
+    "auth_version",
+    "iat",
+    "iss",
+    "aud",
 }
 
 
@@ -76,6 +81,9 @@ def create_access_token(
     email: str,
     jti: str,
     additional_claims: Dict[str, Any] | None = None,
+    *,
+    session_id: str | None = None,
+    auth_version: int = 0,
 ) -> Tuple[str, datetime]:
     """
     アクセストークンを作成します
@@ -90,14 +98,24 @@ def create_access_token(
         (アクセストークン, 有効期限) のタプル
     """
     expires_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
-    expires_at = datetime.now(timezone.utc) + expires_delta
+    issued_at = datetime.now(timezone.utc)
+    expires_at = issued_at + expires_delta
 
     to_encode = {
         "sub": user_id,
         "jti": jti,
+        "iat": issued_at,
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
         "exp": expires_at,
         "type": "access",
     }
+
+    if session_id:
+        # セッション基盤のトークンには認証世代も持たせ、全失効を
+        # 即時に反映できるようにする。
+        to_encode["sid"] = session_id
+        to_encode["auth_version"] = auth_version
 
     to_encode.update(_validate_additional_claims(additional_claims))
 
@@ -115,6 +133,9 @@ def create_refresh_token(
     email: str,
     jti: str,
     additional_claims: Dict[str, Any] | None = None,
+    *,
+    session_id: str | None = None,
+    auth_version: int = 0,
 ) -> Tuple[str, datetime]:
     """
     リフレッシュトークンを作成します
@@ -129,14 +150,22 @@ def create_refresh_token(
         (リフレッシュトークン, 有効期限) のタプル
     """
     expires_delta = timedelta(days=settings.jwt_refresh_token_expire_days)
-    expires_at = datetime.now(timezone.utc) + expires_delta
+    issued_at = datetime.now(timezone.utc)
+    expires_at = issued_at + expires_delta
 
     to_encode = {
         "sub": user_id,
         "jti": jti,
+        "iat": issued_at,
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
         "exp": expires_at,
         "type": "refresh",
     }
+
+    if session_id:
+        to_encode["sid"] = session_id
+        to_encode["auth_version"] = auth_version
 
     to_encode.update(_validate_additional_claims(additional_claims))
 
@@ -169,7 +198,16 @@ def decode_token(token: str) -> Dict[str, Any] | None:
                 token,
                 secret_key,
                 algorithms=[settings.jwt_algorithm],
+                # audClaimの有無は移行互換のため手動で検証する
+                # （PyJWT既定はaud必須の扱いになるため無効化）。
+                options={"verify_aud": False},
             )
+            # issuer/audienceは署名済みクレームとして一致確認する。
+            # 旧形式（未設定）は移行期間中のみ許容する。
+            if payload.get("iss") not in (None, settings.jwt_issuer):
+                continue
+            if payload.get("aud") not in (None, settings.jwt_audience):
+                continue
             return payload
         except PyJWTError:
             continue

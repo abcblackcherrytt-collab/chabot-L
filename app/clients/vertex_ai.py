@@ -171,6 +171,22 @@ MESSAGE_KINDS = {
     ),
 }
 
+# カテゴリ分類。入力ゲートを通過した質問を、RAGコーパス選択用の領域へ
+# 振り分ける。カテゴリ名は rag_source/source のディレクトリ名と一致させる。
+MESSAGE_CATEGORIES = {
+    "shoulder": "肩関節領域（肩袖損傷、五十肩、反復性脱臼、肩鎖関節損傷など）。",
+    "knee": "膝関節領域（半月板、靭帯損傷、TKA、高位脛骨骨切り術など）。",
+    "hip": "股関節領域（THA、FAI、大腿骨近位部骨折など）。",
+    "ankle": "足関節・足部（足首捻挫、足底腱膜炎、外反母趾など）。",
+    "elbow": "肘関節領域（野球肘、テニス肘、肘部管症候群など）。",
+    "gait": "歩行・姿勢制御（歩行分析、バランス、運動制御）。",
+    "insole": "足底板・インソール（パッド設計、足部アライメント）。",
+    "physics": "力学・物理（レバーアーム、モーメント、組織に加わる力）。",
+    "physiology": "生理学（痛みの神経生理、筋生理、組織治癒）。",
+    "secure": "心理・社会領域（心理療法、アタッチメント、メンタルヘルス）。",
+    "spine": "脊椎・体幹（腰椎、頸椎、姿勢・体幹制御）。",
+}
+
 # Jev未設定・障害時でも確実に定型応答できるよう、明確な挨拶・お礼のみ
 # 完全一致でローカル判定する。部分一致は誤検知を避けるため使わない。
 LOCAL_SOCIAL_TEXTS = frozenset(
@@ -708,6 +724,85 @@ class VertexAIClient(BaseClient):
                 type(exc).__name__,
             )
             return "in_scope_question"
+
+    def _build_category_questions(self) -> Dict[str, Dict[str, Any]]:
+        """カテゴリ分類用のJev判定（categoryのChoice 1件）を定義する。"""
+        return {
+            "category": {
+                "type": "choice",
+                "instructions": (
+                    "この質問が主に問う領域を1つ選んでください。入力先は"
+                    "リハビリテーション専門職向けBotです。複数の領域にまたがる"
+                    "場合は、回答に最も必要な領域を選んでください。どれにも明確に"
+                    "当てはまらなければ unknown を選んでください。"
+                ),
+                "criteria": {
+                    **MESSAGE_CATEGORIES,
+                    "unknown": "分類対象外、または特定の領域を特定できない。",
+                },
+            },
+        }
+
+    async def classify_category(self, text: str) -> Optional[str]:
+        """
+        入力ゲートを通過した質問を、コーパス選択用カテゴリへ分類します。
+
+        Basic/Proプランでカテゴリ別RAGコーパスを選択するために使う。
+        Jev未設定・タイムアウト・低信頼・不明な選択肢のいずれの場合も
+        Noneを返し、呼び出し側はプラン既定コーパスで検索を続行します。
+        """
+        normalized = text.strip()
+        try:
+            if not self.jev_client.is_configured:
+                return None
+            response = await self.jev_client.decide(
+                normalized,
+                self._build_category_questions(),
+            )
+            answers = response.get("answers")
+            category_answer = (
+                answers.get("category", {}) if isinstance(answers, dict) else {}
+            )
+            if not isinstance(category_answer, dict):
+                return None
+            choice = str(category_answer.get("choice") or "").strip().lower()
+            confidence = category_answer.get("confidence", 0.0)
+            if (
+                choice not in MESSAGE_CATEGORIES
+                or not isinstance(confidence, (int, float))
+                or confidence < settings.jev_category_confidence_threshold
+            ):
+                return None
+            logger.info("Category classified: category=%s", choice)
+            return choice
+        except Exception as exc:
+            logger.warning(
+                "Category classification failed; using plan default corpus: "
+                "error_type=%s",
+                type(exc).__name__,
+            )
+            return None
+
+    def resolve_corpus_id(
+        self,
+        plan: str,
+        category: Optional[str],
+        corpus_id: Optional[str],
+    ) -> Optional[str]:
+        """
+        プランとカテゴリから検索対象コーパスIDを解決します。
+
+        Freeは常にプラン既定コーパス（free用）を使う。Basic/Proは
+        GOOGLE_CORPUS_IDS_BY_CATEGORYに設定されたカテゴリ別コーパスIDへ
+        切替える。カテゴリ未分類・設定なしの場合はプラン既定のまま。
+        """
+        effective_plan = plan if plan in {"basic", "pro"} else "free"
+        if effective_plan == "free" or not category:
+            return corpus_id
+        mapped = settings.corpus_ids_by_category_map.get(category)
+        if not mapped:
+            return corpus_id
+        return mapped
 
     def _get_generation_client(self) -> genai.Client:
         """RAG回答生成用クライアントを遅延生成し、後続リクエストで再利用する。"""

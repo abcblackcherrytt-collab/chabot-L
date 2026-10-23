@@ -28,7 +28,6 @@ async def _process_line_events(
     line_service: Any,
     rag_service: Any,
     conversation_repository: Any = None,
-    admin_stats_repository: Any = None,
 ) -> None:
     """
     LINE イベントをバックグラウンドで処理します
@@ -60,41 +59,6 @@ async def _process_line_events(
 
             if not result:
                 continue
-
-            async def _bump_stats(method: str, *args: Any) -> None:
-                """管理用統計を更新する。失敗はメイン導線へ影響させない。"""
-                try:
-                    repository = admin_stats_repository
-                    if repository is None:
-                        from app.repositories.firestore_admin_stats_repository import (
-                            FirestoreAdminStatsRepository,
-                        )
-
-                        repository = FirestoreAdminStatsRepository()
-                    await getattr(repository, method)(*args)
-                except Exception as exc:
-                    logger.warning(
-                        "Admin stats update failed: error_type=%s",
-                        type(exc).__name__,
-                    )
-
-            if result.get("status") == "limit_reached" and result.get("user_id"):
-                await _bump_stats("increment_denied_by_limit")
-                await _bump_stats("record_active_user", result["user_id"])
-                try:
-                    repository = (
-                        conversation_repository
-                        or FirestoreConversationRepository()
-                    )
-                    await repository.save_limit_denied(
-                        user_id=result["user_id"],
-                        plan=result.get("plan") or "free",
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Limit-denied conversation save failed: error_type=%s",
-                        type(exc).__name__,
-                    )
 
             # 回数制限とプラン別RAG設定を確定してからRAGを実行する。
             # 上限超過時の不要なVertex AI呼び出しと、誤コーパス利用を防ぐ。
@@ -134,28 +98,17 @@ async def _process_line_events(
 
                 await line_service._send_reply(result["reply_token"], answer)
 
-                # 統計更新は返信をブロックしない位置で行う。
-                await _bump_stats("increment_message_count")
-                await _bump_stats("record_active_user", result["user_id"])
-
                 # 回答送信に成功した場合だけ会話を保存する。保存失敗が
                 # 返信済みの回答や他イベント処理を止めないようにする。
                 if rag_result:
                     try:
-                        classification = rag_result.get("classification") or {}
                         repository = (
                             conversation_repository
                             or FirestoreConversationRepository()
                         )
                         await repository.save_conversation(
-                            user_id=result["user_id"],
                             question_text=result["message"],
                             answer_text=answer,
-                            plan=result.get("plan") or "free",
-                            denied=bool(rag_result.get("denied")),
-                            question_type=classification.get("question_type"),
-                            answer_aspects=classification.get("answer_aspects"),
-                            reasoning_roles=classification.get("reasoning_roles"),
                         )
                     except Exception as exc:
                         logger.error(

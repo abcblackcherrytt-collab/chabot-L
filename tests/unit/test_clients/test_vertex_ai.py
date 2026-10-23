@@ -706,3 +706,92 @@ class TestVertexAIClient:
             assert len(filtered) == 2
             assert filtered[0]["confidence"] == 0.85
             assert filtered[1]["confidence"] == 0.75
+
+    @pytest.mark.asyncio
+    async def test_jev_category_choice_returns_category(self):
+        """Jevがカテゴリを高信頼で返した場合は小文字のカテゴリ名を返すこと。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "category": {"choice": "Shoulder", "confidence": 0.92}
+                }
+            }
+        )
+
+        result = await client.classify_category("腱板断裂術後の運動は？")
+
+        assert result == "shoulder"
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_category_falls_back_to_none(self):
+        """信頼度がしきい値未満のカテゴリ判定はNoneへフォールバックすること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "category": {"choice": "shoulder", "confidence": 0.3}
+                }
+            }
+        )
+
+        assert await client.classify_category("肩が痛いです") is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_category_choice_falls_back_to_none(self):
+        """許可リスト外の選択肢はNoneへフォールバックすること。"""
+        client = self._build_gate_client()
+        client.jev_client.decide = AsyncMock(
+            return_value={
+                "answers": {
+                    "category": {"choice": "unknown", "confidence": 0.99}
+                }
+            }
+        )
+
+        assert await client.classify_category("今日の天気は？") is None
+
+    @pytest.mark.asyncio
+    async def test_jev_unconfigured_category_returns_none(self):
+        """Jev未設定時はカテゴリ判定せずNoneを返すこと。"""
+        client = self._build_gate_client()
+        client.jev_client.is_configured = False
+
+        assert await client.classify_category("膝の評価は？") is None
+
+    def test_resolve_corpus_id_free_ignores_category(self):
+        """Freeプランはカテゴリが分類されても既定コーパスを維持すること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        assert (
+            client.resolve_corpus_id("free", "shoulder", "free-corpus-id")
+            == "free-corpus-id"
+        )
+
+    def test_resolve_corpus_id_paid_uses_category_mapping(self):
+        """Basic/Proはカテゴリ別コーパスIDへ切替え、未分類は既定のままにすること。"""
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+        with patch("app.clients.vertex_ai.settings") as settings_mock:
+            settings_mock.corpus_ids_by_category_map = {
+                "shoulder": "1495705249682292736"
+            }
+
+            assert (
+                client.resolve_corpus_id("basic", "shoulder", "paid-default")
+                == "1495705249682292736"
+            )
+            assert (
+                client.resolve_corpus_id("pro", "shoulder", "paid-default")
+                == "1495705249682292736"
+            )
+            assert (
+                client.resolve_corpus_id("basic", None, "paid-default")
+                == "paid-default"
+            )
+            assert (
+                client.resolve_corpus_id("basic", "knee", "paid-default")
+                == "paid-default"
+            )

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.deps import get_current_admin, get_current_user
 from app.core.pricing import get_daily_message_limit
+from app.core.pricing import normalize_corpus_id
 from app.models.user import User
 from app.repositories.firestore_rag_permission_repository import (
     FirestoreRagPermissionRepository,
@@ -89,27 +90,18 @@ async def send_line_message(
 
 async def save_chat_conversation(
     *,
-    user_id: str,
     question_text: str,
     answer_text: str,
-    plan: str,
-    denied: bool,
-    question_type: str | None,
-    answer_aspects: list[str],
-    reasoning_roles: list[str],
 ) -> None:
-    """チャットAPIの応答後に会話を保存する。保存失敗で応答は止めない。"""
+    """チャットAPIの応答後に会話を保存する。保存失敗で応答は止めない。
+
+    会話は質問・回答・日付のみで、利用者情報は保存しない。
+    """
     try:
         repository = FirestoreConversationRepository()
         await repository.save_conversation(
-            user_id=user_id,
             question_text=question_text,
             answer_text=answer_text,
-            plan=plan,
-            denied=denied,
-            question_type=question_type,
-            answer_aspects=answer_aspects,
-            reasoning_roles=reasoning_roles,
         )
     except Exception as exc:
         logger.error(
@@ -183,6 +175,32 @@ async def send_message(
     # Phase 2: ユーザーのプラン → RAG 権限（corpus_id/model_name）解決
     plan = getattr(current_user, "subscription_plan", None) or "free"
 
+    # プランとRAG権限を利用回数の消費前に確定する。
+    # 権限がない・無効な場合は検索も回数消費も行わない（fail closed）。
+    rag_perm_repo = FirestoreRagPermissionRepository()
+    rag_perm = await rag_perm_repo.get_by_plan(plan)
+    corpus_id = normalize_corpus_id(
+        rag_perm.get("rag_corpus_id") if rag_perm else None
+    )
+    model_name = rag_perm.get("model_name") if rag_perm else None
+    if corpus_id is None:
+        logger.error("RAG permission unavailable for plan: plan=%s", plan)
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable",
+        )
+
+    # LINE経路と同じカテゴリ分類を適用する。Basic/Proはカテゴリ別コーパス、
+    # Freeはfree用コーパスのまま検索する。分類失敗時はNoneでフォールバック。
+    try:
+        category = await rag_service.classify_category(request.message)
+    except Exception as exc:
+        logger.warning(
+            "Category classification fell back to default corpus: error_type=%s",
+            type(exc).__name__,
+        )
+        category = None
+
     # LINE経路と同じ日次上限を公開APIにも適用し、直接API呼び出しによる
     # 利用回数・Vertex AI課金の迂回を防ぐ。
     daily_limit = get_daily_message_limit(plan)
@@ -210,26 +228,19 @@ async def send_message(
                 status_code=503,
                 detail="Usage limit could not be verified",
             )
-        try:
-            await FirestoreConversationRepository().save_limit_denied(
-                user_id=str(current_user.id),
-                plan=plan,
-            )
-        except Exception as exc:
-            logger.error(
-                "Limit-denied conversation save failed: error_type=%s",
-                type(exc).__name__,
-            )
         raise HTTPException(
             status_code=429,
             detail="Daily message limit reached",
         )
 
-    # Firestore用プラン解決（user_repo経由でプラン取得）
-    rag_perm_repo = FirestoreRagPermissionRepository()
-    rag_perm = await rag_perm_repo.get_by_plan(plan)
-    corpus_id = rag_perm.get('rag_corpus_id') if rag_perm else None
-    model_name = rag_perm.get('model_name') if rag_perm else None
+    corpus_id = rag_service.resolve_corpus_id(plan, category, corpus_id)
+    corpus_id = normalize_corpus_id(corpus_id)
+    if corpus_id is None:
+        logger.error("RAG corpus resolution failed: plan=%s", plan)
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable",
+        )
 
     try:
         # RAGで回答を生成
@@ -247,17 +258,10 @@ async def send_message(
         if rag_result.get("denied"):
             logger.debug(f"RAG query denied: {rag_result.get('reason')}")
 
-        classification = rag_result.get("classification") or {}
         background_tasks.add_task(
             save_chat_conversation,
-            user_id=str(current_user.id),
             question_text=request.message,
             answer_text=rag_result.get("answer", ""),
-            plan=plan,
-            denied=bool(rag_result.get("denied")),
-            question_type=classification.get("question_type"),
-            answer_aspects=classification.get("answer_aspects") or [],
-            reasoning_roles=classification.get("reasoning_roles") or [],
         )
 
         return ChatResponse(

@@ -1,6 +1,6 @@
 """Firestore管理用ユーザー参照リポジトリ。
 
-管理UIのためのユーザー一覧（ページネーション・検索・絞込み）と詳細参照、
+管理UIのための明示的なユーザー検索・絞込みと詳細参照、
 プラン変更（plan_override）・無効化を担う。公開Botのユーザーリポジトリとは責務を分ける。
 """
 
@@ -75,25 +75,47 @@ class FirestoreAdminUserRepository:
         self,
         *,
         page_size: int = 20,
-        q: Optional[str] = None,
+        q: str,
+        search_field: str = "display_name",
         plan: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """ユーザー一覧を返す。Firestoreの順序取得のみ使い、絞込みは適用後に行う。
+        """検索条件に一致するユーザーだけを返す。
 
-        複合インデックスを要求しない構成にするため、where句は使わない。
+        全件一覧は提供しない。内部IDは1文書、LINE IDは完全一致、表示名は
+        前方一致で最大20文書だけ読み、プラン・状態はその候補へ適用する。
         """
-        query = self.db.collection(USERS_COLLECTION).order_by(
-            "created_at", direction=firestore.Query.DESCENDING
-        )
-        docs = await query.limit(500).get()
+        query_text = q.strip()
+        if not query_text:
+            raise ValueError("search_query_required")
+        if search_field not in {"display_name", "line_user_id", "user_id"}:
+            raise ValueError("invalid_search_field")
+
+        collection = self.db.collection(USERS_COLLECTION)
+        if search_field == "user_id":
+            document = await collection.document(query_text).get()
+            docs = [document] if document.exists else []
+        elif search_field == "line_user_id":
+            docs = await (
+                collection.where("line_user_id", "==", query_text)
+                .limit(page_size)
+                .get()
+            )
+        else:
+            docs = await (
+                collection.order_by("display_name")
+                .start_at({"display_name": query_text})
+                .end_at({"display_name": f"{query_text}\uf8ff"})
+                .limit(page_size)
+                .get()
+            )
+
         users: List[Dict[str, Any]] = []
-        prefix = (q or "").strip()
         for doc in docs:
             data = doc.to_dict()
-            if prefix:
+            if search_field == "display_name":
                 name = data.get("display_name") or ""
-                if not name.startswith(prefix):
+                if not name.startswith(query_text):
                     continue
             if plan in ("free", "basic", "pro", "service"):
                 if resolve_effective_plan(data) != plan:

@@ -28,6 +28,40 @@ class FirestoreUserRepository(BaseUserRepository):
         self.db = client or get_firestore_client_sync()
         logger.info("Firestore user repository initialized")
 
+    async def increment_auth_version(self, user_id: str) -> int:
+        """認証世代を原子的に+1して返す（全セッション即時失効用）。
+
+        世代番号は全Refresh/Access Tokenの検証に使われ、番号が古い
+        トークンは失効扱いになる。
+
+        Raises:
+            LookupError: ユーザーが存在しない場合
+        """
+        doc_ref = self.db.collection('users').document(user_id)
+        transaction = self.db.transaction()
+
+        @firestore.async_transactional
+        async def update_in_transaction(tx):
+            doc = await doc_ref.get(transaction=tx)
+            if not doc.exists:
+                return None
+            data = doc.to_dict() or {}
+            next_version = int(data.get('auth_version') or 0) + 1
+            tx.update(
+                doc_ref,
+                {
+                    'auth_version': next_version,
+                    'updated_at': datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return next_version
+
+        result = await update_in_transaction(transaction)
+        if result is None:
+            raise LookupError("user_not_found")
+        logger.info("User auth version incremented: version=%s", result)
+        return result
+
     async def find_by_line_user_id(self, line_user_id: str) -> Optional[Dict[str, Any]]:
         """
         LINEユーザーIDでユーザーを検索します

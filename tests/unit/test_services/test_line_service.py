@@ -101,7 +101,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "棘上筋の作用は？"},
         }
 
@@ -125,7 +125,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "こんにちは"},
         }
 
@@ -157,7 +157,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "今日の天気は？"},
         }
 
@@ -182,11 +182,13 @@ class TestProcessWebhookEvent:
         rag_service_stub.classify_message_kind = AsyncMock(
             side_effect=RuntimeError("gate down")
         )
+        rag_service_stub.classify_category = AsyncMock(return_value=None)
+        rag_service_stub.resolve_corpus_id = MagicMock(return_value="test-corpus")
         line_service._get_rag_service = MagicMock(return_value=rag_service_stub)
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "棘上筋の作用は？"},
         }
 
@@ -207,7 +209,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": line_user_id},
+            "source": {"type": "user", "userId": line_user_id},
             "message": {"type": "text", "text": "患者情報を含む相談"},
         }
 
@@ -223,7 +225,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "message",
             "replyToken": "test_reply_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "image", "id": "msg_image"},
         }
 
@@ -238,7 +240,7 @@ class TestProcessWebhookEvent:
         event = {
             "type": "follow",
             "replyToken": "test_follow_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
         }
 
         result = await line_service.process_webhook_event(event)
@@ -252,7 +254,7 @@ class TestProcessWebhookEvent:
         """アンフォローイベントが正常処理されること"""
         event = {
             "type": "unfollow",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
         }
 
         result = await line_service.process_webhook_event(event)
@@ -296,7 +298,7 @@ class TestFollowEvent:
         event = {
             "type": "follow",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
         }
 
         result = await line_service._handle_follow_event(event, db_session)
@@ -315,7 +317,7 @@ class TestFollowEvent:
         event = {
             "type": "follow",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
         }
 
         result = await line_service._handle_follow_event(event, db_session)
@@ -348,7 +350,7 @@ class TestMessageEvent:
         event = {
             "type": "message",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "最初の質問"},
         }
 
@@ -389,7 +391,7 @@ class TestMessageEvent:
         event = {
             "type": "message",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "最初の質問"},
         }
 
@@ -408,7 +410,7 @@ class TestMessageEvent:
         event = {
             "type": "message",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "   "},
         }
 
@@ -421,7 +423,7 @@ class TestMessageEvent:
         """replyToken がない場合はスキップされること"""
         event = {
             "type": "message",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "hello"},
         }
 
@@ -446,7 +448,7 @@ class TestMessageEvent:
         event = {
             "type": "message",
             "replyToken": "test_token",
-            "source": {"userId": "U_test123"},
+            "source": {"type": "user", "userId": "U_test123"},
             "message": {"type": "text", "text": "hello"},
         }
 

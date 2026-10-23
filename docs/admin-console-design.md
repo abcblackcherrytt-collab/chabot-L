@@ -10,10 +10,9 @@
 1. クーポンの発行・失効・状況確認
 2. 無料アカウントの作成（登録URL発行とLINEユーザー直指定）
 3. フリープランを含む日次回数上限の設定
-4. 登録ユーザー一覧とプラン変更
-5. 個別集計項目としてのアクティブユーザー数・メッセージ数の提示
-6. 全ユーザーの質問と回答（Q&Aペア）の保管
-7. LINEでの要望受付と、管理画面での要望確認・対応管理
+4. 登録ユーザーの条件検索とプラン変更
+5. 全ユーザーの質問と回答（Q&Aペア）の保管
+6. LINEでの要望受付と、管理画面での要望確認・対応管理
 
 本書は設計のみであり、Cloud Runサービス・リソースの実際の作成は行わない。
 
@@ -45,7 +44,6 @@
 | coupon_redemptions/{coupon_id}_{user_id} | redeemed_at, granted_plan, expires_at | 引き換え冪等性 |
 | admin_invites/{id} | token_sha256, status, expires_at, created_by, consumed_by, consumed_at | 1回限り無料登録URL |
 | admin_audit_logs/{auto} | actor, action, target_type, target_id, revision, result, timestamp | 監査 |
-| admin_daily_stats/{yyyy-mm-dd} | message_count, active_users, denied_by_limit, coupon_redemptions, feedback_count | 個別集計（日次） |
 | conversations/{auto} | user_id, question_text, answer_text, plan, question_type, answer_aspects, denied, created_at | 全ユーザーの質問・回答ペア保管 |
 | feedback/{auto} | user_id, content, status, admin_note, handled_by, handled_at, created_at | LINE要望 |
 | feedback_pending/{user_id} | expires_at | 要望受付モード中フラグ（TTL 10分） |
@@ -73,7 +71,7 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 - 制約: max_redemptions（全体上限）。ユーザーごと1回は coupon_redemptions の複合キーで保証。expires_at で期限
 - 引き換え: ユーザーがLINEで「クーポン CODE」と送信 → 公開Botがハッシュ化・照合 → Firestore Transactionで redemption作成 + plan_override付与を原子的に実行 → 成功/失敗をLINEで返信
 - 管理操作: 発行・一覧（引き換え数・残数）・失効。失効は新規引き換えの停止のみ（付与済み分は維持し、個別取消はユーザー編集で対応）
-- セキュリティ: コードをログ・監査・URLへ出さない。引き換え試行はユーザーごとにレート制限（例: 10回/日）。連続失敗を admin_daily_stats へ記録
+- セキュリティ: コードをログ・監査・URLへ出さない。引き換え試行はユーザーごとにレート制限（例: 10回/日）
 
 ### 6.2 無料アカウント作成
 
@@ -89,19 +87,13 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 - サーバ検証: 空欄不可、1〜999、revision不一致は競合エラー
 - Bot反映は最大60秒。画面に「反映まで最大60秒」を明示
 
-### 6.4 登録ユーザー一覧・プラン変更
+### 6.4 登録ユーザー検索・プラン変更
 
-- 一覧: Firestore pageToken逐次取得（offset禁止）。表示: 表示名 / プラン / 有効状態 / 当日利用回数 / 登録日。検索は表示名前方一致。LINE user ID・emailは詳細画面のみ、一覧ではマスク
+- 初期表示ではユーザーを取得しない。管理者が検索を実行した後だけ該当ユーザーを表示する
+- 検索: 表示名前方一致（最大20候補）、LINE user ID完全一致、内部ユーザーID完全一致。プラン・有効状態は検索候補への追加絞り込みとして使う
+- 表示: 表示名 / プラン / 有効状態 / 当日利用回数 / 登録日。LINE user ID・emailは詳細画面だけに表示する
 - プラン変更: POST /users/{id}/plan（free/basic/proの選択のみ・2026-09-30に簡素化、理由入力と期間指定は廃止）。plan_override を書き換え、監査へbefore/afterを記録。free選択はoverride解除。Stripe契約中ユーザーには競合警告を表示
 - 禁止: 会話本文・Stripe内部値の編集。ユーザーの削除は行わず is_active=false の無効化のみ（unfollowと同じ扱い）
-
-### 6.5 個別集計（アクティブユーザー数・メッセージ数）
-
-ダッシュボードのような統合画面は作らない。管理画面の「集計」項目として、目的別の数値だけを提示する。
-
-- 表示指標: 期間（日次・週次・月次）別のアクティブユーザー数、メッセージ数。必要に応じて上限拒否数・クーポン引き換え数・要望件数も同じ集計項目内の個別指標として提示する
-- データソース: Bot側で日次の使用カウント更新と同じタイミングで admin_daily_stats へ increment。集計期間の切替は既存ドキュメントの範囲集計で行い、集計用の事前計算は作らない
-- 検索・抽出用途では users 一覧の当日利用回数、conversations の件数カウントを併用できる
 
 ### 6.6 会話保管（質問と回答のペア）
 
@@ -143,8 +135,6 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 | GET | /invites | 一覧・状態 |
 | POST | /users/free | LINE user ID直指定でfree作成 |
 | GET | /audit-logs | 監査ログ |
-| GET | /stats/active-users | 期間別アクティブユーザー数 |
-| GET | /stats/messages | 期間別メッセージ数 |
 | GET | /conversations | 保管済み会話の件数・メタデータ（本文は初期版で返さない） |
 | GET | /feedback | 要望一覧（status絞込・新着順） |
 | POST | /feedback/{id}/status | 対応ステータス更新（admin_note付き） |
@@ -164,10 +154,10 @@ users（既存）へ追加: plan_override {plan, expires_at, source}（クーポ
 | マイルストーン | 内容 | 完了条件 |
 |---|---|---|
 | M1 | IAP認証・allowlist・監査基盤 | 未認証拒否・監査記録のE2E |
-| M2 | ユーザー一覧・詳細・プラン変更 | ID差替え・CSRF否定系を含むE2E |
+| M2 | ユーザー検索・詳細・プラン変更 | 未検索時の読取ゼロ、ID差替え・CSRF否定系を含むE2E |
 | M3 | plan_settings（回数設定・反映・ロールバック） | Bot側60秒反映とfallback確認 |
 | M4 | クーポン（発行・Bot引き換れ・失効） | 並行引き換えで1ユーザー1回を保証 |
-| M5 | 無料登録URL・個別集計・会話保管・要望管理 | URL単回消費・要望受付FLOW・会話保存のE2E |
+| M5 | 無料登録URL・会話保管・要望管理 | URL単回消費・要望受付FLOW・会話保存のE2E |
 
 ## 10. 未決定事項（実装前に確定）
 

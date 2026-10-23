@@ -218,7 +218,7 @@ async def _authenticated_user(request: Request) -> tuple[str, str]:
             detail="LINE Login is required",
         )
 
-    tokens = await FirestoreAuthService().refresh(refresh_token)
+    tokens = await FirestoreAuthService().authenticate_refresh(refresh_token)
     access_payload = decode_token(tokens["access_token"]) if tokens else None
     user_id = access_payload.get("sub") if access_payload else None
     if not user_id:
@@ -276,7 +276,7 @@ async def redirect_to_checkout(
     if not refresh_token:
         return RedirectResponse(url=_checkout_login_url(plan), status_code=303)
 
-    tokens = await FirestoreAuthService().refresh(refresh_token)
+    tokens = await FirestoreAuthService().authenticate_refresh(refresh_token)
     if not tokens:
         return RedirectResponse(url=_checkout_login_url(plan), status_code=303)
 
@@ -322,7 +322,7 @@ async def select_plan(request: Request) -> HTMLResponse:
     refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
     if refresh_token:
         try:
-            tokens = await FirestoreAuthService().refresh(refresh_token)
+            tokens = await FirestoreAuthService().authenticate_refresh(refresh_token)
             if tokens:
                 # ローテーション成功で旧Tokenは失効するため、必ず新Tokenを載せ替える。
                 rotated_refresh_token = tokens["refresh_token"]

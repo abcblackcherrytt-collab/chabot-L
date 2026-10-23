@@ -20,7 +20,6 @@ def _service(get_by_plan) -> AdminService:
         coupon_repository=MagicMock(),
         audit_repository=MagicMock(),
         feedback_repository=MagicMock(),
-        stats_repository=MagicMock(),
         admin_user_repository=MagicMock(),
         user_repository=MagicMock(),
         conversation_repository=MagicMock(),

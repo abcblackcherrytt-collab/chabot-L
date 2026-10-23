@@ -2,10 +2,11 @@
 
 会話保管から抽出した質問へ管理者が入力した代表回答を保存する。
 1会話につき1件とし、上書き保存で更新する。
+文書IDは対象会話のランダムキーを再利用し、利用者属性・分類・更新者などの
+付帯情報は本文文書へ保存しない。管理操作の記録は監査ログ基盤で行う。
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from google.cloud import firestore
@@ -14,8 +15,13 @@ from app.core.firestore import get_firestore_client_sync
 
 logger = logging.getLogger(__name__)
 
-
 REPRESENTATIVE_ANSWERS_COLLECTION = "representative_answers"
+
+ALLOWED_REPRESENTATIVE_FIELDS = (
+    "question_text",
+    "representative_answer",
+    "date",
+)
 
 
 class FirestoreRepresentativeAnswerRepository:
@@ -30,53 +36,41 @@ class FirestoreRepresentativeAnswerRepository:
         *,
         conversation_id: str,
         question_text: Optional[str],
-        question_type: Optional[str],
-        plan: Optional[str],
         representative_answer: str,
-        updated_by: str,
+        date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """1会話1件で代表回答を保存・更新する。"""
-        now = datetime.now(timezone.utc).isoformat()
-        docs = await (
-            self.db.collection(REPRESENTATIVE_ANSWERS_COLLECTION)
-            .where("conversation_id", "==", conversation_id)
-            .limit(1)
-            .get()
-        )
+        """1会話1件で代表回答を保存・更新する。
+
+        文書IDに会話のランダムキーを使うため、本文文書へ会話IDや
+        利用者情報をフィールドとして保持する必要がない。
+        """
         base = {
-            "conversation_id": conversation_id,
             "question_text": question_text,
-            "question_type": question_type,
-            "plan": plan,
             "representative_answer": representative_answer,
-            "updated_by": updated_by,
-            "updated_at": now,
+            "date": date,
         }
-        if docs:
-            ref = docs[0].reference
-            await ref.update(base)
-            data = dict(base)
-            data["id"] = docs[0].id
-            return data
-        _, created = await (
-            self.db.collection(REPRESENTATIVE_ANSWERS_COLLECTION).add(base)
+        doc_ref = self.db.collection(REPRESENTATIVE_ANSWERS_COLLECTION).document(
+            conversation_id
         )
+        await doc_ref.set(base)
         data = dict(base)
-        data["id"] = created.id
-        logger.info("Representative answer saved: conversation_id=%s", conversation_id)
+        data["id"] = conversation_id
+        logger.info("Representative answer saved")
         return data
 
     async def list(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """更新順に代表回答の一覧を返す。"""
+        """許可フィールドのみを日付の新しい順に返す。"""
         docs = await (
             self.db.collection(REPRESENTATIVE_ANSWERS_COLLECTION)
-            .order_by("updated_at", direction=firestore.Query.DESCENDING)
+            .order_by("date", direction=firestore.Query.DESCENDING)
             .limit(limit)
             .get()
         )
         results = []
         for doc in docs:
-            data = doc.to_dict()
-            data["id"] = doc.id
-            results.append(data)
+            data = doc.to_dict() or {}
+            item = {"id": doc.id}
+            for field in ALLOWED_REPRESENTATIVE_FIELDS:
+                item[field] = data.get(field)
+            results.append(item)
         return results

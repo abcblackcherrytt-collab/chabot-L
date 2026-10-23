@@ -20,6 +20,20 @@ def _mock_plan_settings(monkeypatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _mock_rag_permission(monkeypatch) -> None:
+    """RAG権限読み取りをモックし、実Firestoreへ接続しないようにする。"""
+    permission_repository = MagicMock()
+    permission_repository.get_by_plan = AsyncMock(
+        return_value={"rag_corpus_id": "free-corpus", "model_name": "model"}
+    )
+    monkeypatch.setattr(
+        chat_api,
+        "FirestoreRagPermissionRepository",
+        lambda: permission_repository,
+    )
+
+
 def _request_with_rag_service(rag_service: MagicMock) -> MagicMock:
     """RAGサービスを保持する最小のRequestモックを返す。"""
     request = MagicMock()
@@ -66,13 +80,6 @@ async def test_public_chat_applies_daily_limit_before_rag(monkeypatch) -> None:
         "FirestoreUsageRepository",
         lambda: usage_repository,
     )
-    conversation_repository = MagicMock()
-    conversation_repository.save_limit_denied = AsyncMock()
-    monkeypatch.setattr(
-        chat_api,
-        "FirestoreConversationRepository",
-        lambda: conversation_repository,
-    )
     rag_service = MagicMock()
     rag_service.query = AsyncMock()
 
@@ -89,15 +96,49 @@ async def test_public_chat_applies_daily_limit_before_rag(monkeypatch) -> None:
         )
 
     assert exc_info.value.status_code == 429
-    conversation_repository.save_limit_denied.assert_awaited_once_with(
-        user_id="user-1",
-        plan="free",
-    )
     usage_repository.increment_with_limit_check.assert_awaited_once_with(
         "user-1",
         "free",
         3,
     )
+    rag_service.query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_chat_fails_closed_without_rag_permission(monkeypatch) -> None:
+    """RAG権限がない場合は検索も回数消費も行わないこと。"""
+    permission_repository = MagicMock()
+    permission_repository.get_by_plan = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        chat_api,
+        "FirestoreRagPermissionRepository",
+        lambda: permission_repository,
+    )
+    usage_repository = MagicMock()
+    usage_repository.increment_with_limit_check = AsyncMock()
+    monkeypatch.setattr(
+        chat_api,
+        "FirestoreUsageRepository",
+        lambda: usage_repository,
+    )
+    rag_service = MagicMock()
+    rag_service.query = AsyncMock()
+    rag_service.classify_message_kind = AsyncMock(return_value="in_scope_question")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_api.send_message(
+            request=chat_api.ChatRequest(message="質問"),
+            background_tasks=MagicMock(),
+            http_request=_request_with_rag_service(rag_service),
+            current_user=SimpleNamespace(
+                id="user-1",
+                role="user",
+                subscription_plan="free",
+            ),
+        )
+
+    assert exc_info.value.status_code == 503
+    usage_repository.increment_with_limit_check.assert_not_awaited()
     rag_service.query.assert_not_awaited()
 
 
@@ -135,6 +176,8 @@ async def test_public_chat_never_returns_contexts(monkeypatch) -> None:
         }
     )
     rag_service.classify_message_kind = AsyncMock(return_value="in_scope_question")
+    rag_service.classify_category = AsyncMock(return_value=None)
+    rag_service.resolve_corpus_id = MagicMock(return_value="free-corpus")
     background_tasks = MagicMock()
 
     response = await chat_api.send_message(
@@ -153,14 +196,8 @@ async def test_public_chat_never_returns_contexts(monkeypatch) -> None:
     background_tasks.add_task.assert_called_once()
     assert background_tasks.add_task.call_args.args[0] == chat_api.save_chat_conversation
     assert background_tasks.add_task.call_args.kwargs == {
-        "user_id": "user-1",
         "question_text": "質問",
         "answer_text": "回答",
-        "plan": "free",
-        "denied": False,
-        "question_type": "evaluation",
-        "answer_aspects": ["range_of_motion"],
-        "reasoning_roles": [],
     }
     rag_service.query.assert_awaited_once_with(
         text="質問",
@@ -187,14 +224,8 @@ async def test_chat_conversation_save_failure_does_not_raise(monkeypatch) -> Non
     )
 
     await chat_api.save_chat_conversation(
-        user_id="user-1",
         question_text="質問",
         answer_text="回答",
-        plan="free",
-        denied=False,
-        question_type=None,
-        answer_aspects=[],
-        reasoning_roles=[],
     )
 
     conversation_repository.save_conversation.assert_awaited_once()
