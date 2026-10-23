@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-10-23（管理統計廃止・ユーザー検索限定をローカル実装）
+> **更新日**: 2026-10-23（管理統計廃止・ユーザー検索限定を本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -10,7 +10,7 @@
 
 ## 0. 現在の結論
 
-**2026-10-23の最新決定（ローカル実装・本番未反映）**: Firestore無料枠を節約するため、管理用日次統計の書き込みと集計画面・APIを廃止した。既存の `admin_daily_stats` データは削除しない。ユーザー画面は初期表示でFirestoreを読まず、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する。プラン・状態の絞り込みは検索候補内へ適用する。
+**2026-10-23の最新決定（本番反映済み）**: Firestore無料枠を節約するため、管理用日次統計の書き込みと集計画面・APIを廃止した。既存の `admin_daily_stats` データは削除しない。ユーザー画面は初期表示でFirestoreを読まず、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する。プラン・状態の絞り込みは検索候補内へ適用する。本番反映: コミット 3f12a47、GitHub Actions run 39898007438 成功で chabot-service へ反映（/health 200・デプロイ後ERRORログ0件）、同一イメージで chabot-admin-00020-sxp へ100%トラフィック反映（ready=True・未認証 /health 403でIAM保護確認）。
 
 **2026-10-20の決定（ローカル実装済み・本番未反映）**: 1対1トーク限定、Access Tokenを含む即時セッション失効、Refresh Token更新の原子化、RAG権限未確定時の検索停止を実装した。会話アーカイブは質問・回答・JST日付の3項目だけとし、ユーザーID・ユーザー情報・プラン・分類・時刻等を除去した。通常の自動ログイン・30日ローリング更新は維持する。具体的な手順・受入条件は [実装引き継ぎ計画](docs/security-hardening-handoff-2026-10-20.md) を参照。既存データ移行と本番反映、実E2Eは未実施。
 
@@ -339,7 +339,7 @@ P0公開ゲート:
 
 **2026-09-28: 管理UI本番実装（単体テスト済み・管理サービスのIAP/デプロイは保留）**
 
-- [x] 2026-10-23（ユーザー指示）: 管理統計を廃止。LINE質問成功・上限拒否・クーポン成否・要望受付時の `admin_daily_stats` 書き込み、統計リポジトリ、`GET /api/v1/admin/stats`、管理UI「集計」タブを削除した。ユーザー画面は検索フォームだけを初期表示し、明示的な詳細検索後だけ結果を表示する。既存統計データは削除しない。関連52件・全unit 273件（既知PostgreSQL Refresh Token除外）成功、compileall・node構文・diff検査成功。本番未反映。
+- [x] 2026-10-23（ユーザー指示）: 管理統計を廃止。LINE質問成功・上限拒否・クーポン成否・要望受付時の `admin_daily_stats` 書き込み、統計リポジトリ、`GET /api/v1/admin/stats`、管理UI「集計」タブを削除した。ユーザー画面は検索フォームだけを初期表示し、明示的な詳細検索後だけ結果を表示する。既存統計データは削除しない。関連52件・全unit 273件（既知PostgreSQL Refresh Token除外）成功、compileall・node構文・diff検査成功。コミット 3f12a47・run 39898007438 成功で本番反映済み（chabot-service /health 200・ERRORログ0件、chabot-admin-00020-sxp 100%・未認証403）。
 
 - [x] 管理API `/api/v1/admin/*` を `app/admin_api.py` として実装し、`app.admin_server` へだけ登録（公開Botへの混入はroute分離テストで固定）。session / users一覧・詳細・プラン変更・無効化・free作成 / plan-settings下書き・反映・ロールバック / coupons発行・一覧・失効 / invites発行・一覧・失効 / conversations / feedback / audit-logs / stats のエンドポイント群。
 - [x] Firestore管理リポジトリを実装: plan_settings（下書き保存・Transaction反映・ロールバック・履歴・Bot側60秒キャッシュ）、admin_invites（SHA-256保存・期限・失効・Transaction単回消費）、coupons/coupon_redemptions（Crockford Base32・チェックディジット・ユーザーごと1回・全体上限・ボーナス回数付与）、admin_audit_logs、feedback/feedback_pending（TTL10分・1日5通）、admin_daily_stats（Increment・active_usersサブコレクション）、users管理参照（一覧・前方一致検索・詳細・plan_override・無効化）。

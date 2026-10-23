@@ -21,6 +21,7 @@
 - 変更内容: LINE質問成功・上限拒否・クーポン成否・要望受付に伴う `admin_daily_stats` 書き込みを停止し、統計リポジトリ・管理API・管理画面の集計タブを削除。ユーザー画面は初期表示時にFirestoreを読まず、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する方式へ変更。既存の統計データは削除していない。
 - 対象: app/api/v1/webhooks/line.py, app/services/line_service.py, app/admin_api.py, app/services/admin_service.py, app/repositories/firestore_admin_user_repository.py, app/admin_server.py, app/static/admin/admin.js, docs/admin-console-design.md, tests/unit
 - 検証: 関連52件・全unit 273件（既知PostgreSQL Refresh Token除外）が合格。compileall、node --check、git diff --check成功。本番未反映。
+- 本番反映: コミット 3f12a47（セッション強化・カテゴリ別コーパス選択とあわせてデプロイ）、GitHub Actions run 39898007438 成功で chabot-service へ100%反映（/health 200・デプロイ後ERRORログ0件）。同一コミットのCI構築イメージで chabot-admin-00020-sxp へ100%トラフィック反映（ready=True・未認証 /health 403でIAM保護確認）。
 
 ### #002 実施済み — Jevカテゴリ分類とカテゴリ別RAGコーパス選択の実装
 - 実施日時: 2026-10-20 15:15 JST
