@@ -88,6 +88,19 @@ class TestVertexAIClient:
             assert "次の3段落だけ" in instruction
             assert "①②③" in instruction
             assert "質問への識別力が高い評価" in instruction
+            assert "臨床の基礎を学んでいる学生、新卒、経験者" in instruction
+            assert "何を評価するか」「なぜ評価するか」「所見で考えをどう変えるか" in instruction
+            assert "3項目にすると説明が浅くなる場合は、2項目に絞ってください" in instruction
+            assert "何を区別するためか" in instruction
+            assert "所見→考えられる状態→次に確認すること" in instruction
+            assert "不足している所見と次に確認する項目を具体的に示して" in instruction
+            assert "症状の再現性" in instruction
+            assert "発症の時期や経緯" in instruction
+            assert "症状の全体像の把握" in instruction
+            assert "病期の判別" in instruction
+            assert "損傷部位の評価" in instruction
+            assert "侵襲による症状" in instruction
+            assert "患者肢位" not in instruction
             assert "候補・示唆・重みづけ" in instruction
             assert "文献的事実、症例への推論、個人の臨床経験や操作的定義を混同せず" in instruction
 

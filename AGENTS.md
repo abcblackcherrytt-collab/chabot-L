@@ -1,5 +1,9 @@
 # Chabot プロジェクト開発ガイド
 
+## 臨床回答の用語・表現メモ
+
+臨床回答例・RAG解説・回答プロンプトの作成や添削では、`docs/wording-memory/corrections.md` を先に参照する。共通スキルは `/Users/takahashiyoshiki/.codex/skills/clinical-wording-memory/SKILL.md`。新しいユーザー添削は同メモへ出所・日付・適用範囲・確認状態付きで追記し、rag_sourceと共有する。コードのみの作業には適用不要。
+
 このドキュメントは、Chabot プロジェクトの開発者向けガイドです。
 
 ## プロジェクト概要
