@@ -19,6 +19,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+SELF_FILE_CACHE_TTL_SECONDS = 300.0
+SELF_CONTEXT_MAX_CHARS = 1200
+ASSESSMENT_SELF_TOP_K = 4
+
 # 回答方針プロンプト。肩領域のリハビリテーション専門職向けに、
 # 丁寧だが辛口な助言をLINEで読み切れる長さにまとめる。
 DEFAULT_SYSTEM_INSTRUCTION = """あなたは肩領域のリハビリテーションについて、医療専門職を支援する回答者です。
@@ -68,6 +72,10 @@ ASSESSMENT_SYSTEM_INSTRUCTION = """以下は評価手順・評価の組み立て
 第3段落では、この順序を選ぶ理由を解剖・バイオメカニクス・病期・文献情報を統合して簡潔に記載してください。その中で最も重要な判断を一つ選び、「所見→考えられる状態→次に確認すること」のつながりを途中を飛ばさず説明してください。問診では疼痛の種類、症状の再現性、発症の時期や経緯を確認し、症状の全体像の把握と病期の判別につなげてください。急性外傷では損傷部位の評価、術後では侵襲による症状の確認を優先してください。
 
 文献的事実、症例への推論、個人の臨床経験や操作的定義を混同せず、資料内の根拠の境界と適用除外を尊重してください。組織や病態は確定診断としてではなく、候補・示唆・重みづけとして表現してください。評価や推論の不足を指摘する場合は、「雑です」などの評価語だけで終えず、不足している所見と次に確認する項目を具体的に示してください。"""
+
+ASSESSMENT_SELF_SYSTEM_INSTRUCTION = """以下は、優先資料（関節名_self.md 相当）を事前検索したassessment質問専用の資料の扱い方です。[priority_source]に示した資料の評価方針、判断順序、着眼点を、質問に関係する範囲で回答の軸としてください。[supporting_sources]は、不足する根拠、適用条件、例外、矛盾の確認に使ってください。
+
+優先資料と他資料の記載が矛盾する場合は、どちらかへ無理に合わせず、相違とそれぞれの適用条件を短く示したうえで、現時点で最も妥当な判断を述べてください。優先資料に質問へ直接関係する記載がない部分は、他資料に基づいて答え、確認できない範囲は推測で埋めずに明示してください。資料にない数値、基準、評価を作らないでください。"""
 
 
 KNOWLEDGE_EVIDENCE_SYSTEM_INSTRUCTION = """以下は知識説明または根拠情報を求める質問（knowledge/evidence）専用の回答方針です。前述の段落構成と辛口表現を差し替えます。
@@ -339,6 +347,9 @@ class VertexAIClient(BaseClient):
         self._max_input_length = 1000
         self._vector_distance_threshold = 0.5     # サーバ側フィルタ（低いほど厳しい）
         self._default_top_k = 10
+        # (corpus_id, category) -> (rag_file_id, cached_at)。self.mdファイルIDの
+        # 一覧取得を毎リクエスト実行しないように、短時間キャッシュする。
+        self._self_file_id_cache: Dict[tuple[str, str], tuple[Optional[str], float]] = {}
 
         self._initialize_ai_platform()
 
@@ -534,6 +545,261 @@ class VertexAIClient(BaseClient):
             ),
         )
 
+    def _build_corpus_name(self, corpus_id: str) -> str:
+        """コーパスIDからRAGコーパスのリソース名を作成する。"""
+        return (
+            f"projects/{self.project_id}/locations/{self.location}"
+            f"/ragCorpora/{corpus_id}"
+        )
+
+    def _find_self_file_id_sync(
+        self,
+        corpus_name: str,
+        category: str,
+    ) -> Optional[str]:
+        """コーパス内から {category}_self.md のRAGファイルIDを検索する。"""
+        from vertexai import rag
+
+        target = f"{category.strip().lower()}_self.md"
+        for item in rag.list_files(corpus_name=corpus_name):
+            display_name = (getattr(item, "display_name", "") or "").strip().lower()
+            if display_name == target:
+                return item.name.rsplit("/", 1)[-1]
+        return None
+
+    async def _resolve_self_file_id(
+        self,
+        corpus_id: str,
+        category: str,
+    ) -> Optional[str]:
+        """self.mdのRAGファイルIDを、短時間キャッシュ付きで解決する。
+
+        未検出もキャッシュする。self.mdをコーパスへ追加した直後に反映する
+        必要がある場合は、TTL経過後に拾われる。
+        """
+        key = (corpus_id, category)
+        cached = self._self_file_id_cache.get(key)
+        now = time.monotonic()
+        if cached and now - cached[1] < SELF_FILE_CACHE_TTL_SECONDS:
+            return cached[0]
+
+        corpus_name = self._build_corpus_name(corpus_id)
+        file_id = await asyncio.to_thread(
+            self._find_self_file_id_sync,
+            corpus_name,
+            category,
+        )
+        self._self_file_id_cache[key] = (file_id, now)
+        if file_id is None:
+            logger.info(
+                "Self file not found in corpus: category=%s",
+                category,
+            )
+        return file_id
+
+    def _retrieve_contexts_sync(
+        self,
+        text: str,
+        corpus_name: str,
+        top_k: int,
+        rag_file_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """vertexai.rag.retrieval_query でコンテキストを直接取得する。
+
+        rag_file_idsを指定した場合はそのファイルだけ、未指定の場合は
+        コーパス全体を検索する。呼び出し元は asyncio.to_thread で包むこと。
+        """
+        from vertexai import rag
+
+        resources = [
+            rag.RagResource(
+                rag_corpus=corpus_name,
+                rag_file_ids=rag_file_ids,
+            )
+        ]
+        config = rag.RagRetrievalConfig(top_k=max(1, top_k))
+        response = rag.retrieval_query(
+            text=text,
+            rag_resources=resources,
+            rag_retrieval_config=config,
+        )
+        contexts: List[Dict[str, Any]] = []
+        for ctx in response.contexts.contexts:
+            score = ctx.score if ctx.HasField("score") else None
+            contexts.append(
+                {
+                    "content": ctx.text or "",
+                    "source": ctx.source_display_name or ctx.source_uri or "",
+                    "score": score,
+                }
+            )
+        return contexts
+
+    def _build_assessment_retrieval_prompt(
+        self,
+        sanitized_text: str,
+        classification: Dict[str, Any],
+        self_display_name: str,
+        self_contexts: List[Dict[str, Any]],
+        other_contexts: List[Dict[str, Any]],
+    ) -> str:
+        """self.md優先の検索結果を回答生成LLMへ渡すプロンプトを作成する。"""
+
+        def format_chunk(index: int, ctx: Dict[str, Any]) -> str:
+            content = (ctx.get("content") or "").strip()
+            if len(content) > SELF_CONTEXT_MAX_CHARS:
+                content = content[:SELF_CONTEXT_MAX_CHARS]
+            source = (ctx.get("source") or "").strip()
+            source_text = f"（出典: {source}）" if source else ""
+            return f"({index}) {source_text}{content}"
+
+        lines = [
+            "以下はRAG検索で取得した資料です。ユーザーには資料名やこの区分を"
+            "明示せず、回答の判断にだけ使ってください。",
+            f"[priority_source] {self_display_name}",
+        ]
+        lines.extend(
+            format_chunk(index, ctx)
+            for index, ctx in enumerate(self_contexts, 1)
+        )
+        lines.append("[supporting_sources]")
+        lines.extend(
+            format_chunk(index, ctx)
+            for index, ctx in enumerate(other_contexts, 1)
+        )
+        lines.append("[/retrieved_contexts]")
+        context_block = "\n".join(lines)
+        return (
+            f"{context_block}\n\n"
+            + self._build_generation_prompt(sanitized_text, classification)
+        )
+
+    def _merge_assessment_contexts(
+        self,
+        self_contexts: List[Dict[str, Any]],
+        other_contexts: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """selfと他資料のコンテキストを、self優先の順で重複除去する。"""
+        merged: List[Dict[str, Any]] = []
+        seen = set()
+        for ctx in [*self_contexts, *other_contexts]:
+            key = (
+                (ctx.get("source") or "").strip(),
+                (ctx.get("content") or "").strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(ctx)
+        return merged
+
+    async def _query_assessment_with_self(
+        self,
+        sanitized: str,
+        classification: Dict[str, Any],
+        corpus_id: str,
+        model_name: str,
+        plan: str,
+        category: str,
+        top_k: int,
+        include_context: bool,
+    ) -> Optional[Dict[str, Any]]:
+        """assessment質問で {category}_self.md を最優先資料として扱う回答を生成する。
+
+        self.mdへのファイル限定検索とコーパス全体検索を両方実行し、結果を
+        区別してLLMへ渡す。self.mdが未検出・関連chunkなし・検索失敗の場合は
+        Noneを返し、呼び出し側は通常のRAGツール経路へフォールバックする。
+        """
+        try:
+            self_file_id = await self._resolve_self_file_id(corpus_id, category)
+            if not self_file_id:
+                return None
+
+            corpus_name = self._build_corpus_name(corpus_id)
+            self_top_k = max(1, min(top_k, ASSESSMENT_SELF_TOP_K))
+            self_contexts = await asyncio.to_thread(
+                self._retrieve_contexts_sync,
+                sanitized,
+                corpus_name,
+                self_top_k,
+                [self_file_id],
+            )
+            if not self_contexts:
+                logger.info(
+                    "Assessment self file had no relevant chunks; "
+                    "falling back to corpus retrieval: category=%s",
+                    category,
+                )
+                return None
+
+            all_contexts = await asyncio.to_thread(
+                self._retrieve_contexts_sync,
+                sanitized,
+                corpus_name,
+                max(top_k, self._default_top_k),
+                None,
+            )
+            self_display_name = f"{category.strip().lower()}_self.md"
+            other_contexts = [
+                ctx
+                for ctx in all_contexts
+                if (ctx.get("source") or "").strip().lower() != self_display_name
+            ]
+
+            prompt = self._build_assessment_retrieval_prompt(
+                sanitized,
+                classification,
+                self_display_name,
+                self_contexts,
+                other_contexts,
+            )
+            client = self._get_generation_client()
+            generation_started = time.perf_counter()
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=(
+                        self._get_system_instruction(plan, "assessment")
+                        + "\n\n"
+                        + ASSESSMENT_SELF_SYSTEM_INSTRUCTION
+                    ),
+                ),
+            )
+            generation_ms = (time.perf_counter() - generation_started) * 1000
+            answer, _, _ = self._extract_response(response)
+            answer = self._strip_markdown(answer)
+
+            contexts = self._merge_assessment_contexts(
+                self_contexts,
+                other_contexts,
+            )
+            contexts = self._filter_context_by_confidence(contexts)
+
+            logger.info(
+                "Assessment self-first RAG completed "
+                "(self_contexts=%s, other_contexts=%s, generation_ms=%.1f)",
+                len(self_contexts),
+                len(other_contexts),
+                generation_ms,
+            )
+            return {
+                "answer": answer,
+                "contexts": contexts if include_context else [],
+                "confidence": 0.85 if contexts else 0.0,
+                "denied": False,
+                "classification": classification,
+                "plan": plan,
+            }
+        except Exception as exc:
+            logger.warning(
+                "Assessment self-first retrieval failed; falling back to "
+                "standard RAG: error_type=%s",
+                type(exc).__name__,
+            )
+            return None
+
     async def query(
         self,
         text: str,
@@ -542,6 +808,7 @@ class VertexAIClient(BaseClient):
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
         plan: str = "free",
+        category: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         RAGグラウンディング応答を生成します
@@ -553,6 +820,8 @@ class VertexAIClient(BaseClient):
             corpus_id: 使用するRAGコーパスID
             model_name: 使用する回答生成モデル名
             plan: 回答構成を選択するプラン（free/basic/pro）
+            category: 質問の関節カテゴリ。assessment時に
+                {category}_self.md の優先検索へ使う
 
         Returns:
             RAGクエリ結果 dict:
@@ -587,6 +856,27 @@ class VertexAIClient(BaseClient):
         effective_model_name = model_name or self.model_name
         effective_corpus_id = corpus_id or self.corpus_id
         effective_plan = plan if plan in {"basic", "pro"} else "free"
+
+        # assessment質問では、関節ごとのself.mdを事前検索して回答の軸にする。
+        # 呼び出し元がカテゴリを渡していない場合だけ追加でJev分類する。
+        if classification.get("question_type") == "assessment":
+            effective_category = category
+            if not effective_category:
+                effective_category = await self.classify_category(sanitized)
+            if effective_category:
+                assessment_result = await self._query_assessment_with_self(
+                    sanitized=sanitized,
+                    classification=classification,
+                    corpus_id=effective_corpus_id,
+                    model_name=effective_model_name,
+                    plan=effective_plan,
+                    category=effective_category,
+                    top_k=top_k,
+                    include_context=include_context,
+                )
+                if assessment_result is not None:
+                    return assessment_result
+
         try:
             retrieval_tool = self._build_retrieval_tool(top_k, corpus_id=corpus_id)
             client = self._get_generation_client()

@@ -207,6 +207,7 @@ async def test_public_chat_never_returns_contexts(monkeypatch) -> None:
         corpus_id="free-corpus",
         model_name="model",
         plan="free",
+            category=None,
     )
 
 

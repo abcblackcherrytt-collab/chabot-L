@@ -42,6 +42,7 @@ class RAGService:
         corpus_id: Optional[str] = None,
         model_name: Optional[str] = None,
         plan: str = "free",
+        category: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         RAGクエリを実行します
@@ -55,6 +56,7 @@ class RAGService:
             corpus_id: 使用するRAGコーパスID
             model_name: 使用する回答生成モデル名
             plan: 回答構成を選択するプラン（free/basic/pro）
+            category: 質問の関節カテゴリ。assessment時のself.md優先検索へ使う
 
         Returns:
             RAGクエリ結果
@@ -85,6 +87,7 @@ class RAGService:
                     corpus_id=corpus_id,
                     model_name=model_name,
                     plan=plan,
+                    category=category,
                 )
 
             # 結果にメタデータを追加

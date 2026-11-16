@@ -157,6 +157,7 @@ async def test_pipeline_uses_real_rag_service_interface() -> None:
         corpus_id="paid-corpus",
         model_name="gemini-test",
         plan="pro",
+            category=None,
     )
     line_service._send_reply.assert_awaited_once_with("reply-token", "回答です")
     conversation_repository.save_conversation.assert_awaited_once_with(

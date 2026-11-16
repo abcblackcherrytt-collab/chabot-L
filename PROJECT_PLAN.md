@@ -12,6 +12,8 @@
 
 **2026-11-02 添削メモの共有**: `docs/wording-memory/corrections.md` にassessmentの用語・表現添削を出所・確認状態・適用範囲付きで保存。共通スキル `~/.codex/skills/clinical-wording-memory` とChabot／rag_source両方のAGENTS.mdから参照する。新規添削は同じ正本へ追記し、文献的事実と表現の好みを区別する。ローカル設定のみでコーパス同期・本番反映は行わない。
 
+**2026-11-16 assessment質問のself.md優先検索（コード実装済み・本番未反映）**: Jev前段分類で question_type=assessment のときだけ、対象関節コーパス内の {関節名}_self.md をRAGファイル特定（5分キャッシュ）してファイル限定検索を行い、同じコーパス全体の検索結果と区別して回答生成LLMへ渡す。LLMにはself.mdの評価方針・判断順序を回答の軸とし、他資料で根拠・適用条件・矛盾を確認する専用指示を追加した。self.md未検出・関連chunkなし・検索失敗時は従来のRAGツール経路へフォールバックする。実コーパス（shoulder）でファイル特定とファイル限定検索（関連4件）を確認、全unit 293件が合格。本番デプロイと実LINE端末でのassessment出力確認は未実施。
+
 **2026-11-13 assessment回答の学習継続性（本番反映済み）**: assessment専用指示を、学生・新卒を含む専門職が評価から判断まで追える構成へ更新した。評価項目は最大3項目だが説明が浅くなる場合は2項目に絞り、各項目で評価の目的と所見から考える候補をつなげる。第3段落では最重要の判断を「所見→考えられる状態→次に確認すること」で説明し、不足の指摘は次に確認する項目まで具体化する。ローカルとGitHub ActionsのCI品質ゲート相当256件、compileall、diff checkに成功。コミット `eb6a99e`、GitHub Actions run `43350605833` 成功により Cloud Run `chabot-service-00059-59l` へ100%トラフィックで反映し、`/health` 200、デプロイ後15分のERRORログ0件を確認した。実LINE端末でのassessment出力確認は未実施。
 
 **2026-10-23の最新決定（本番反映済み）**: Firestore無料枠を節約するため、管理用日次統計の書き込みと集計画面・APIを廃止した。既存の `admin_daily_stats` データは削除しない。ユーザー画面は初期表示でFirestoreを読まず、表示名前方一致・LINE user ID完全一致・内部ユーザーID完全一致の検索実行後だけ最大20件を表示する。プラン・状態の絞り込みは検索候補内へ適用する。本番反映: コミット 3f12a47、GitHub Actions run 39898007438 成功で chabot-service へ反映（/health 200・デプロイ後ERRORログ0件）、同一イメージで chabot-admin-00020-sxp へ100%トラフィック反映（ready=True・未認証 /health 403でIAM保護確認）。

@@ -47,6 +47,7 @@ class TestRAGService:
             corpus_id="test-corpus",
             model_name=None,
             plan="free",
+            category=None,
         )
 
     @pytest.mark.asyncio
@@ -119,6 +120,7 @@ class TestRAGService:
             corpus_id="paid-corpus",
             model_name="gemini-test",
             plan="basic",
+            category=None,
         )
 
     @pytest.mark.asyncio

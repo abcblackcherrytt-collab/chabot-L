@@ -530,6 +530,148 @@ class TestVertexAIClient:
         assert result["answer"].count("\n\n") == 3
 
     @pytest.mark.asyncio
+    async def test_query_assessment_uses_self_first_retrieval(self):
+        """assessment分類時はself.md事前検索と全体検索結果で回答を組み立てる。"""
+
+        class MockResponse:
+            text = (
+                "初回評価は疼痛の種類の特定と症状の再現性から確認します。\n\n"
+                "①自動・他動外転を比較し、肩甲帯の代償を確認します。\n\n"
+                "外転制限の部位を分けることで、次に確認する組織が変わります。"
+            )
+            candidates = []
+
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            generation_client = MagicMock()
+            generation_client.models.generate_content.return_value = MockResponse()
+            with (
+                patch.object(
+                    client,
+                    "_classify_query",
+                    new=AsyncMock(
+                        return_value={
+                            "question_type": "assessment",
+                            "answer_aspects": ["rom"],
+                            "answer_focus": "可動域を優先して回答する。",
+                            "available": True,
+                        }
+                    ),
+                ),
+                patch.object(
+                    client,
+                    "_resolve_self_file_id",
+                    new=AsyncMock(return_value="self-file-id"),
+                ),
+                patch.object(
+                    client,
+                    "_retrieve_contexts_sync",
+                    side_effect=[
+                        [
+                            {
+                                "content": "selfの評価方針",
+                                "source": "shoulder_self.md",
+                                "score": 0.1,
+                            },
+                        ],
+                        [
+                            {
+                                "content": "selfの評価方針",
+                                "source": "shoulder_self.md",
+                                "score": 0.1,
+                            },
+                            {
+                                "content": "他資料の根拠",
+                                "source": "other.md",
+                                "score": 0.2,
+                            },
+                        ],
+                    ],
+                ),
+                patch.object(
+                    client,
+                    "_get_generation_client",
+                    return_value=generation_client,
+                ),
+            ):
+                result = await client.query(
+                    text="肩関節外転の評価は何から始めますか？",
+                    include_context=True,
+                    corpus_id="paid-corpus",
+                    plan="basic",
+                    category="shoulder",
+                )
+
+        call_kwargs = generation_client.models.generate_content.call_args.kwargs
+        assert "[priority_source] shoulder_self.md" in call_kwargs["contents"]
+        assert "[supporting_sources]" in call_kwargs["contents"]
+        assert "他資料の根拠" in call_kwargs["contents"]
+        assert "優先資料" in call_kwargs["config"].system_instruction
+        assert getattr(call_kwargs["config"], "tools", None) is None
+        sources = [ctx["source"] for ctx in result["contexts"]]
+        assert sources.count("shoulder_self.md") == 1
+        assert "other.md" in sources
+        assert result["confidence"] == 0.85
+
+    @pytest.mark.asyncio
+    async def test_query_assessment_falls_back_without_self_file(self):
+        """self.mdが未検出の場合は通常のコーパス全体検索へ戻すこと。"""
+
+        class MockResponse:
+            text = "評価は自動・他動外転の比較から始めます。"
+            candidates = []
+
+        with patch("app.clients.vertex_ai.VertexAIClient._initialize_ai_platform"):
+            client = VertexAIClient()
+
+            generation_client = MagicMock()
+            generation_client.models.generate_content.return_value = MockResponse()
+            retrieval_tool = MagicMock()
+            retrieve_sync = MagicMock()
+            with (
+                patch.object(
+                    client,
+                    "_classify_query",
+                    new=AsyncMock(
+                        return_value={
+                            "question_type": "assessment",
+                            "answer_aspects": [],
+                            "answer_focus": "",
+                            "available": True,
+                        }
+                    ),
+                ),
+                patch.object(
+                    client,
+                    "_resolve_self_file_id",
+                    new=AsyncMock(return_value=None),
+                ),
+                patch.object(client, "_retrieve_contexts_sync", retrieve_sync),
+                patch.object(
+                    client,
+                    "_build_retrieval_tool",
+                    return_value=retrieval_tool,
+                ),
+                patch.object(
+                    client,
+                    "_get_generation_client",
+                    return_value=generation_client,
+                ),
+            ):
+                result = await client.query(
+                    text="肩関節外転の評価は何から始めますか？",
+                    include_context=False,
+                    corpus_id="paid-corpus",
+                    category="shoulder",
+                )
+
+        retrieve_sync.assert_not_called()
+        call_kwargs = generation_client.models.generate_content.call_args.kwargs
+        assert call_kwargs["config"].tools == [retrieval_tool]
+        assert result["denied"] is False
+
+    @pytest.mark.asyncio
     async def test_query_log_does_not_include_question_or_answer(self, caplog):
         """Vertex AIクライアント自身のログにも相談本文を残さないこと。"""
 

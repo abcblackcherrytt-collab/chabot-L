@@ -252,6 +252,7 @@ async def send_message(
             corpus_id=corpus_id,
             model_name=model_name,
             plan=plan,
+            category=category,
         )
 
         # 回答が拒否された場合
