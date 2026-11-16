@@ -1,6 +1,6 @@
 # Chabot（LINE版）プロジェクト計画・進捗
 
-> **更新日**: 2026-11-13（assessment回答プロンプトの学習継続性を調整）
+> **更新日**: 2026-11-16（assessment質問のself.md優先検索を本番反映）
 > **対象GCP**: `takahashi-451312`
 > **Cloud Runリージョン**: `asia-northeast1`
 > **進捗表記**: `[x]` 完了 / `[ ]` 未完了 / `[保留]` 現在は実施しない
@@ -11,6 +11,8 @@
 ## 0. 現在の結論
 
 **2026-11-02 添削メモの共有**: `docs/wording-memory/corrections.md` にassessmentの用語・表現添削を出所・確認状態・適用範囲付きで保存。共通スキル `~/.codex/skills/clinical-wording-memory` とChabot／rag_source両方のAGENTS.mdから参照する。新規添削は同じ正本へ追記し、文献的事実と表現の好みを区別する。ローカル設定のみでコーパス同期・本番反映は行わない。
+
+**2026-11-16 assessment質問のself.md優先検索（本番反映済み）**: Jev前段分類で question_type=assessment のときだけ、対象関節コーパス内の {関節名}_self.md をRAGファイル特定（5分キャッシュ）してファイル限定検索を行い、同じコーパス全体の検索結果と区別して回答生成LLMへ渡す。LLMにはself.mdの評価方針・判断順序を回答の軸とし、他資料で根拠・適用条件・矛盾を確認する専用指示を追加した。self.md未検出・関連chunkなし・検索失敗時は従来のRAGツール経路へフォールバックする。実コーパス（shoulder）でファイル特定とファイル限定検索（関連4件）を確認、全unit 293件が合格。コミット 0a0234d、GitHub Actions run 43789837766 成功により Cloud Run chabot-service-00060-bj8 へ反映し、/health 200・デプロイ後ERRORログ0件を確認。実LINE端末でのassessment出力確認は未実施。
 
 **2026-11-16 assessment質問のself.md優先検索（コード実装済み・本番未反映）**: Jev前段分類で question_type=assessment のときだけ、対象関節コーパス内の {関節名}_self.md をRAGファイル特定（5分キャッシュ）してファイル限定検索を行い、同じコーパス全体の検索結果と区別して回答生成LLMへ渡す。LLMにはself.mdの評価方針・判断順序を回答の軸とし、他資料で根拠・適用条件・矛盾を確認する専用指示を追加した。self.md未検出・関連chunkなし・検索失敗時は従来のRAGツール経路へフォールバックする。実コーパス（shoulder）でファイル特定とファイル限定検索（関連4件）を確認、全unit 293件が合格。本番デプロイと実LINE端末でのassessment出力確認は未実施。
 
